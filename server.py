@@ -45,13 +45,17 @@ class ScrolllerProxyHandler(http.server.SimpleHTTPRequestHandler):
             }
             
             target_url = "https://api.scrolller.com/admin"
+            headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            if 'Authorization' in self.headers:
+                headers['Authorization'] = self.headers['Authorization']
+
             req = urllib.request.Request(
                 target_url,
                 data=json.dumps(payload).encode('utf-8'),
-                headers={
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                },
+                headers=headers,
                 method='POST'
             )
             
@@ -84,13 +88,17 @@ class ScrolllerProxyHandler(http.server.SimpleHTTPRequestHandler):
             
             # Forward the request to Scrolller's API
             target_url = "https://api.scrolller.com/admin"
+            headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            if 'Authorization' in self.headers:
+                headers['Authorization'] = self.headers['Authorization']
+
             req = urllib.request.Request(
                 target_url,
                 data=post_data,
-                headers={
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                },
+                headers=headers,
                 method='POST'
             )
             

@@ -16,11 +16,15 @@ const state = {
     iterator: null,
     subredditId: null,
     isNsfwSubreddit: false,
+    isCollection: false,
     loading: false,
     hasMore: true,
     currentViewerIndex: 0,
     immersiveMode: false,
-    gridCols: 2
+    gridCols: 2,
+    token: localStorage.getItem('scrolller_token') || '',
+    userProfile: null,
+    userCollections: []
 };
 
 // SVG icons for direct JS rendering
@@ -57,6 +61,12 @@ function loadSettings() {
         state.favorites = JSON.parse(savedFavorites);
     }
     renderFavorites();
+
+    // Check for Scrolller session token
+    state.token = localStorage.getItem('scrolller_token') || '';
+    if (state.token) {
+        syncUserProfile(state.token);
+    }
 }
 
 // Save variables to localStorage
@@ -111,15 +121,16 @@ function initEventListeners() {
     let currentSuggestions = [];
     let activeSuggestionIndex = -1;
 
-    searchForm.addEventListener('submit', (e) => {
+    searchForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const query = searchInput.value.trim();
         if (query) {
-            // Remove 'r/' prefix if user typed it
-            const subName = query.replace(/^r\//i, '');
-            loadSubreddit(subName);
             searchInput.value = '';
             suggestionsBox.classList.add('hidden');
+            await loadSearchResults(query);
+            // Close sidebar backdrop on mobile
+            sidebar.classList.add('hidden');
+            sidebarBackdrop.classList.add('hidden');
         }
     });
 
@@ -340,6 +351,9 @@ function initEventListeners() {
             fetchSubredditChildren();
         }
     });
+
+    // Initialize user authentication and category menu events
+    initUserAuthAndCategoryEvents();
 }
 
 // Columns updater
@@ -367,6 +381,7 @@ async function loadSubreddit(name) {
     state.subredditId = null;
     state.posts = [];
     state.hasMore = true;
+    state.isCollection = false;
     
     document.getElementById('media-grid').innerHTML = '';
     
@@ -439,32 +454,54 @@ async function fetchSubredditChildren() {
         state.loading = true;
         document.getElementById('loading-indicator').classList.remove('hidden');
 
-        // Resolve NSFW query parameter type
-        // NsfwFilter options: SFW, NSFW, ALL
-        let resolvedNsfwFilter = 'SFW';
-        if (state.nsfwFilter === 'NSFW') resolvedNsfwFilter = 'NSFW';
-        if (state.nsfwFilter === 'ALL' || state.isNsfwSubreddit) resolvedNsfwFilter = 'ALL';
-
-        const response = await queryGraphQL('SubredditChildrenQuery', {
-            subredditId: state.subredditId,
-            filter: state.filter === 'ALL' ? null : state.filter,
-            sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy,
-            limit: 50,
-            iterator: state.iterator,
-            isNsfw: resolvedNsfwFilter
-        });
-
-        const childData = response.getSubredditChildren;
-        if (childData && childData.items && childData.items.length > 0) {
-            state.iterator = childData.iterator;
-            processAndAppendPosts(childData.items);
-            if (!state.iterator) {
+        if (state.isCollection) {
+            const response = await queryGraphQL('GetCollection', {
+                url: state.currentSubreddit,
+                filter: state.filter === 'ALL' ? null : state.filter,
+                sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy,
+                limit: 50,
+                iterator: state.iterator
+            });
+            const colData = response.getCollection;
+            if (colData && colData.children && colData.children.items && colData.children.items.length > 0) {
+                state.iterator = colData.children.iterator;
+                processAndAppendPosts(colData.children.items);
+                if (!state.iterator) {
+                    state.hasMore = false;
+                    document.getElementById('feed-end').classList.remove('hidden');
+                }
+            } else {
                 state.hasMore = false;
                 document.getElementById('feed-end').classList.remove('hidden');
             }
         } else {
-            state.hasMore = false;
-            document.getElementById('feed-end').classList.remove('hidden');
+            // Resolve NSFW query parameter type
+            // NsfwFilter options: SFW, NSFW, ALL
+            let resolvedNsfwFilter = 'SFW';
+            if (state.nsfwFilter === 'NSFW') resolvedNsfwFilter = 'NSFW';
+            if (state.nsfwFilter === 'ALL' || state.isNsfwSubreddit) resolvedNsfwFilter = 'ALL';
+
+            const response = await queryGraphQL('SubredditChildrenQuery', {
+                subredditId: state.subredditId,
+                filter: state.filter === 'ALL' ? null : state.filter,
+                sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy,
+                limit: 50,
+                iterator: state.iterator,
+                isNsfw: resolvedNsfwFilter
+            });
+
+            const childData = response.getSubredditChildren;
+            if (childData && childData.items && childData.items.length > 0) {
+                state.iterator = childData.iterator;
+                processAndAppendPosts(childData.items);
+                if (!state.iterator) {
+                    state.hasMore = false;
+                    document.getElementById('feed-end').classList.remove('hidden');
+                }
+            } else {
+                state.hasMore = false;
+                document.getElementById('feed-end').classList.remove('hidden');
+            }
         }
 
     } catch (err) {
@@ -517,6 +554,38 @@ async function queryGraphQL(opname, variables) {
                     id url title is_nsfw
                 }
             }
+        `,
+        GetUserProfile: `
+            query GetUserProfile {
+                getUserProfile {
+                    id
+                    username
+                }
+            }
+        `,
+        GetUserCollections: `
+            query GetUserCollections {
+                getUserCollections {
+                    id
+                    url
+                    title
+                    isNsfw
+                }
+            }
+        `,
+        GetCollection: `
+            query GetCollection($url: String!, $iterator: String, $sortBy: GallerySortBy, $filter: GalleryFilter, $limit: Int!) {
+                getCollection(data: {url: $url, iterator: $iterator, filter: $filter, limit: $limit, sortBy: $sortBy}) {
+                    id url title createdAt isNsfw itemsCount
+                    children {
+                        iterator items {
+                            id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt
+                            albumContent { mediaSources { url width height isOptimized } }
+                            mediaSources { url width height isOptimized }
+                        }
+                    }
+                }
+            }
         `
     };
 
@@ -528,6 +597,11 @@ async function queryGraphQL(opname, variables) {
     // Determine target URL: WebView local files can fetch directly; browser pages must use proxy due to CORS.
     let endpoint = 'https://api.scrolller.com/admin';
     let headers = { 'Content-Type': 'application/json' };
+
+    // Inject Authorization Header if user session is active
+    if (state.token) {
+        headers['Authorization'] = `Bearer ${state.token}`;
+    }
 
     if (window.location.protocol !== 'file:' && !window.location.hostname.includes('127.0.0.1') && !window.location.hostname.includes('localhost')) {
         // We are on a normal HTTP site, use proxy to bypass CORS
@@ -569,6 +643,8 @@ function processAndAppendPosts(newItems) {
         let displayMedia = null;
         let isAlbum = false;
         let albumFiles = [];
+        let isVideo = false;
+        let posterUrl = null;
 
         if (item.albumContent && item.albumContent.length > 0) {
             isAlbum = true;
@@ -578,15 +654,30 @@ function processAndAppendPosts(newItems) {
             }).filter(u => u !== null);
             displayMedia = albumFiles[0];
         } else {
-            const best = getHighestQuality(item.mediaSources);
-            displayMedia = best ? best.url : null;
+            // Check if there are any MP4/WEBM files in mediaSources to classify as video
+            const videoSources = item.mediaSources.filter(src => src.url.includes('.mp4') || src.url.includes('.webm'));
+            if (videoSources.length > 0) {
+                isVideo = true;
+                const bestVideo = getHighestQuality(videoSources);
+                displayMedia = bestVideo ? bestVideo.url : null;
+                
+                // Fetch best webp or image source as the poster cover
+                const imageSources = item.mediaSources.filter(src => !src.url.includes('.mp4') && !src.url.includes('.webm'));
+                const bestImage = getHighestQuality(imageSources);
+                posterUrl = bestImage ? bestImage.url : null;
+            } else {
+                const best = getHighestQuality(item.mediaSources);
+                displayMedia = best ? best.url : null;
+            }
         }
 
         return {
             ...item,
             displayMedia,
             isAlbum,
-            albumFiles
+            albumFiles,
+            isVideo,
+            posterUrl
         };
     }).filter(item => item.displayMedia !== null);
 
@@ -639,7 +730,7 @@ function renderSubBanner(sub) {
 // Render Single Card on Main Grid
 function renderCard(post) {
     const grid = document.getElementById('media-grid');
-    const isVideo = post.displayMedia.endsWith('.mp4');
+    const isVideo = post.isVideo;
     
     const card = document.createElement('div');
     card.className = 'media-card';
@@ -659,8 +750,9 @@ function renderCard(post) {
     // Media element
     let mediaHtml = '';
     if (isVideo) {
+        const posterAttr = post.posterUrl ? `poster="${post.posterUrl}"` : '';
         mediaHtml = `
-            <video class="card-media" loop muted playsinline preload="metadata">
+            <video class="card-media" loop muted playsinline autoplay ${posterAttr} preload="metadata">
                 <source src="${post.displayMedia}" type="video/mp4">
             </video>
             <button class="card-volume-btn" aria-label="Mute Toggle">
@@ -832,11 +924,14 @@ function renderViewerPost() {
 
         stage.appendChild(albumContainer);
 
-    } else if (post.displayMedia.endsWith('.mp4')) {
+    } else if (post.isVideo) {
         // It's a Video
         const video = document.createElement('video');
         video.className = 'viewer-media';
         video.src = post.displayMedia;
+        if (post.posterUrl) {
+            video.poster = post.posterUrl;
+        }
         video.controls = true;
         video.autoplay = true;
         video.loop = true;
@@ -996,11 +1091,10 @@ function renderFavorites() {
         postsGrid.innerHTML = `<span class="empty-list-msg">No saved posts.</span>`;
     } else {
         state.favorites.posts.forEach(post => {
-            const isVideo = post.displayMedia.endsWith('.mp4');
+            const isVideo = post.isVideo;
             const thumb = document.createElement('img');
             thumb.className = 'saved-thumb';
-            // Use image slide if it is album
-            thumb.src = post.displayMedia;
+            thumb.src = isVideo ? (post.posterUrl || 'icon.png') : post.displayMedia;
             thumb.alt = post.title;
             thumb.title = post.title;
 
@@ -1048,4 +1142,337 @@ function showToast(message, duration = 3000) {
     toastTimeout = setTimeout(() => {
         toast.classList.add('hidden');
     }, duration);
+}
+
+// Sync User Profile (token verification & data load)
+async function syncUserProfile(token) {
+    try {
+        state.token = token;
+        localStorage.setItem('scrolller_token', token);
+        
+        // Fetch user profile info
+        const profileData = await queryGraphQL('GetUserProfile', {});
+        if (profileData && profileData.getUserProfile) {
+            state.userProfile = profileData.getUserProfile;
+            document.getElementById('logged-user-name').textContent = state.userProfile.username;
+            document.getElementById('user-profile-info').classList.remove('hidden');
+            document.getElementById('user-profile-guest').classList.add('hidden');
+            
+            showToast(`Synced Scrolller account: ${state.userProfile.username}`);
+            
+            // Load user collections
+            fetchUserCollections();
+        } else {
+            throw new Error("Session profile query failed.");
+        }
+    } catch (err) {
+        console.error("Authentication failed:", err);
+        // Clear token
+        state.token = '';
+        state.userProfile = null;
+        localStorage.removeItem('scrolller_token');
+        document.getElementById('user-profile-info').classList.add('hidden');
+        document.getElementById('user-profile-guest').classList.remove('hidden');
+        showToast("Scrolller account sync failed.");
+    }
+}
+
+// Fetch Logged-in User Collections from Scrolller
+async function fetchUserCollections() {
+    try {
+        const data = await queryGraphQL('GetUserCollections', {});
+        if (data && data.getUserCollections) {
+            state.userCollections = data.getUserCollections;
+            renderUserCollections();
+        }
+    } catch (err) {
+        console.error("Failed to fetch user collections:", err);
+    }
+}
+
+// Render User Collections List in Sidebar
+function renderUserCollections() {
+    const list = document.getElementById('user-collections-list');
+    const container = document.getElementById('user-collections-section');
+    
+    if (!state.userCollections || state.userCollections.length === 0) {
+        container.classList.add('hidden');
+        return;
+    }
+    
+    container.classList.remove('hidden');
+    list.innerHTML = state.userCollections.map(col => `
+        <li class="sidebar-item" data-url="${col.url}">
+            <span class="sub-link-text">c/${col.title}</span>
+            ${col.isNsfw ? '<span class="suggestion-badge-nsfw">18+</span>' : ''}
+        </li>
+    `).join('');
+    
+    list.querySelectorAll('.sidebar-item').forEach(item => {
+        item.addEventListener('click', () => {
+            loadCollection(item.dataset.url, item.querySelector('.sub-link-text').textContent);
+            // Hide sidebar on mobile
+            if (window.innerWidth <= 768) {
+                document.getElementById('sidebar').classList.add('hidden');
+                document.getElementById('sidebar-backdrop').classList.add('hidden');
+            }
+        });
+    });
+}
+
+// Load Scrolller User Collection Feed
+async function loadCollection(url, displayName) {
+    try {
+        state.loading = true;
+        state.posts = [];
+        state.iterator = null;
+        state.hasMore = true;
+        state.currentSubreddit = url;
+        state.subredditId = null;
+        state.isCollection = true;
+        
+        document.getElementById('media-grid').innerHTML = '';
+        document.getElementById('loading-indicator').classList.remove('hidden');
+        document.getElementById('feed-end').classList.add('hidden');
+        document.getElementById('star-sub-btn').classList.add('hidden');
+        
+        const response = await queryGraphQL('GetCollection', {
+            url: url,
+            filter: state.filter === 'ALL' ? null : state.filter,
+            sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy,
+            limit: 50,
+            iterator: null
+        });
+        
+        const col = response.getCollection;
+        if (!col) {
+            document.getElementById('media-grid').innerHTML = '<div class="empty-list-msg">Collection empty or not found.</div>';
+            return;
+        }
+        
+        state.subredditId = col.id;
+        state.isNsfwSubreddit = col.isNsfw;
+        
+        renderSubBanner({
+            title: displayName || col.title,
+            description: `Personal Scrolller Collection`,
+            subscribers: 0,
+            itemCount: col.itemsCount || 0,
+            banner: null
+        });
+        
+        if (col.children && col.children.items && col.children.items.length > 0) {
+            state.iterator = col.children.iterator;
+            processAndAppendPosts(col.children.items);
+        } else {
+            state.hasMore = false;
+            document.getElementById('feed-end').classList.remove('hidden');
+        }
+    } catch (err) {
+        console.error("Failed to load collection:", err);
+        document.getElementById('media-grid').innerHTML = `<div class="empty-list-msg">Error loading collection: ${err.message}</div>`;
+    } finally {
+        document.getElementById('loading-indicator').classList.add('hidden');
+        state.loading = false;
+    }
+}
+
+// Load Search Results View (List everything)
+async function loadSearchResults(queryText) {
+    try {
+        state.loading = true;
+        state.posts = [];
+        state.iterator = null;
+        state.hasMore = false;
+        state.currentSubreddit = '';
+        state.subredditId = null;
+        state.isCollection = false;
+        
+        document.getElementById('media-grid').innerHTML = '';
+        document.getElementById('loading-indicator').classList.remove('hidden');
+        document.getElementById('feed-end').classList.add('hidden');
+        document.getElementById('sub-banner').classList.add('hidden');
+        document.getElementById('star-sub-btn').classList.add('hidden');
+        
+        const isNsfwAllowed = state.nsfwFilter !== 'SFW';
+        let data;
+        
+        if (window.location.protocol === 'file:') {
+            data = await queryGraphQL('searchSubreddits', {
+                data: {
+                    query: queryText,
+                    limit: 30,
+                    pageIndex: 1,
+                    isNsfw: isNsfwAllowed
+                }
+            });
+        } else {
+            let endpoint = `/api/search?q=${encodeURIComponent(queryText)}&nsfw=${isNsfwAllowed}`;
+            const res = await fetch(endpoint);
+            if (res.ok) {
+                const json = await res.json();
+                data = json.data;
+            }
+        }
+        
+        if (data && data.searchSubreddits && data.searchSubreddits.length > 0) {
+            renderSubredditList(data.searchSubreddits, queryText);
+        } else {
+            document.getElementById('media-grid').innerHTML = `
+                <div class="empty-list-msg">
+                    No groups found matching "${queryText}".
+                </div>
+            `;
+        }
+    } catch (err) {
+        console.error("Search failed:", err);
+        document.getElementById('media-grid').innerHTML = `<div class="empty-list-msg">Search failed: ${err.message}</div>`;
+    } finally {
+        document.getElementById('loading-indicator').classList.add('hidden');
+        state.loading = false;
+    }
+}
+
+// Render Grid of Subreddit catalog entries
+function renderSubredditList(subreddits, queryText) {
+    const grid = document.getElementById('media-grid');
+    grid.innerHTML = '';
+    
+    const banner = document.getElementById('sub-banner');
+    banner.classList.remove('hidden');
+    document.getElementById('sub-title').textContent = `Search Catalog`;
+    document.getElementById('sub-description').textContent = `Subreddits matching "${queryText}"`;
+    document.getElementById('sub-subscribers').textContent = `Found ${subreddits.length} matching subreddits`;
+    document.getElementById('sub-item-count').textContent = `Scrolller Index`;
+    banner.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.95))`;
+    
+    subreddits.forEach(sub => {
+        const card = document.createElement('div');
+        card.className = 'subreddit-card glassmorphism';
+        
+        card.innerHTML = `
+            <div class="subreddit-card-header">
+                <span class="subreddit-card-title">r/${sub.title}</span>
+                ${sub.is_nsfw ? '<span class="suggestion-badge-nsfw">18+</span>' : '<span class="suggestion-subscribers" style="color:var(--accent)">SFW</span>'}
+            </div>
+            <button class="subreddit-card-btn">Explore Feed</button>
+        `;
+        
+        card.addEventListener('click', () => {
+            loadSubreddit(sub.url);
+        });
+        
+        grid.appendChild(card);
+    });
+}
+
+// Initialize Auth & Categories Event Listeners
+function initUserAuthAndCategoryEvents() {
+    const signinModal = document.getElementById('signin-modal');
+    const signinTriggerBtn = document.getElementById('signin-trigger-btn');
+    const signinCloseBtn = document.getElementById('signin-close-btn');
+    const signinSubmitBtn = document.getElementById('signin-submit-btn');
+    const signinTokenInput = document.getElementById('signin-token-input');
+    const signinError = document.getElementById('signin-error');
+    const signoutBtn = document.getElementById('signout-btn');
+    
+    // Modal controls
+    if (signinTriggerBtn) {
+        signinTriggerBtn.addEventListener('click', () => {
+            signinModal.classList.remove('hidden');
+            signinError.classList.add('hidden');
+            signinTokenInput.value = '';
+        });
+    }
+    
+    if (signinCloseBtn) {
+        signinCloseBtn.addEventListener('click', () => {
+            signinModal.classList.add('hidden');
+        });
+    }
+    
+    // Form submit
+    if (signinSubmitBtn) {
+        signinSubmitBtn.addEventListener('click', async () => {
+            const token = signinTokenInput.value.trim();
+            if (!token) {
+                signinError.textContent = 'Please paste a token first!';
+                signinError.classList.remove('hidden');
+                return;
+            }
+            signinError.classList.add('hidden');
+            
+            try {
+                // Sync user account profile
+                await syncUserProfile(token);
+                signinModal.classList.add('hidden');
+            } catch (err) {
+                signinError.textContent = 'Authentication failed. Please verify your token.';
+                signinError.classList.remove('hidden');
+            }
+        });
+    }
+    
+    // Sign out
+    if (signoutBtn) {
+        signoutBtn.addEventListener('click', () => {
+            state.token = '';
+            state.userProfile = null;
+            state.userCollections = [];
+            localStorage.removeItem('scrolller_token');
+            
+            document.getElementById('user-profile-info').classList.add('hidden');
+            document.getElementById('user-profile-guest').classList.remove('hidden');
+            document.getElementById('user-collections-section').classList.add('hidden');
+            
+            showToast("Signed out of Scrolller.");
+            reloadFeed();
+        });
+    }
+    
+    // Category select filter dropdown listener
+    const categorySelect = document.getElementById('category-select');
+    if (categorySelect) {
+        categorySelect.addEventListener('change', (e) => {
+            const cat = e.target.value;
+            if (cat === 'ALL') {
+                loadSubreddit('funny');
+            } else {
+                const catSubs = {
+                    funny: [
+                        { title: "funny", url: "funny", is_nsfw: false },
+                        { title: "funnyvideos", url: "funnyvideos", is_nsfw: false },
+                        { title: "funnymeme", url: "funnymeme", is_nsfw: false },
+                        { title: "memes", url: "memes", is_nsfw: false },
+                        { title: "dankmemes", url: "dankmemes", is_nsfw: false }
+                    ],
+                    animals: [
+                        { title: "FunnyAnimals", url: "FunnyAnimals", is_nsfw: false },
+                        { title: "cats", url: "cats", is_nsfw: false },
+                        { title: "dogs", url: "dogs", is_nsfw: false },
+                        { title: "aww", url: "aww", is_nsfw: false },
+                        { title: "nature", url: "nature", is_nsfw: false }
+                    ],
+                    art: [
+                        { title: "art", url: "art", is_nsfw: false },
+                        { title: "drawing", url: "drawing", is_nsfw: false },
+                        { title: "illustration", url: "illustration", is_nsfw: false },
+                        { title: "digitalart", url: "digitalart", is_nsfw: false }
+                    ],
+                    gaming: [
+                        { title: "gaming", url: "gaming", is_nsfw: false },
+                        { title: "games", url: "games", is_nsfw: false },
+                        { title: "pcgaming", url: "pcgaming", is_nsfw: false }
+                    ],
+                    sports: [
+                        { title: "sports", url: "sports", is_nsfw: false },
+                        { title: "formula1", url: "formula1", is_nsfw: false },
+                        { title: "soccer", url: "soccer", is_nsfw: false }
+                    ]
+                };
+                
+                renderSubredditList(catSubs[cat], categorySelect.options[categorySelect.selectedIndex].text);
+            }
+        });
+    }
 }

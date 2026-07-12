@@ -1024,3 +1024,239 @@ video.card-media {
         max-width: 320px;
     }
 }
+
+/* User Account Profile Card */
+.user-auth-card {
+    background: rgba(0, 229, 255, 0.03) !important;
+    border: 1px dashed rgba(0, 229, 255, 0.15) !important;
+}
+
+.user-profile-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+}
+
+.user-info-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.user-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.user-name {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 1rem;
+}
+
+.signout-btn {
+    background: rgba(255, 23, 68, 0.08);
+    border: 1px solid rgba(255, 23, 68, 0.25);
+    color: #ff1744;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: var(--transition-smooth);
+    text-align: center;
+}
+
+.signout-btn:hover {
+    background: #ff1744;
+    color: #fff;
+}
+
+.signin-btn {
+    width: 100%;
+    text-align: center;
+    padding: 8px 12px;
+    font-size: 0.85rem;
+}
+
+/* Modal Overlay & Card styling */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    padding: 20px;
+    transition: var(--transition-smooth);
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-content {
+    width: 100%;
+    max-width: 480px;
+    padding: 24px;
+    border-radius: 16px;
+    border: 1px solid var(--glass-border);
+    position: relative;
+    background: var(--bg-card);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
+    animation: modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalSlideUp {
+    from { transform: translateY(30px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.modal-close-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.modal-title {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 800;
+    font-size: 1.35rem;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+}
+
+.modal-desc {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin-bottom: 16px;
+}
+
+#signin-token-input {
+    width: 100%;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    color: #fff;
+    padding: 10px;
+    font-family: monospace;
+    font-size: 0.8rem;
+    margin-bottom: 16px;
+    resize: none;
+    outline: none;
+}
+
+#signin-token-input:focus {
+    border-color: var(--accent);
+}
+
+.signin-submit-btn {
+    width: 100%;
+    padding: 10px;
+    font-weight: 700;
+}
+
+.error-msg {
+    color: #ff1744;
+    background: rgba(255, 23, 68, 0.1);
+    border: 1px solid rgba(255, 23, 68, 0.2);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    margin-top: 12px;
+    text-align: center;
+}
+
+/* Edge-to-Edge Single Column View */
+@media (max-width: 768px) {
+    .media-grid.cols-1 {
+        padding: 0 !important;
+        gap: 0 !important;
+    }
+    
+    .media-grid.cols-1 .media-card {
+        border-radius: 0 !important;
+        border-left: none !important;
+        border-right: none !important;
+        border-top: none !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+        background: transparent !important;
+        width: 100% !important;
+    }
+    
+    .media-grid.cols-1 .card-media-wrapper {
+        border-radius: 0 !important;
+    }
+}
+
+/* Subreddit Search Results styling */
+.subreddit-card {
+    background: var(--bg-card);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 16px;
+    transition: var(--transition-smooth);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.subreddit-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--accent);
+    box-shadow: var(--shadow-glow);
+}
+
+.subreddit-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    width: 100%;
+}
+
+.subreddit-card-title {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 800;
+    font-size: 1.15rem;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.subreddit-card-btn {
+    width: 100%;
+    background: rgba(0, 229, 255, 0.06);
+    border: 1px solid rgba(0, 229, 255, 0.3);
+    color: var(--accent);
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 700;
+    transition: var(--transition-smooth);
+    text-align: center;
+}
+
+.subreddit-card-btn:hover {
+    background: var(--accent);
+    color: #0b0c10;
+}

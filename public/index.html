@@ -32,6 +32,20 @@
             </div>
             
             <div class="sidebar-content">
+                <!-- User Authentication Section -->
+                <div class="setting-item card user-auth-card">
+                    <div id="user-profile-info" class="user-profile-container hidden">
+                        <div class="user-info-text">
+                            <span class="user-label">Syncing Account</span>
+                            <span id="logged-user-name" class="user-name">Username</span>
+                        </div>
+                        <button id="signout-btn" class="signout-btn">Sign Out</button>
+                    </div>
+                    <div id="user-profile-guest" class="user-profile-container">
+                        <button id="signin-trigger-btn" class="primary-btn signin-btn">Sign In to Scrolller</button>
+                    </div>
+                </div>
+
                 <!-- NSFW / SFW Toggle -->
                 <div class="setting-item card">
                     <div class="setting-info">
@@ -43,6 +57,14 @@
                         <option value="NSFW">Adult (NSFW) Only</option>
                         <option value="ALL">All (SFW + NSFW)</option>
                     </select>
+                </div>
+
+                <!-- Sync'd Collections -->
+                <div id="user-collections-section" class="sidebar-section hidden">
+                    <h3>My Collections</h3>
+                    <ul id="user-collections-list" class="sidebar-list">
+                        <!-- Populated by JS -->
+                    </ul>
                 </div>
 
                 <!-- Starred Subreddits -->
@@ -154,6 +176,19 @@
                 </select>
             </div>
 
+            <!-- Category dropdown -->
+            <div class="control-group">
+                <label for="category-select">Category</label>
+                <select id="category-select" class="custom-select">
+                    <option value="ALL">All Categories</option>
+                    <option value="funny">Funny & Memes</option>
+                    <option value="animals">Animals & Nature</option>
+                    <option value="art">Art & Design</option>
+                    <option value="gaming">Gaming</option>
+                    <option value="sports">Sports & Action</option>
+                </select>
+            </div>
+
             <!-- Columns Layout Controller -->
             <div class="control-group layout-ctrl">
                 <label>Columns</label>
@@ -228,6 +263,18 @@
         <!-- Fullscreen Media Stage (Holds Video / Image / Album) -->
         <div id="viewer-stage" class="viewer-stage">
             <!-- Rendered media goes here -->
+        </div>
+    </div>
+
+    <!-- Sign-In Modal -->
+    <div id="signin-modal" class="modal hidden">
+        <div class="modal-content glassmorphism">
+            <button class="modal-close-btn" id="signin-close-btn" aria-label="Close modal">&times;</button>
+            <h2 class="modal-title">Sync Scrolller Account</h2>
+            <p class="modal-desc">Paste your Scrolller Bearer Token below to sync your saved subreddits, collections, and custom feeds. You can find this token in your browser Developer Tools (LocalStorage -> 'token') after logging into scrolller.com.</p>
+            <textarea id="signin-token-input" placeholder="Paste Scrolller session token (starts with ey...) here..." rows="4"></textarea>
+            <button id="signin-submit-btn" class="primary-btn signin-submit-btn">Sync and Login</button>
+            <div id="signin-error" class="error-msg hidden"></div>
         </div>
     </div>
 
