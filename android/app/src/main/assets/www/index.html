@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Scrolller Pro - Ad-Free Premium Gallery</title>
+    <meta name="description" content="Stunning ad-free client for Scrolller. Fast, responsive, immersive fullscreen mode, and direct high-quality media streaming.">
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#0b0c10">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="icon.png">
+    <link rel="manifest" href="manifest.json">
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- App Container -->
+    <div id="app">
+        <!-- Sidebar Navigation -->
+        <aside id="sidebar" class="sidebar hidden">
+            <div class="sidebar-header">
+                <h2 class="brand-font">Favorites & Navigation</h2>
+                <button id="close-sidebar-btn" class="icon-btn" aria-label="Close Sidebar">
+                    <svg viewBox="0 0 24 24" width="24" height="24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>
+                </button>
+            </div>
+            
+            <div class="sidebar-content">
+                <!-- NSFW / SFW Toggle -->
+                <div class="setting-item card">
+                    <div class="setting-info">
+                        <span class="setting-label">Content Filter</span>
+                        <span class="setting-desc">Toggle SFW & Adult content</span>
+                    </div>
+                    <select id="nsfw-filter-select" class="custom-select">
+                        <option value="SFW">SFW Only</option>
+                        <option value="NSFW">Adult (NSFW) Only</option>
+                        <option value="ALL">All (SFW + NSFW)</option>
+                    </select>
+                </div>
+
+                <!-- Starred Subreddits -->
+                <div class="sidebar-section">
+                    <h3>Starred Subreddits</h3>
+                    <ul id="starred-subreddits-list" class="sidebar-list">
+                        <!-- Populated by JS -->
+                        <li class="empty-list-msg">No starred subreddits yet.</li>
+                    </ul>
+                </div>
+
+                <!-- Saved Posts -->
+                <div class="sidebar-section">
+                    <h3>Saved Posts</h3>
+                    <div id="saved-posts-grid" class="saved-grid">
+                        <!-- Populated by JS -->
+                        <span class="empty-list-msg">No saved posts yet.</span>
+                    </div>
+                </div>
+
+                <!-- Popular Subreddits list -->
+                <div class="sidebar-section">
+                    <h3>Popular Subreddits</h3>
+                    <div class="tag-cloud">
+                        <button class="sub-tag" data-name="funny">r/funny</button>
+                        <button class="sub-tag" data-name="pics">r/pics</button>
+                        <button class="sub-tag" data-name="videos">r/videos</button>
+                        <button class="sub-tag" data-name="aww">r/aww</button>
+                        <button class="sub-tag" data-name="art">r/art</button>
+                        <button class="sub-tag" data-name="gaming">r/gaming</button>
+                        <button class="sub-tag" data-name="earthporn">r/earthporn</button>
+                        <button class="sub-tag nsfw-tag" data-name="gonewild">r/gonewild</button>
+                        <button class="sub-tag nsfw-tag" data-name="nsfw">r/nsfw</button>
+                        <button class="sub-tag nsfw-tag" data-name="bikinis">r/bikinis</button>
+                        <button class="sub-tag nsfw-tag" data-name="cosplay">r/cosplay</button>
+                    </div>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Sidebar Backdrop -->
+        <div id="sidebar-backdrop" class="backdrop hidden"></div>
+
+        <!-- Main Header -->
+        <header id="app-header">
+            <div class="header-left">
+                <button id="menu-btn" class="icon-btn" aria-label="Open Navigation">
+                    <svg viewBox="0 0 24 24" width="24" height="24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor"/></svg>
+                </button>
+                <div class="logo">
+                    <span class="logo-accent">Scrolller</span><span class="logo-main">Pro</span>
+                </div>
+            </div>
+
+            <!-- Search Bar -->
+            <div class="search-container">
+                <form id="search-form">
+                    <input type="text" id="search-input" placeholder="Search subreddit (e.g. funny, art, nsfw)..." autocomplete="off" required>
+                    <button type="submit" class="search-btn" aria-label="Search">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor"/></svg>
+                    </button>
+                </form>
+            </div>
+
+            <div class="header-right">
+                <button id="star-sub-btn" class="icon-btn hidden" aria-label="Star Subreddit">
+                    <svg viewBox="0 0 24 24" width="24" height="24" class="star-outline"><path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" fill="currentColor"/></svg>
+                    <svg viewBox="0 0 24 24" width="24" height="24" class="star-filled hidden"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" fill="#ffb400"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Subreddit Header Banner -->
+        <div id="sub-banner" class="sub-banner-container hidden">
+            <div class="sub-banner-overlay"></div>
+            <div class="sub-banner-info">
+                <h1 id="sub-title">r/funny</h1>
+                <p id="sub-description">Reddit's largest humor depository.</p>
+                <div class="sub-meta-info">
+                    <span id="sub-subscribers">53M Subscribers</span> • 
+                    <span id="sub-item-count">130K media items</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls Toolbar (Sorting, Filters, Grid Config) -->
+        <section class="controls-toolbar">
+            <!-- Sort dropdown -->
+            <div class="control-group">
+                <label for="sort-select">Sort</label>
+                <select id="sort-select" class="custom-select">
+                    <option value="HOT">Best</option>
+                    <option value="NEW">Newest</option>
+                    <option value="OLD">Oldest</option>
+                    <option value="TOP">Top Rated</option>
+                    <option value="RANDOM">Random</option>
+                </select>
+            </div>
+
+            <!-- Filter dropdown -->
+            <div class="control-group">
+                <label for="filter-select">Type</label>
+                <select id="filter-select" class="custom-select">
+                    <option value="ALL">All Media</option>
+                    <option value="PICTURE">Pictures</option>
+                    <option value="VIDEO">Videos</option>
+                    <option value="ALBUM">Albums</option>
+                </select>
+            </div>
+
+            <!-- Columns Layout Controller -->
+            <div class="control-group layout-ctrl">
+                <label>Columns</label>
+                <div class="column-selector">
+                    <button class="col-btn" data-cols="1">1</button>
+                    <button class="col-btn active" data-cols="2">2</button>
+                    <button class="col-btn" data-cols="3">3</button>
+                    <button class="col-btn" data-cols="4">4</button>
+                    <button class="col-btn" data-cols="5">5</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Media Feed Container -->
+        <main id="feed-container">
+            <div id="media-grid" class="media-grid" style="--cols: 2;">
+                <!-- Dynamically loaded cards -->
+            </div>
+            
+            <!-- Loading Indicator -->
+            <div id="loading-indicator" class="loading-spinner hidden">
+                <div class="spinner"></div>
+                <span>Fetching highest quality media...</span>
+            </div>
+
+            <!-- End of Feed message -->
+            <div id="feed-end" class="feed-end-msg hidden">
+                No more items found. Search or try a different filter!
+            </div>
+        </main>
+    </div>
+
+    <!-- Immersive Fullscreen Media Viewer -->
+    <div id="viewer-modal" class="viewer-modal hidden" tabindex="0">
+        <!-- Background Dark Backdrop -->
+        <div class="viewer-bg"></div>
+
+        <!-- Viewer UI Overlays (Can be hidden for true immersive mode) -->
+        <div class="viewer-overlay-top">
+            <button id="viewer-back-btn" class="icon-btn" aria-label="Close Fullscreen">
+                <svg viewBox="0 0 24 24" width="28" height="28"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="currentColor"/></svg>
+            </button>
+            <div class="viewer-title-info">
+                <h3 id="viewer-post-title">Post Title</h3>
+                <span id="viewer-post-sub">r/subreddit</span>
+            </div>
+            <div class="viewer-top-actions">
+                <!-- Save Post Star -->
+                <button id="viewer-save-btn" class="icon-btn" aria-label="Save Post">
+                    <svg viewBox="0 0 24 24" width="24" height="24" class="post-star-outline"><path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z" fill="currentColor"/></svg>
+                    <svg viewBox="0 0 24 24" width="24" height="24" class="post-star-filled hidden"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" fill="#ffb400"/></svg>
+                </button>
+                <button id="viewer-immersive-btn" class="icon-btn" title="Toggle Immersive Fullscreen">
+                    <svg viewBox="0 0 24 24" width="24" height="24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" fill="currentColor"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="viewer-overlay-bottom">
+            <span id="viewer-index">1 / 100</span>
+            <div class="viewer-nav-hint">Swipe left/right or use arrow keys to navigate. Double tap center to hide UI.</div>
+        </div>
+
+        <!-- Left/Right navigation buttons for desktop -->
+        <button id="prev-btn" class="nav-arrow-btn prev" aria-label="Previous Post">
+            <svg viewBox="0 0 24 24" width="36" height="36"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" fill="currentColor"/></svg>
+        </button>
+        <button id="next-btn" class="nav-arrow-btn next" aria-label="Next Post">
+            <svg viewBox="0 0 24 24" width="36" height="36"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg>
+        </button>
+
+        <!-- Fullscreen Media Stage (Holds Video / Image / Album) -->
+        <div id="viewer-stage" class="viewer-stage">
+            <!-- Rendered media goes here -->
+        </div>
+    </div>
+
+    <!-- Alert / Toast Banner -->
+    <div id="toast" class="toast hidden">
+        <span id="toast-message">Message</span>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
