@@ -103,17 +103,139 @@ function initEventListeners() {
     closeSidebarBtn.addEventListener('click', toggleSidebar);
     sidebarBackdrop.addEventListener('click', toggleSidebar);
 
-    // Search
+    // Search & Autocomplete suggestions
     const searchForm = document.getElementById('search-form');
+    const searchInput = document.getElementById('search-input');
+    const suggestionsBox = document.getElementById('search-suggestions');
+    let debounceTimer = null;
+    let currentSuggestions = [];
+    let activeSuggestionIndex = -1;
+
     searchForm.addEventListener('submit', (e) => {
         e.preventDefault();
-        const query = document.getElementById('search-input').value.trim();
+        const query = searchInput.value.trim();
         if (query) {
             // Remove 'r/' prefix if user typed it
             const subName = query.replace(/^r\//i, '');
             loadSubreddit(subName);
-            document.getElementById('search-input').value = '';
-            if (window.innerWidth <= 768) toggleSidebar();
+            searchInput.value = '';
+            suggestionsBox.classList.add('hidden');
+        }
+    });
+
+    const fetchSuggestions = async (val) => {
+        if (!val) {
+            suggestionsBox.innerHTML = '';
+            suggestionsBox.classList.add('hidden');
+            return;
+        }
+        try {
+            const isNsfwAllowed = state.nsfwFilter !== 'SFW';
+            let data;
+            
+            if (window.location.protocol === 'file:') {
+                data = await queryGraphQL('searchSubreddits', {
+                    data: {
+                        query: val,
+                        limit: 8,
+                        pageIndex: 1,
+                        isNsfw: isNsfwAllowed
+                    }
+                });
+            } else {
+                let endpoint = `/api/search?q=${encodeURIComponent(val)}&nsfw=${isNsfwAllowed}`;
+                const res = await fetch(endpoint);
+                if (res.ok) {
+                    const json = await res.json();
+                    data = json.data;
+                }
+            }
+            
+            if (data && data.searchSubreddits) {
+                currentSuggestions = data.searchSubreddits;
+                renderSuggestions(currentSuggestions);
+            }
+        } catch (err) {
+            console.error('Failed to fetch autocomplete suggestions:', err);
+        }
+    };
+
+    const renderSuggestions = (suggestions) => {
+        if (!suggestions || suggestions.length === 0) {
+            suggestionsBox.innerHTML = '<div class="suggestion-item">No groups found</div>';
+            suggestionsBox.classList.remove('hidden');
+            activeSuggestionIndex = -1;
+            return;
+        }
+        
+        suggestionsBox.innerHTML = suggestions.map((item, idx) => `
+            <div class="suggestion-item" data-index="${idx}" data-url="${item.url}">
+                <div class="suggestion-left">
+                    <span class="suggestion-title">
+                        r/${item.title}
+                        ${item.is_nsfw ? '<span class="suggestion-badge-nsfw">18+</span>' : ''}
+                    </span>
+                </div>
+            </div>
+        `).join('');
+        
+        suggestionsBox.classList.remove('hidden');
+        activeSuggestionIndex = -1;
+        
+        suggestionsBox.querySelectorAll('.suggestion-item').forEach(el => {
+            el.addEventListener('click', (e) => {
+                const subUrl = el.dataset.url;
+                if (subUrl) {
+                    loadSubreddit(subUrl);
+                    searchInput.value = '';
+                    suggestionsBox.classList.add('hidden');
+                }
+            });
+        });
+    };
+
+    searchInput.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            fetchSuggestions(val);
+        }, 250);
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+        const items = suggestionsBox.querySelectorAll('.suggestion-item');
+        if (suggestionsBox.classList.contains('hidden') || !items.length) return;
+        
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            activeSuggestionIndex = (activeSuggestionIndex + 1) % items.length;
+            highlightSuggestion(items);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            activeSuggestionIndex = (activeSuggestionIndex - 1 + items.length) % items.length;
+            highlightSuggestion(items);
+        } else if (e.key === 'Enter') {
+            if (activeSuggestionIndex >= 0 && activeSuggestionIndex < items.length) {
+                e.preventDefault();
+                items[activeSuggestionIndex].click();
+            }
+        } else if (e.key === 'Escape') {
+            suggestionsBox.classList.add('hidden');
+        }
+    });
+
+    const highlightSuggestion = (items) => {
+        items.forEach(el => el.classList.remove('active'));
+        if (activeSuggestionIndex >= 0 && activeSuggestionIndex < items.length) {
+            const item = items[activeSuggestionIndex];
+            item.classList.add('active');
+            item.scrollIntoView({ block: 'nearest' });
+        }
+    };
+
+    document.addEventListener('click', (e) => {
+        if (!searchInput.contains(e.target) && !suggestionsBox.contains(e.target)) {
+            suggestionsBox.classList.add('hidden');
         }
     });
 
@@ -386,6 +508,13 @@ async function queryGraphQL(opname, variables) {
                         albumContent { mediaSources { url width height isOptimized } }
                         mediaSources { url width height isOptimized }
                     }
+                }
+            }
+        `,
+        searchSubreddits: `
+            query SearchSubreddits($data: SearchSubredditsInput!) {
+                searchSubreddits(data: $data) {
+                    id url title is_nsfw
                 }
             }
         `

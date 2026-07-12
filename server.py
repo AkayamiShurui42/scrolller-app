@@ -15,6 +15,68 @@ class ScrolllerProxyHandler(http.server.SimpleHTTPRequestHandler):
         rel_path = os.path.relpath(path, os.getcwd())
         return os.path.join(PUBLIC_DIR, rel_path)
 
+    def do_GET(self):
+        if self.path.startswith('/api/search'):
+            import urllib.parse
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            q = params.get('q', [''])[0]
+            nsfw = params.get('nsfw', ['true'])[0].lower() == 'true'
+            
+            # Perform searchSubreddits GraphQL query
+            query = """
+            query SearchSubreddits($data: SearchSubredditsInput!) {
+                searchSubreddits(data: $data) {
+                    id url title is_nsfw
+                }
+            }
+            """
+            variables = {
+                "data": {
+                    "query": q,
+                    "limit": 10,
+                    "pageIndex": 1,
+                    "isNsfw": nsfw
+                }
+            }
+            payload = {
+                "query": query,
+                "variables": variables
+            }
+            
+            target_url = "https://api.scrolller.com/admin"
+            req = urllib.request.Request(
+                target_url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                method='POST'
+            )
+            
+            try:
+                with urllib.request.urlopen(req) as response:
+                    res_body = response.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(res_body)
+            except urllib.error.HTTPError as e:
+                err_body = e.read()
+                self.send_response(e.code)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(err_body)
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode('utf-8'))
+        else:
+            # Delegate to SimpleHTTPRequestHandler to serve static files
+            super().do_GET()
+
     def do_POST(self):
         if self.path == '/api/graphql':
             content_length = int(self.headers['Content-Length'])
