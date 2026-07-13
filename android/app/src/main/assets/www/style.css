@@ -418,14 +418,10 @@ h1, h2, h3, .brand-font {
     position: relative;
     width: 100%;
     /* Set height based on media aspect ratio or static height */
-    padding-top: 130%; /* Masonry aspect ratio look */
+    padding-top: 130%; /* Fallback aspect ratio */
     background: var(--bg-darker);
     cursor: pointer;
     overflow: hidden;
-}
-
-.card-media-wrapper.video-media {
-    padding-top: 150%;
 }
 
 .card-media {
@@ -1259,4 +1255,23 @@ video.card-media {
 .subreddit-card-btn:hover {
     background: var(--accent);
     color: #0b0c10;
+}
+
+.subreddit-card-desc {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin: 8px 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    height: 48px; /* Fixed height for visual consistency */
+}
+
+.subreddit-card-meta {
+    font-size: 0.75rem;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 8px;
 }

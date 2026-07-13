@@ -39,6 +39,7 @@ const icons = {
 document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
     initEventListeners();
+    loadCategoriesFilter();
     loadSubreddit(state.currentSubreddit);
     setupIntersectionObserver();
     
@@ -255,6 +256,7 @@ function initEventListeners() {
     nsfwSelect.addEventListener('change', (e) => {
         state.nsfwFilter = e.target.value;
         saveSettings();
+        loadCategoriesFilter();
         reloadFeed();
     });
 
@@ -551,7 +553,7 @@ async function queryGraphQL(opname, variables) {
         searchSubreddits: `
             query SearchSubreddits($data: SearchSubredditsInput!) {
                 searchSubreddits(data: $data) {
-                    id url title is_nsfw
+                    id url title description item_count is_nsfw
                 }
             }
         `,
@@ -575,8 +577,8 @@ async function queryGraphQL(opname, variables) {
             }
         `,
         GetCollection: `
-            query GetCollection($url: String!, $iterator: String, $sortBy: GallerySortBy, $filter: GalleryFilter, $limit: Int!) {
-                getCollection(data: {url: $url, iterator: $iterator, filter: $filter, limit: $limit, sortBy: $sortBy}) {
+            query GetCollection($id: Int!, $iterator: String, $sortBy: GallerySortBy, $filter: GalleryFilter, $limit: Int!) {
+                getCollection(data: {id: $id, iterator: $iterator, filter: $filter, limit: $limit, sortBy: $sortBy}) {
                     id url title createdAt isNsfw itemsCount
                     children {
                         iterator items {
@@ -584,6 +586,32 @@ async function queryGraphQL(opname, variables) {
                             albumContent { mediaSources { url width height isOptimized } }
                             mediaSources { url width height isOptimized }
                         }
+                    }
+                }
+            }
+        `,
+        GetCategories: `
+            query GetCategories($is_nsfw: Boolean!) {
+                categories(data: { is_nsfw: $is_nsfw }) {
+                    title
+                }
+            }
+        `,
+        GetCategory: `
+            query GetCategory($url: String!) {
+                getCategory(data: { url: $url }) {
+                    id
+                    url
+                    title
+                    isNsfw
+                }
+            }
+        `,
+        GetCategorySubreddits: `
+            query GetCategorySubreddits($categoryId: Int!) {
+                getCategorySubreddits(data: { categoryId: $categoryId }) {
+                    subreddits {
+                        subredditUrl
                     }
                 }
             }
@@ -645,14 +673,24 @@ function processAndAppendPosts(newItems) {
         let albumFiles = [];
         let isVideo = false;
         let posterUrl = null;
+        let mediaWidth = 300;
+        let mediaHeight = 400;
 
         if (item.albumContent && item.albumContent.length > 0) {
             isAlbum = true;
+            let albumWidth = 300;
+            let albumHeight = 400;
             albumFiles = item.albumContent.map(slide => {
                 const best = getHighestQuality(slide.mediaSources);
+                if (best) {
+                    albumWidth = best.width;
+                    albumHeight = best.height;
+                }
                 return best ? best.url : null;
             }).filter(u => u !== null);
             displayMedia = albumFiles[0];
+            mediaWidth = albumWidth;
+            mediaHeight = albumHeight;
         } else {
             // Check if there are any MP4/WEBM files in mediaSources to classify as video
             const videoSources = item.mediaSources.filter(src => src.url.includes('.mp4') || src.url.includes('.webm'));
@@ -660,6 +698,8 @@ function processAndAppendPosts(newItems) {
                 isVideo = true;
                 const bestVideo = getHighestQuality(videoSources);
                 displayMedia = bestVideo ? bestVideo.url : null;
+                mediaWidth = bestVideo ? bestVideo.width : 300;
+                mediaHeight = bestVideo ? bestVideo.height : 400;
                 
                 // Fetch best webp or image source as the poster cover
                 const imageSources = item.mediaSources.filter(src => !src.url.includes('.mp4') && !src.url.includes('.webm'));
@@ -668,6 +708,8 @@ function processAndAppendPosts(newItems) {
             } else {
                 const best = getHighestQuality(item.mediaSources);
                 displayMedia = best ? best.url : null;
+                mediaWidth = best ? best.width : 300;
+                mediaHeight = best ? best.height : 400;
             }
         }
 
@@ -677,7 +719,9 @@ function processAndAppendPosts(newItems) {
             isAlbum,
             albumFiles,
             isVideo,
-            posterUrl
+            posterUrl,
+            width: mediaWidth,
+            height: mediaHeight
         };
     }).filter(item => item.displayMedia !== null);
 
@@ -732,6 +776,10 @@ function renderCard(post) {
     const grid = document.getElementById('media-grid');
     const isVideo = post.isVideo;
     
+    // Calculate aspect ratio clamped between 50% and 180%
+    let ratio = (post.height && post.width) ? (post.height / post.width * 100) : 130;
+    ratio = Math.max(50, Math.min(180, ratio)).toFixed(2);
+    
     const card = document.createElement('div');
     card.className = 'media-card';
     card.dataset.id = post.id;
@@ -769,7 +817,7 @@ function renderCard(post) {
     const fillStar = isSaved ? 'style="fill: #ffb400"' : '';
 
     card.innerHTML = `
-        <div class="card-media-wrapper ${isVideo ? 'video-media' : ''}">
+        <div class="card-media-wrapper ${isVideo ? 'video-media' : ''}" style="padding-top: ${ratio}%;">
             ${badgesHtml}
             ${mediaHtml}
         </div>
@@ -1202,7 +1250,7 @@ function renderUserCollections() {
     
     container.classList.remove('hidden');
     list.innerHTML = state.userCollections.map(col => `
-        <li class="sidebar-item" data-url="${col.url}">
+        <li class="sidebar-item" data-id="${col.id}" data-url="${col.url}">
             <span class="sub-link-text">c/${col.title}</span>
             ${col.isNsfw ? '<span class="suggestion-badge-nsfw">18+</span>' : ''}
         </li>
@@ -1210,7 +1258,7 @@ function renderUserCollections() {
     
     list.querySelectorAll('.sidebar-item').forEach(item => {
         item.addEventListener('click', () => {
-            loadCollection(item.dataset.url, item.querySelector('.sub-link-text').textContent);
+            loadCollection(parseInt(item.dataset.id), item.querySelector('.sub-link-text').textContent);
             // Hide sidebar on mobile
             if (window.innerWidth <= 768) {
                 document.getElementById('sidebar').classList.add('hidden');
@@ -1221,14 +1269,14 @@ function renderUserCollections() {
 }
 
 // Load Scrolller User Collection Feed
-async function loadCollection(url, displayName) {
+async function loadCollection(id, displayName) {
     try {
         state.loading = true;
         state.posts = [];
         state.iterator = null;
         state.hasMore = true;
-        state.currentSubreddit = url;
-        state.subredditId = null;
+        state.currentSubreddit = id;
+        state.subredditId = id;
         state.isCollection = true;
         
         document.getElementById('media-grid').innerHTML = '';
@@ -1237,7 +1285,7 @@ async function loadCollection(url, displayName) {
         document.getElementById('star-sub-btn').classList.add('hidden');
         
         const response = await queryGraphQL('GetCollection', {
-            url: url,
+            id: id,
             filter: state.filter === 'ALL' ? null : state.filter,
             sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy,
             limit: 50,
@@ -1340,9 +1388,9 @@ function renderSubredditList(subreddits, queryText) {
     
     const banner = document.getElementById('sub-banner');
     banner.classList.remove('hidden');
-    document.getElementById('sub-title').textContent = `Search Catalog`;
-    document.getElementById('sub-description').textContent = `Subreddits matching "${queryText}"`;
-    document.getElementById('sub-subscribers').textContent = `Found ${subreddits.length} matching subreddits`;
+    document.getElementById('sub-title').textContent = queryText.startsWith('Category:') ? queryText : `Search Catalog`;
+    document.getElementById('sub-description').textContent = queryText.startsWith('Category:') ? `Explore subreddits listed under this category` : `Subreddits matching "${queryText}"`;
+    document.getElementById('sub-subscribers').textContent = `Found ${subreddits.length} subreddits`;
     document.getElementById('sub-item-count').textContent = `Scrolller Index`;
     banner.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.95))`;
     
@@ -1350,10 +1398,17 @@ function renderSubredditList(subreddits, queryText) {
         const card = document.createElement('div');
         card.className = 'subreddit-card glassmorphism';
         
+        const desc = sub.description ? sub.description : 'No description available for this subreddit.';
+        const items = sub.item_count ? `${formatNumber(sub.item_count)} items` : 'Multiple items';
+        
         card.innerHTML = `
             <div class="subreddit-card-header">
                 <span class="subreddit-card-title">r/${sub.title}</span>
                 ${sub.is_nsfw ? '<span class="suggestion-badge-nsfw">18+</span>' : '<span class="suggestion-subscribers" style="color:var(--accent)">SFW</span>'}
+            </div>
+            <p class="subreddit-card-desc">${desc}</p>
+            <div class="subreddit-card-meta">
+                <span class="meta-items">${items}</span>
             </div>
             <button class="subreddit-card-btn">Explore Feed</button>
         `;
@@ -1438,41 +1493,86 @@ function initUserAuthAndCategoryEvents() {
             if (cat === 'ALL') {
                 loadSubreddit('funny');
             } else {
-                const catSubs = {
-                    funny: [
-                        { title: "funny", url: "funny", is_nsfw: false },
-                        { title: "funnyvideos", url: "funnyvideos", is_nsfw: false },
-                        { title: "funnymeme", url: "funnymeme", is_nsfw: false },
-                        { title: "memes", url: "memes", is_nsfw: false },
-                        { title: "dankmemes", url: "dankmemes", is_nsfw: false }
-                    ],
-                    animals: [
-                        { title: "FunnyAnimals", url: "FunnyAnimals", is_nsfw: false },
-                        { title: "cats", url: "cats", is_nsfw: false },
-                        { title: "dogs", url: "dogs", is_nsfw: false },
-                        { title: "aww", url: "aww", is_nsfw: false },
-                        { title: "nature", url: "nature", is_nsfw: false }
-                    ],
-                    art: [
-                        { title: "art", url: "art", is_nsfw: false },
-                        { title: "drawing", url: "drawing", is_nsfw: false },
-                        { title: "illustration", url: "illustration", is_nsfw: false },
-                        { title: "digitalart", url: "digitalart", is_nsfw: false }
-                    ],
-                    gaming: [
-                        { title: "gaming", url: "gaming", is_nsfw: false },
-                        { title: "games", url: "games", is_nsfw: false },
-                        { title: "pcgaming", url: "pcgaming", is_nsfw: false }
-                    ],
-                    sports: [
-                        { title: "sports", url: "sports", is_nsfw: false },
-                        { title: "formula1", url: "formula1", is_nsfw: false },
-                        { title: "soccer", url: "soccer", is_nsfw: false }
-                    ]
-                };
-                
-                renderSubredditList(catSubs[cat], categorySelect.options[categorySelect.selectedIndex].text);
+                loadCategoryFeeds(cat);
             }
         });
+    }
+}
+
+// Fetch and populate Category select filter dropdown dynamically from Scrolller API
+async function loadCategoriesFilter() {
+    try {
+        const isNsfw = state.nsfwFilter !== 'SFW';
+        const data = await queryGraphQL('GetCategories', { is_nsfw: isNsfw });
+        
+        const select = document.getElementById('category-select');
+        if (!select) return;
+        
+        // Preserve "All Categories" option
+        select.innerHTML = '<option value="ALL">All Categories</option>';
+        
+        if (data && data.categories) {
+            data.categories.forEach(cat => {
+                const opt = document.createElement('option');
+                opt.value = cat.title;
+                opt.textContent = cat.title;
+                select.appendChild(opt);
+            });
+        }
+    } catch (err) {
+        console.error("Failed to load Scrolller categories list:", err);
+    }
+}
+
+// Load Scrolller Category feeds (lists category subreddits as exploration directory)
+async function loadCategoryFeeds(categoryName) {
+    try {
+        state.loading = true;
+        state.posts = [];
+        state.iterator = null;
+        state.hasMore = false;
+        state.currentSubreddit = '';
+        state.subredditId = null;
+        state.isCollection = false;
+        
+        document.getElementById('media-grid').innerHTML = '';
+        document.getElementById('loading-indicator').classList.remove('hidden');
+        document.getElementById('feed-end').classList.add('hidden');
+        document.getElementById('sub-banner').classList.add('hidden');
+        document.getElementById('star-sub-btn').classList.add('hidden');
+        
+        // Generate lowercase hyphenated slug, e.g. "Baby Animals" -> "baby-animals"
+        const slug = categoryName.toLowerCase().replace(/\s+/g, '-');
+        
+        // Query Category details to fetch categoryId
+        const catRes = await queryGraphQL('GetCategory', { url: slug });
+        const cat = catRes.getCategory;
+        if (!cat) {
+            document.getElementById('media-grid').innerHTML = `<div class="empty-list-msg">Category "${categoryName}" not found on Scrolller.</div>`;
+            return;
+        }
+        
+        // Fetch subreddits listed under this category
+        const subRes = await queryGraphQL('GetCategorySubreddits', { categoryId: cat.id });
+        if (subRes && subRes.getCategorySubreddits && subRes.getCategorySubreddits.subreddits) {
+            // Map subreddits to search-like output items for listing
+            const subreddits = subRes.getCategorySubreddits.subreddits.map(s => ({
+                title: s.subredditUrl,
+                url: s.subredditUrl,
+                is_nsfw: cat.isNsfw,
+                description: `Official Scrolller Subreddit listed under the "${categoryName}" category directory.`,
+                item_count: 0
+            }));
+            
+            renderSubredditList(subreddits, `Category: ${categoryName}`);
+        } else {
+            document.getElementById('media-grid').innerHTML = `<div class="empty-list-msg">No subreddits found for this category.</div>`;
+        }
+    } catch (err) {
+        console.error("Failed to load category subreddits directory:", err);
+        document.getElementById('media-grid').innerHTML = `<div class="empty-list-msg">Error loading category directory: ${err.message}</div>`;
+    } finally {
+        document.getElementById('loading-indicator').classList.add('hidden');
+        state.loading = false;
     }
 }
