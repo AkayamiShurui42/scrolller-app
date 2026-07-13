@@ -1275,3 +1275,40 @@ video.card-media {
     font-weight: 600;
     margin-bottom: 8px;
 }
+
+/* My Collections Header Button */
+.collections-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0, 229, 255, 0.08);
+    border: 1px solid rgba(0, 229, 255, 0.25);
+    color: var(--accent);
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.85rem;
+    transition: var(--transition-smooth);
+    margin-left: 14px;
+}
+
+.collections-btn:hover {
+    background: var(--accent);
+    color: #0b0c10;
+    box-shadow: var(--shadow-glow);
+}
+
+.collections-btn.hidden {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .collections-btn span {
+        display: none; /* Icon only on mobile to save space */
+    }
+    .collections-btn {
+        margin-left: 8px;
+        padding: 6px 8px;
+    }
+}

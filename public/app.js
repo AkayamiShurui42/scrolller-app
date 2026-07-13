@@ -1206,6 +1206,10 @@ async function syncUserProfile(token) {
             document.getElementById('user-profile-info').classList.remove('hidden');
             document.getElementById('user-profile-guest').classList.add('hidden');
             
+            // Show header collections button
+            const headerBtn = document.getElementById('header-collections-btn');
+            if (headerBtn) headerBtn.classList.remove('hidden');
+
             showToast(`Synced Scrolller account: ${state.userProfile.username}`);
             
             // Load user collections
@@ -1480,8 +1484,33 @@ function initUserAuthAndCategoryEvents() {
             document.getElementById('user-profile-guest').classList.remove('hidden');
             document.getElementById('user-collections-section').classList.add('hidden');
             
+            // Hide header collections button
+            const headerBtn = document.getElementById('header-collections-btn');
+            if (headerBtn) headerBtn.classList.add('hidden');
+            
             showToast("Signed out of Scrolller.");
             reloadFeed();
+        });
+    }
+
+    // Header collections shortcut button click listener
+    const headerBtn = document.getElementById('header-collections-btn');
+    if (headerBtn) {
+        headerBtn.addEventListener('click', () => {
+            const sidebar = document.getElementById('sidebar');
+            const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+            sidebar.classList.remove('hidden');
+            sidebarBackdrop.classList.remove('hidden');
+            
+            const target = document.getElementById('user-collections-section');
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth' });
+                target.style.transition = 'text-shadow 0.3s ease';
+                target.style.textShadow = '0 0 10px var(--accent)';
+                setTimeout(() => {
+                    target.style.textShadow = 'none';
+                }, 1000);
+            }
         });
     }
     
