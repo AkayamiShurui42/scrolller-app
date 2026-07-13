@@ -458,7 +458,7 @@ async function fetchSubredditChildren() {
 
         if (state.isCollection) {
             const response = await queryGraphQL('GetCollection', {
-                url: state.currentSubreddit,
+                id: state.subredditId,
                 filter: state.filter === 'ALL' ? null : state.filter,
                 sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy,
                 limit: 50,
