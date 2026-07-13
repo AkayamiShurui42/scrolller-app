@@ -1206,10 +1206,6 @@ async function syncUserProfile(token) {
             document.getElementById('user-profile-info').classList.remove('hidden');
             document.getElementById('user-profile-guest').classList.add('hidden');
             
-            // Show header collections button
-            const headerBtn = document.getElementById('header-collections-btn');
-            if (headerBtn) headerBtn.classList.remove('hidden');
-
             showToast(`Synced Scrolller account: ${state.userProfile.username}`);
             
             // Load user collections
@@ -1484,10 +1480,6 @@ function initUserAuthAndCategoryEvents() {
             document.getElementById('user-profile-guest').classList.remove('hidden');
             document.getElementById('user-collections-section').classList.add('hidden');
             
-            // Hide header collections button
-            const headerBtn = document.getElementById('header-collections-btn');
-            if (headerBtn) headerBtn.classList.add('hidden');
-            
             showToast("Signed out of Scrolller.");
             reloadFeed();
         });
@@ -1497,19 +1489,31 @@ function initUserAuthAndCategoryEvents() {
     const headerBtn = document.getElementById('header-collections-btn');
     if (headerBtn) {
         headerBtn.addEventListener('click', () => {
-            const sidebar = document.getElementById('sidebar');
-            const sidebarBackdrop = document.getElementById('sidebar-backdrop');
-            sidebar.classList.remove('hidden');
-            sidebarBackdrop.classList.remove('hidden');
-            
-            const target = document.getElementById('user-collections-section');
-            if (target) {
-                target.scrollIntoView({ behavior: 'smooth' });
-                target.style.transition = 'text-shadow 0.3s ease';
-                target.style.textShadow = '0 0 10px var(--accent)';
-                setTimeout(() => {
-                    target.style.textShadow = 'none';
-                }, 1000);
+            if (state.token) {
+                const sidebar = document.getElementById('sidebar');
+                const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+                sidebar.classList.remove('hidden');
+                sidebarBackdrop.classList.remove('hidden');
+                
+                const target = document.getElementById('user-collections-section');
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth' });
+                    target.style.transition = 'text-shadow 0.3s ease';
+                    target.style.textShadow = '0 0 10px var(--accent)';
+                    setTimeout(() => {
+                        target.style.textShadow = 'none';
+                    }, 1000);
+                }
+            } else {
+                // Show sign-in modal
+                const signinModal = document.getElementById('signin-modal');
+                if (signinModal) {
+                    signinModal.classList.remove('hidden');
+                    const signinError = document.getElementById('signin-error');
+                    if (signinError) signinError.classList.add('hidden');
+                    const signinTokenInput = document.getElementById('signin-token-input');
+                    if (signinTokenInput) signinTokenInput.value = '';
+                }
             }
         });
     }
