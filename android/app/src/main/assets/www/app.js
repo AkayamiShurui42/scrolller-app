@@ -555,11 +555,12 @@ async function queryGraphQL(opname, variables) {
                 }
             }
         `,
-        GetUserProfile: `
-            query GetUserProfile {
-                getUserProfile {
+        GetLoggedInUser: `
+            query GetLoggedInUser {
+                getLoggedInUser {
                     id
                     username
+                    email
                 }
             }
         `,
@@ -594,14 +595,13 @@ async function queryGraphQL(opname, variables) {
         variables: variables
     };
 
+    if (state.token) {
+        payload.authorization = state.token;
+    }
+
     // Determine target URL: WebView local files can fetch directly; browser pages must use proxy due to CORS.
     let endpoint = 'https://api.scrolller.com/admin';
     let headers = { 'Content-Type': 'application/json' };
-
-    // Inject Authorization Header if user session is active
-    if (state.token) {
-        headers['Authorization'] = `Bearer ${state.token}`;
-    }
 
     if (window.location.protocol !== 'file:' && !window.location.hostname.includes('127.0.0.1') && !window.location.hostname.includes('localhost')) {
         // We are on a normal HTTP site, use proxy to bypass CORS
@@ -1151,9 +1151,9 @@ async function syncUserProfile(token) {
         localStorage.setItem('scrolller_token', token);
         
         // Fetch user profile info
-        const profileData = await queryGraphQL('GetUserProfile', {});
-        if (profileData && profileData.getUserProfile) {
-            state.userProfile = profileData.getUserProfile;
+        const profileData = await queryGraphQL('GetLoggedInUser', {});
+        if (profileData && profileData.getLoggedInUser) {
+            state.userProfile = profileData.getLoggedInUser;
             document.getElementById('logged-user-name').textContent = state.userProfile.username;
             document.getElementById('user-profile-info').classList.remove('hidden');
             document.getElementById('user-profile-guest').classList.add('hidden');
