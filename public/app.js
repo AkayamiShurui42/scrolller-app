@@ -1476,12 +1476,22 @@ function initUserAuthAndCategoryEvents() {
     // Form submit
     if (signinSubmitBtn) {
         signinSubmitBtn.addEventListener('click', async () => {
-            const token = signinTokenInput.value.trim();
+            let token = signinTokenInput.value.trim();
             if (!token) {
                 signinError.textContent = 'Please paste a token first!';
                 signinError.classList.remove('hidden');
                 return;
             }
+
+            // Strip "Bearer " prefix if pasted
+            if (token.toLowerCase().startsWith('bearer ')) {
+                token = token.substring(7).trim();
+            }
+            // Strip surrounding double quotes if pasted
+            if (token.startsWith('"') && token.endsWith('"')) {
+                token = token.slice(1, -1).trim();
+            }
+
             signinError.classList.add('hidden');
             
             try {
