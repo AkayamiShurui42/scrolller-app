@@ -301,6 +301,17 @@ function initEventListeners() {
     document.getElementById('next-btn').addEventListener('click', showNextPost);
     document.getElementById('viewer-immersive-btn').addEventListener('click', toggleImmersiveMode);
     document.getElementById('viewer-save-btn').addEventListener('click', togglePostSave);
+    document.getElementById('viewer-add-col-btn').addEventListener('click', () => {
+        const post = state.posts[state.currentViewerIndex];
+        if (post) openAddToCollectionModal(post);
+    });
+
+    const closeColSelector = document.getElementById('collection-selector-close-btn');
+    if (closeColSelector) {
+        closeColSelector.addEventListener('click', () => {
+            document.getElementById('collection-selector-modal').classList.add('hidden');
+        });
+    }
 
     viewer.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeViewer();
@@ -615,6 +626,11 @@ async function queryGraphQL(opname, variables) {
                     }
                 }
             }
+        `,
+        AddPostToCollection: `
+            mutation AddPostToCollection($postId: Int!, $collectionId: Int!) {
+                addPostToCollection(data: { postId: $postId, collectionId: $collectionId })
+            }
         `
     };
 
@@ -825,11 +841,16 @@ function renderCard(post) {
             <div class="card-title">${post.title || 'Untitled Post'}</div>
             <div class="card-footer">
                 <a href="https://reddit.com${post.redditPath}" target="_blank" class="card-sub" rel="noopener">r/${post.subredditTitle}</a>
-                <button class="card-save-btn" aria-label="Save post">
-                    <svg viewBox="0 0 24 24" width="18" height="18" ${fillStar}>
-                        <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" fill="${saveIcon}"/>
-                    </svg>
-                </button>
+                <div class="card-footer-actions">
+                    <button class="card-save-btn" aria-label="Save post">
+                        <svg viewBox="0 0 24 24" width="18" height="18" ${fillStar}>
+                            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" fill="${saveIcon}"/>
+                        </svg>
+                    </button>
+                    <button class="card-add-col-btn" aria-label="Add to Collection" title="Add to Scrolller Collection">
+                        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-1 8h-3v3h-2v-3h-3v-2h3V9h2v3h3v2z" fill="currentColor"/></svg>
+                    </button>
+                </div>
             </div>
         </div>
     `;
@@ -858,6 +879,12 @@ function renderCard(post) {
     card.querySelector('.card-save-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         togglePostSaveFromCard(post, card.querySelector('.card-save-btn svg path'));
+    });
+
+    // Add to collection click handler
+    card.querySelector('.card-add-col-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openAddToCollectionModal(post);
     });
 
     grid.appendChild(card);
@@ -1608,4 +1635,68 @@ async function loadCategoryFeeds(categoryName) {
         document.getElementById('loading-indicator').classList.add('hidden');
         state.loading = false;
     }
+}
+
+// Open collection selector modal and add post to Scrolller collection via AddPostToCollection mutation
+function openAddToCollectionModal(post) {
+    if (!state.token) {
+        const signinModal = document.getElementById('signin-modal');
+        if (signinModal) {
+            signinModal.classList.remove('hidden');
+            const signinError = document.getElementById('signin-error');
+            if (signinError) signinError.classList.add('hidden');
+            const signinTokenInput = document.getElementById('signin-token-input');
+            if (signinTokenInput) signinTokenInput.value = '';
+        }
+        showToast("Please sign in to add to your collections!");
+        return;
+    }
+    
+    const modal = document.getElementById('collection-selector-modal');
+    const container = document.getElementById('selector-collections-list');
+    if (!modal || !container) return;
+    
+    container.innerHTML = '';
+    
+    if (!state.userCollections || state.userCollections.length === 0) {
+        container.innerHTML = `<div class="empty-list-msg">You don't have any collections yet. Create one on Scrolller first!</div>`;
+    } else {
+        state.userCollections.forEach(col => {
+            const item = document.createElement('div');
+            item.className = 'selector-col-item';
+            item.innerHTML = `
+                <span class="selector-col-title">c/${col.title}</span>
+                ${col.isNsfw ? '<span class="selector-col-badge nsfw">18+</span>' : '<span class="selector-col-badge">SFW</span>'}
+            `;
+            
+            item.addEventListener('click', async () => {
+                try {
+                    item.style.opacity = '0.5';
+                    item.style.pointerEvents = 'none';
+                    
+                    const res = await queryGraphQL('AddPostToCollection', {
+                        postId: parseInt(post.id),
+                        collectionId: parseInt(col.id)
+                    });
+                    
+                    if (res && res.addPostToCollection !== undefined) {
+                        showToast(`Added successfully to c/${col.title}!`);
+                        modal.classList.add('hidden');
+                    } else {
+                        throw new Error("Failed to add content.");
+                    }
+                } catch (err) {
+                    console.error("Failed to add post to collection:", err);
+                    showToast(`Failed to add post: ${err.message}`);
+                } finally {
+                    item.style.opacity = '1';
+                    item.style.pointerEvents = 'auto';
+                }
+            });
+            
+            container.appendChild(item);
+        });
+    }
+    
+    modal.classList.remove('hidden');
 }

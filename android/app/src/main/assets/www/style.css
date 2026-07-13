@@ -1312,3 +1312,51 @@ video.card-media {
         padding: 6px 8px;
     }
 }
+
+/* Add to Collection Modal Selector elements */
+.selector-collections-container {
+    max-height: 250px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 14px;
+    padding-right: 4px;
+}
+
+.selector-col-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 12px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: var(--transition-smooth);
+}
+
+.selector-col-item:hover {
+    background: rgba(0, 229, 255, 0.08);
+    border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.15);
+}
+
+.selector-col-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.selector-col-badge {
+    font-size: 0.7rem;
+    background: rgba(0, 229, 255, 0.15);
+    color: var(--accent);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.selector-col-badge.nsfw {
+    background: rgba(255, 46, 99, 0.15);
+    color: #ff2e63;
+}
