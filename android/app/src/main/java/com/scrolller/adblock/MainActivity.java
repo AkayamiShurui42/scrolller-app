@@ -58,8 +58,18 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
+                
+                // Bypassing anti-adblock detection checks by returning successful mock empty scripts
+                if (url.contains("doubleclick.net") || 
+                    url.contains("googlesyndication.com") || 
+                    url.contains("google-analytics.com") || 
+                    url.contains("googletagmanager.com")) {
+                    return new WebResourceResponse("application/javascript", "UTF-8", 
+                            new ByteArrayInputStream("console.log('Mocked Ad Network response for Adblock Detection bypass');".getBytes()));
+                }
+                
+                // Block other ad networks, webcams, and trackers
                 if (isAdOrCamsUrl(url)) {
-                    // Block ad, cams, trackers, and popup requests
                     return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream("".getBytes()));
                 }
                 return super.shouldInterceptRequest(view, request);
@@ -84,8 +94,6 @@ public class MainActivity extends AppCompatActivity {
                lowerUrl.contains("chaturbate") || 
                lowerUrl.contains("stripchat") || 
                lowerUrl.contains("cams") || 
-               lowerUrl.contains("doubleclick") || 
-               lowerUrl.contains("google-analytics") || 
                lowerUrl.contains("popads") || 
                lowerUrl.contains("trafficjunky") || 
                lowerUrl.contains("onclickads") || 
@@ -96,26 +104,41 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void injectCustomFilters(WebView view) {
-        // Inject JS style and mutation observer to hide ad layout placeholders and override premium upgrade block dialogs
+        // Inject style and dynamic watcher to strip ads, live cams, adblock popups, and premium walls
+        // Excluding 'login' or 'auth' modals to keep sign-in functionality fully operational
         String js = "javascript:(function() {" +
                 "var style = document.createElement('style');" +
                 "style.innerHTML = '" +
-                "  iframe, [class*=\"Cam\"], [class*=\"cam\"], [class*=\"sponsored\"], [class*=\"adContainer\"], [class*=\"exoclick\"], [class*=\"juicyads\"], a[href*=\"chaturbate\"], a[href*=\"stripchat\"], div[class*=\"Premium\"], div[class*=\"premium\"], div[class*=\"Upgrade\"], div[class*=\"upgrade\"] { display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important; }" +
-                "  html, body { overflow: auto !important; position: initial !important; }" +
+                "  iframe, [class*=\"Cam\"], [class*=\"cam\"], [class*=\"sponsored\"], [class*=\"adContainer\"], [class*=\"exoclick\"], [class*=\"juicyads\"], a[href*=\"chaturbate\"], a[href*=\"stripchat\"], [class*=\"Premium\"], [class*=\"Upgrade\"], [class*=\"paywall\"], [class*=\"Paywall\"], [class*=\"Adblock\"], [class*=\"AdBlock\"], [class*=\"ad-block\"], [class*=\"Billing\"] { display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important; }" +
+                "  html, body { overflow: auto !important; position: initial !important; pointer-events: auto !important; }" +
                 "';" +
                 "document.head.appendChild(style);" +
                 "" +
+                "function cleanUpBody() {" +
+                "  if (document.body) {" +
+                "    document.body.style.overflow = \"auto\";" +
+                "    document.body.style.position = \"initial\";" +
+                "  }" +
+                "  if (document.documentElement) {" +
+                "    document.documentElement.style.overflow = \"auto\";" +
+                "  }" +
+                "}" +
+                "" +
                 "var observer = new MutationObserver(function(mutations) {" +
-                "  document.querySelectorAll('div').forEach(function(div) {" +
-                "    var className = div.className || \"\";" +
-                "    if (typeof className === \"string\") {" +
-                "      if (className.includes(\"Premium\") || className.includes(\"premium\") || className.includes(\"Upgrade\") || className.includes(\"upgrade\") || className.includes(\"Modal\") || className.includes(\"Popup\")) {" +
-                "        div.style.display = \"none\";" +
+                "  cleanUpBody();" +
+                "  document.querySelectorAll('div').forEach(function(el) {" +
+                "    var className = el.className || \"\";" +
+                "    if (typeof className === \"string\" && className) {" +
+                "      var lowerClass = className.toLowerCase();" +
+                "      if ((lowerClass.includes(\"premium\") || lowerClass.includes(\"upgrade\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"adblock\") || lowerClass.includes(\"billing\")) " +
+                "          && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
+                "        el.remove();" +
                 "      }" +
                 "    }" +
                 "  });" +
                 "});" +
                 "observer.observe(document.documentElement, { childList: true, subtree: true });" +
+                "setInterval(cleanUpBody, 200);" +
                 "})()";
         view.loadUrl(js);
     }
