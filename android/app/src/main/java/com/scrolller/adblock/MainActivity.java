@@ -108,6 +108,9 @@ public class MainActivity extends AppCompatActivity {
                lowerUrl.contains("adservice") || 
                lowerUrl.contains("adsystem") || 
                lowerUrl.contains("sponsored") || 
+               lowerUrl.contains("sponsor") || 
+               lowerUrl.contains("promotion") || 
+               lowerUrl.contains("promoted") || 
                lowerUrl.contains("a.cant3am.com");
     }
 
@@ -120,7 +123,7 @@ public class MainActivity extends AppCompatActivity {
                 "  " +
                 "  var style = document.createElement('style');" +
                 "  style.innerHTML = '" +
-                "    iframe, [class*=\"Cam\"], [class*=\"cam\"], [class*=\"sponsored\"], [class*=\"adContainer\"], [class*=\"exoclick\"], [class*=\"juicyads\"], a[href*=\"chaturbate\"], a[href*=\"stripchat\"], [class*=\"Premium\"], [class*=\"Upgrade\"], [class*=\"paywall\"], [class*=\"Paywall\"], [class*=\"Adblock\"], [class*=\"AdBlock\"], [class*=\"ad-block\"], [class*=\"Billing\"] { display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important; }" +
+                "    iframe, [class*=\"Cam\"], [class*=\"cam\"], [class*=\"sponsored\"], [class*=\"sponsor\"], [class*=\"Sponsor\"], [class*=\"promoted\"], [class*=\"Promoted\"], [class*=\"promotion\"], [class*=\"Promotion\"], [class*=\"adContainer\"], [class*=\"exoclick\"], [class*=\"juicyads\"], a[href*=\"chaturbate\"], a[href*=\"stripchat\"], [class*=\"Premium\"], [class*=\"Upgrade\"], [class*=\"paywall\"], [class*=\"Paywall\"], [class*=\"Adblock\"], [class*=\"AdBlock\"], [class*=\"ad-block\"], [class*=\"Billing\"] { display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important; }" +
                 "    html, body { overflow: auto !important; position: initial !important; pointer-events: auto !important; }" +
                 "  ';" +
                 "  document.head.appendChild(style);" +
@@ -141,7 +144,7 @@ public class MainActivity extends AppCompatActivity {
                 "      var className = el.className || \"\";" +
                 "      if (typeof className === \"string\" && className) {" +
                 "        var lowerClass = className.toLowerCase();" +
-                "        if ((lowerClass.includes(\"premium\") || lowerClass.includes(\"upgrade\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"adblock\") || lowerClass.includes(\"billing\")) " +
+                "        if ((lowerClass.includes(\"premium\") || lowerClass.includes(\"upgrade\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"adblock\") || lowerClass.includes(\"billing\") || lowerClass.includes(\"sponsor\") || lowerClass.includes(\"promot\")) " +
                 "            && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
                 "          el.remove();" +
                 "        }" +
@@ -166,8 +169,15 @@ public class MainActivity extends AppCompatActivity {
                 "            var originalLength = obj.length;" +
                 "            var filtered = obj.filter(item => {" +
                 "              if (item && typeof item === 'object') {" +
-                "                if (item.isAd === true || item.is_ad === true) return false;" +
-                "                if (item.title && (item.title.toLowerCase().includes('cam') || item.title.toLowerCase().includes('sponsored'))) return false;" +
+                "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true) return false;" +
+                "                if (item.title && typeof item.title === 'string') {" +
+                "                  var t = item.title.toLowerCase();" +
+                "                  if (t.includes('cam') || t.includes('sponsor') || t.includes('promot')) return false;" +
+                "                }" +
+                "                if (item.description && typeof item.description === 'string') {" +
+                "                  var d = item.description.toLowerCase();" +
+                "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot')) return false;" +
+                "                }" +
                 "              }" +
                 "              return true;" +
                 "            });" +
