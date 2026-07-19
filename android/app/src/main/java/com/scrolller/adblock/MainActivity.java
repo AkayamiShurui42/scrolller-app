@@ -124,7 +124,7 @@ public class MainActivity extends AppCompatActivity {
                 "  var style = document.createElement('style');" +
                 "  style.innerHTML = '" +
                 "    iframe, ins, [class*=\"Cam\"], [class*=\"cam\"], [class*=\"sponsored\"], [class*=\"sponsor\"], [class*=\"Sponsor\"], [class*=\"promoted\"], [class*=\"Promoted\"], [class*=\"promotion\"], [class*=\"Promotion\"], [class*=\"adContainer\"], [class*=\"exoclick\"], [class*=\"juicyads\"], a[href*=\"chaturbate\"], a[href*=\"stripchat\"], [class*=\"Premium\"], [class*=\"Upgrade\"], [class*=\"paywall\"], [class*=\"Paywall\"], [class*=\"Adblock\"], [class*=\"AdBlock\"], [class*=\"ad-block\"], [class*=\"Billing\"] { display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important; }" +
-                "    div[class*=\"slide\"]:has(iframe), div[class*=\"slide\"]:has(a[href*=\"chaturbate\"]), div[class*=\"slide\"]:has(a[href*=\"stripchat\"]), div[class*=\"slide\"]:has([class*=\"Cam\"]), div[class*=\"slide\"]:has([class*=\"cam\"]), div[class*=\"slide\"]:has([class*=\"sponsored\"]), div[class*=\"slide\"]:has([class*=\"sponsor\"]), div[class*=\"slide\"]:has([class*=\"Sponsor\"]), div[class*=\"slide\"]:has([class*=\"promoted\"]), div[class*=\"slide\"]:has([class*=\"Promoted\"]), div[class*=\"slide\"]:has([class*=\"promotion\"]), div[class*=\"slide\"]:has([class*=\"Promotion\"]), div[class*=\"card\"]:has(iframe), div[class*=\"card\"]:has([class*=\"cam\"]), div[class*=\"card\"]:has([class*=\"sponsored\"]) { display: none !important; height: 0 !important; width: 0 !important; visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }" +
+                "    div[class*=\"slide\"]:has(iframe), div[class*=\"slide\"]:has(a[href*=\"chaturbate\"]), div[class*=\"slide\"]:has(a[href*=\"stripchat\"]), div[class*=\"slide\"]:has([class*=\"Cam\"]), div[class*=\"slide\"]:has([class*=\"cam\"]), div[class*=\"slide\"]:has([class*=\"sponsored\"]), div[class*=\"slide\"]:has([class*=\"sponsor\"]), div[class*=\"slide\"]:has([class*=\"Sponsor\"]), div[class*=\"slide\"]:has([class*=\"promoted\"]), div[class*=\"slide\"]:has([class*=\"Promoted\"]), div[class*=\"slide\"]:has([class*=\"promotion\"]), div[class*=\"slide\"]:has([class*=\"Promotion\"]), div[class*=\"slide\"]:has(a[href*=\"/collection/\"]), div[class*=\"slide\"]:has(a[href*=\"/checkout/\"]), div[class*=\"slide\"]:has(a[href*=\"/creator/\"]), div[class*=\"card\"]:has(iframe), div[class*=\"card\"]:has([class*=\"cam\"]), div[class*=\"card\"]:has([class*=\"sponsored\"]), div[class*=\"card\"]:has(a[href*=\"/collection/\"]), div[class*=\"card\"]:has(a[href*=\"/checkout/\"]), div[class*=\"card\"]:has(a[href*=\"/creator/\"]) { display: none !important; height: 0 !important; width: 0 !important; visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }" +
                 "    html, body { overflow: auto !important; position: initial !important; pointer-events: auto !important; }" +
                 "  ';" +
                 "  document.head.appendChild(style);" +
@@ -171,13 +171,22 @@ public class MainActivity extends AppCompatActivity {
                 "            var filtered = obj.filter(item => {" +
                 "              if (item && typeof item === 'object') {" +
                 "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true) return false;" +
+                "                if (item.collectionId !== undefined || item.creatorId !== undefined || item.creatorName !== undefined) return false;" +
+                "                if (item.url && typeof item.url === 'string') {" +
+                "                  var u = item.url.toLowerCase();" +
+                "                  if (u.includes('/collection/') || u.includes('/checkout/') || u.includes('/creator/') || u.includes('cant3am.com')) return false;" +
+                "                }" +
+                "                if (item.redditPath && typeof item.redditPath === 'string') {" +
+                "                  var rp = item.redditPath.toLowerCase();" +
+                "                  if (rp.includes('/collection/') || rp.includes('/checkout/') || rp.includes('/creator/')) return false;" +
+                "                }" +
                 "                if (item.title && typeof item.title === 'string') {" +
                 "                  var t = item.title.toLowerCase();" +
-                "                  if (t.includes('cam') || t.includes('sponsor') || t.includes('promot')) return false;" +
+                "                  if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('unlock') || t.includes('collection')) return false;" +
                 "                }" +
                 "                if (item.description && typeof item.description === 'string') {" +
                 "                  var d = item.description.toLowerCase();" +
-                "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot')) return false;" +
+                "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('unlock') || d.includes('collection')) return false;" +
                 "                }" +
                 "              }" +
                 "              return true;" +
