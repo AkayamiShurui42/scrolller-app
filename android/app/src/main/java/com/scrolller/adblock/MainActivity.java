@@ -35,6 +35,14 @@ public class MainActivity extends AppCompatActivity {
         settings.setDatabaseEnabled(true);
         settings.setAllowFileAccess(true);
         
+        // Force high-quality desktop video streams by setting desktop user agent
+        String desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        settings.setUserAgentString(desktopUserAgent);
+
+        // Scale pages properly like a desktop browser
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
+
         // Autoplay support for videos
         settings.setMediaPlaybackRequiresUserGesture(false);
 
@@ -59,7 +67,7 @@ public class MainActivity extends AppCompatActivity {
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
                 
-                // Bypassing anti-adblock detection checks by returning successful mock empty scripts
+                // Bypass anti-adblock detection checks by returning successful mock empty scripts
                 if (url.contains("doubleclick.net") || 
                     url.contains("googlesyndication.com") || 
                     url.contains("google-analytics.com") || 
@@ -104,43 +112,98 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void injectCustomFilters(WebView view) {
-        // Inject style and dynamic watcher to strip ads, live cams, adblock popups, and premium walls
+        // Inject JS style, MutationObserver and fetch hook to strip ads, live cams, adblock popups, and premium walls
         // Excluding 'login' or 'auth' modals to keep sign-in functionality fully operational
-        String js = "javascript:(function() {" +
-                "var style = document.createElement('style');" +
-                "style.innerHTML = '" +
-                "  iframe, [class*=\"Cam\"], [class*=\"cam\"], [class*=\"sponsored\"], [class*=\"adContainer\"], [class*=\"exoclick\"], [class*=\"juicyads\"], a[href*=\"chaturbate\"], a[href*=\"stripchat\"], [class*=\"Premium\"], [class*=\"Upgrade\"], [class*=\"paywall\"], [class*=\"Paywall\"], [class*=\"Adblock\"], [class*=\"AdBlock\"], [class*=\"ad-block\"], [class*=\"Billing\"] { display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important; }" +
-                "  html, body { overflow: auto !important; position: initial !important; pointer-events: auto !important; }" +
-                "';" +
-                "document.head.appendChild(style);" +
-                "" +
-                "function cleanUpBody() {" +
-                "  if (document.body) {" +
-                "    document.body.style.overflow = \"auto\";" +
-                "    document.body.style.position = \"initial\";" +
-                "  }" +
-                "  if (document.documentElement) {" +
-                "    document.documentElement.style.overflow = \"auto\";" +
-                "  }" +
-                "}" +
-                "" +
-                "var observer = new MutationObserver(function(mutations) {" +
-                "  cleanUpBody();" +
-                "  document.querySelectorAll('div').forEach(function(el) {" +
-                "    var className = el.className || \"\";" +
-                "    if (typeof className === \"string\" && className) {" +
-                "      var lowerClass = className.toLowerCase();" +
-                "      if ((lowerClass.includes(\"premium\") || lowerClass.includes(\"upgrade\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"adblock\") || lowerClass.includes(\"billing\")) " +
-                "          && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
-                "        el.remove();" +
-                "      }" +
+        String js = "(function() {" +
+                "  if (window.adblockFiltersInjected) return;" +
+                "  window.adblockFiltersInjected = true;" +
+                "  " +
+                "  var style = document.createElement('style');" +
+                "  style.innerHTML = '" +
+                "    iframe, [class*=\"Cam\"], [class*=\"cam\"], [class*=\"sponsored\"], [class*=\"adContainer\"], [class*=\"exoclick\"], [class*=\"juicyads\"], a[href*=\"chaturbate\"], a[href*=\"stripchat\"], [class*=\"Premium\"], [class*=\"Upgrade\"], [class*=\"paywall\"], [class*=\"Paywall\"], [class*=\"Adblock\"], [class*=\"AdBlock\"], [class*=\"ad-block\"], [class*=\"Billing\"] { display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important; }" +
+                "    html, body { overflow: auto !important; position: initial !important; pointer-events: auto !important; }" +
+                "  ';" +
+                "  document.head.appendChild(style);" +
+                "  " +
+                "  function cleanUpBody() {" +
+                "    if (document.body) {" +
+                "      document.body.style.overflow = \"auto\";" +
+                "      document.body.style.position = \"initial\";" +
                 "    }" +
+                "    if (document.documentElement) {" +
+                "      document.documentElement.style.overflow = \"auto\";" +
+                "    }" +
+                "  }" +
+                "  " +
+                "  var observer = new MutationObserver(function(mutations) {" +
+                "    cleanUpBody();" +
+                "    document.querySelectorAll('div').forEach(function(el) {" +
+                "      var className = el.className || \"\";" +
+                "      if (typeof className === \"string\" && className) {" +
+                "        var lowerClass = className.toLowerCase();" +
+                "        if ((lowerClass.includes(\"premium\") || lowerClass.includes(\"upgrade\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"adblock\") || lowerClass.includes(\"billing\")) " +
+                "            && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
+                "          el.remove();" +
+                "        }" +
+                "      }" +
+                "    });" +
                 "  });" +
-                "});" +
-                "observer.observe(document.documentElement, { childList: true, subtree: true });" +
-                "setInterval(cleanUpBody, 200);" +
+                "  observer.observe(document.documentElement, { childList: true, subtree: true });" +
+                "  setInterval(cleanUpBody, 200);" +
+                "  " +
+                "  var originalFetch = window.fetch;" +
+                "  window.fetch = async function(...args) {" +
+                "    var response = await originalFetch.apply(this, args);" +
+                "    var url = args[0];" +
+                "    if (typeof url === 'string' && url.includes('/graphql')) {" +
+                "      try {" +
+                "        var clone = response.clone();" +
+                "        var json = await clone.json();" +
+                "        var modified = false;" +
+                "        function filterAds(obj) {" +
+                "          if (!obj || typeof obj !== 'object') return obj;" +
+                "          if (Array.isArray(obj)) {" +
+                "            var originalLength = obj.length;" +
+                "            var filtered = obj.filter(item => {" +
+                "              if (item && typeof item === 'object') {" +
+                "                if (item.isAd === true || item.is_ad === true) return false;" +
+                "                if (item.title && (item.title.toLowerCase().includes('cam') || item.title.toLowerCase().includes('sponsored'))) return false;" +
+                "              }" +
+                "              return true;" +
+                "            });" +
+                "            if (filtered.length !== originalLength) {" +
+                "              modified = true;" +
+                "              obj.length = 0;" +
+                "              obj.push(...filtered.map(filterAds));" +
+                "            } else {" +
+                "              obj.forEach((val, idx) => { obj[idx] = filterAds(val); });" +
+                "            }" +
+                "          } else {" +
+                "            for (var key in obj) {" +
+                "              if (obj.hasOwnProperty(key)) obj[key] = filterAds(obj[key]);" +
+                "            }" +
+                "          }" +
+                "          return obj;" +
+                "        }" +
+                "        filterAds(json);" +
+                "        if (modified) {" +
+                "          return new Response(JSON.stringify(json), {" +
+                "            status: response.status," +
+                "            statusText: response.statusText," +
+                "            headers: response.headers" +
+                "          });" +
+                "        }" +
+                "      } catch (err) { console.error(err); }" +
+                "    }" +
+                "    return response;" +
+                "  };" +
                 "})()";
-        view.loadUrl(js);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            view.evaluateJavascript(js, null);
+        } else {
+            view.loadUrl("javascript:" + js);
+        }
     }
 
     @Override
