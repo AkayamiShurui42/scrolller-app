@@ -202,11 +202,11 @@ public class MainActivity extends AppCompatActivity {
                 "                }" +
                 "                if (item.title && typeof item.title === 'string') {" +
                 "                  var t = item.title.toLowerCase();" +
-                "                  if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock')) return false;" +
+                "                  if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\\bpro\\b/.test(t)) return false;" +
                 "                }" +
                 "                if (item.description && typeof item.description === 'string') {" +
                 "                  var d = item.description.toLowerCase();" +
-                "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('premium') || d.includes('unlock')) return false;" +
+                "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('premium') || d.includes('unlock') || /\\bpro\\b/.test(d)) return false;" +
                 "                }" +
                 "              }" +
                 "              return true;" +
