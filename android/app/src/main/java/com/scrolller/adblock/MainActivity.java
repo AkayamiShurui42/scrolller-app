@@ -161,8 +161,29 @@ public class MainActivity extends AppCompatActivity {
                 "  " +
                 "  var originalFetch = window.fetch;" +
                 "  window.fetch = async function(...args) {" +
-                "    var response = await originalFetch.apply(this, args);" +
                 "    var url = args[0];" +
+                "    var options = args[1];" +
+                "    if (typeof url === 'string' && url.includes('/graphql') && options && options.body) {" +
+                "      try {" +
+                "        var bodyObj = JSON.parse(options.body);" +
+                "        var modifiedReq = false;" +
+                "        if (bodyObj && bodyObj.variables) {" +
+                "          for (var key in bodyObj.variables) {" +
+                "            if (bodyObj.variables.hasOwnProperty(key)) {" +
+                "              var val = bodyObj.variables[key];" +
+                "              if ((key.toLowerCase().includes('postid') || key === 'id') && typeof val === 'string' && /^\\d+$/.test(val)) {" +
+                "                bodyObj.variables[key] = parseInt(val, 10);" +
+                "                modifiedReq = true;" +
+                "              }" +
+                "            }" +
+                "          }" +
+                "        }" +
+                "        if (modifiedReq) {" +
+                "          options.body = JSON.stringify(bodyObj);" +
+                "        }" +
+                "      } catch (e) { console.error('GraphQL variables auto-correction error:', e); }" +
+                "    }" +
+                "    var response = await originalFetch.apply(this, args);" +
                 "    if (typeof url === 'string' && url.includes('/graphql')) {" +
                 "      try {" +
                 "        var clone = response.clone();" +
