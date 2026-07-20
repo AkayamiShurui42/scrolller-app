@@ -159,6 +159,19 @@ public class MainActivity extends AppCompatActivity {
                 "  observer.observe(document.documentElement, { childList: true, subtree: true });" +
                 "  setInterval(cleanUpBody, 200);" +
                 "  " +
+                "  /* Force active premium state inside localStorage for Zustand client store loading initialization */" +
+                "  try {" +
+                "    var localLogin = localStorage.getItem('scrolller-login-details');" +
+                "    if (localLogin) {" +
+                "      var loginObj = JSON.parse(localLogin);" +
+                "      if (loginObj && !loginObj.isPremium) {" +
+                "        loginObj.isPremium = true;" +
+                "        loginObj.status = 'ACTIVE';" +
+                "        localStorage.setItem('scrolller-login-details', JSON.stringify(loginObj));" +
+                "      }" +
+                "    }" +
+                "  } catch (e) { console.error('Local login patch error:', e); }" +
+                "  " +
                 "  var originalFetch = window.fetch;" +
                 "  window.fetch = async function(...args) {" +
                 "    var url = args[0];" +
