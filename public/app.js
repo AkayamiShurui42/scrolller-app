@@ -689,7 +689,7 @@ function processAndAppendPosts(newItems) {
         }
         if (item.title && typeof item.title === 'string') {
             const t = item.title.toLowerCase();
-            if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\bpro\b/.test(t)) return false;
+            if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\bpro\b/.test(t) || t.includes('wank') || t.includes('wish me luck') || t.includes('link in bio') || t.includes('onlyfans') || t.includes('snapchat') || t.includes('bio link')) return false;
         }
         
         // Ensure item has some media sources

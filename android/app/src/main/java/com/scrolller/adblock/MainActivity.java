@@ -158,6 +158,16 @@ public class MainActivity extends AppCompatActivity {
                 "        if ((lowerClass.includes(\"premium\") || lowerClass.includes(\"upgrade\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"adblock\") || lowerClass.includes(\"billing\") || lowerClass.includes(\"sponsor\") || lowerClass.includes(\"promot\")) " +
                 "            && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
                 "          el.remove();" +
+                "          return;" +
+                "        }" +
+                "      }" +
+                "      var text = el.textContent || \"\";" +
+                "      var lowerText = text.toLowerCase();" +
+                "      if ((lowerText.includes(\"ad-free\") || lowerText.includes(\"ad free\") || lowerText.includes(\"remove ads\") || lowerText.includes(\"enjoying scrolller\") || lowerText.includes(\"get premium\")) " +
+                "          && !lowerText.includes(\"login\") && !lowerText.includes(\"username\") && !lowerText.includes(\"password\") && !lowerText.includes(\"collection\") && !lowerText.includes(\"search\")) {" +
+                "        var modal = el.closest('[class*=\"Dialog\"]') || el.closest('[class*=\"Modal\"]') || el.closest('[class*=\"popup\"]') || el;" +
+                "        if (modal && modal.parentNode) {" +
+                "          modal.remove();" +
                 "        }" +
                 "      }" +
                 "    });" +
@@ -208,7 +218,7 @@ public class MainActivity extends AppCompatActivity {
                 "        var clone = response.clone();" +
                 "        var json = await clone.json();" +
                 "        var modified = false;" +
-                "        function filterAds(obj) {" +
+                "                "        function filterAds(obj) {" +
                 "          if (!obj || typeof obj !== 'object') return obj;" +
                 "          if (Array.isArray(obj)) {" +
                 "            var originalLength = obj.length;" +
@@ -221,11 +231,46 @@ public class MainActivity extends AppCompatActivity {
                 "                }" +
                 "                if (item.title && typeof item.title === 'string') {" +
                 "                  var t = item.title.toLowerCase();" +
-                "                  if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\\bpro\\b/.test(t)) return false;" +
+                "                  if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\\bpro\\b/.test(t) || t.includes('wank') || t.includes('wish me luck') || t.includes('link in bio') || t.includes('onlyfans') || t.includes('snapchat') || t.includes('bio link')) return false;" +
                 "                }" +
                 "                if (item.description && typeof item.description === 'string') {" +
                 "                  var d = item.description.toLowerCase();" +
-                "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('premium') || d.includes('unlock') || /\\bpro\\b/.test(d)) return false;" +
+                "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('premium') || d.includes('unlock') || /\\bpro\\b/.test(d) || d.includes('wank') || d.includes('wish me luck') || d.includes('link in bio') || d.includes('onlyfans') || d.includes('snapchat') || d.includes('bio link')) return false;" +
+                "                }" +
+                "                /* Force HD media quality by replacing all sources with the highest resolution original */" +
+                "                if (item.mediaSources && Array.isArray(item.mediaSources) && item.mediaSources.length > 0) {" +
+                "                  var sorted = [...item.mediaSources].sort((a, b) => {" +
+                "                    if (b.width !== a.width) return b.width - a.width;" +
+                "                    return (a.isOptimized ? 1 : 0) - (b.isOptimized ? 0 : 1);" +
+                "                  });" +
+                "                  var best = sorted[0];" +
+                "                  if (best) {" +
+                "                    item.mediaSources.forEach(src => {" +
+                "                      src.url = best.url;" +
+                "                      src.width = best.width;" +
+                "                      src.height = best.height;" +
+                "                      src.isOptimized = true;" +
+                "                    });" +
+                "                  }" +
+                "                }" +
+                "                if (item.albumContent && Array.isArray(item.albumContent)) {" +
+                "                  item.albumContent.forEach(slide => {" +
+                "                    if (slide.mediaSources && Array.isArray(slide.mediaSources) && slide.mediaSources.length > 0) {" +
+                "                      var sorted = [...slide.mediaSources].sort((a, b) => {" +
+                "                        if (b.width !== a.width) return b.width - a.width;" +
+                "                        return (a.isOptimized ? 1 : 0) - (b.isOptimized ? 0 : 1);" +
+                "                      });" +
+                "                      var best = sorted[0];" +
+                "                      if (best) {" +
+                "                        slide.mediaSources.forEach(src => {" +
+                "                          src.url = best.url;" +
+                "                          src.width = best.width;" +
+                "                          src.height = best.height;" +
+                "                          src.isOptimized = true;" +
+                "                        });" +
+                "                      }" +
+                "                    }" +
+                "                  });" +
                 "                }" +
                 "              }" +
                 "              return true;" +
