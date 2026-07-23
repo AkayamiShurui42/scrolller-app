@@ -208,7 +208,7 @@ public class MainActivity extends AppCompatActivity {
                 "            var originalLength = obj.length;" +
                 "            var filtered = obj.filter(item => {" +
                 "              if (item && typeof item === 'object') {" +
-                "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true) return false;" +
+                "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true || item.isPaid === true || item.is_paid === true) return false;" +
                 "                if (item.url && typeof item.url === 'string') {" +
                 "                  var u = item.url.toLowerCase();" +
                 "                  if (u.includes('cant3am.com') || u.includes('chaturbate') || u.includes('stripchat')) return false;" +

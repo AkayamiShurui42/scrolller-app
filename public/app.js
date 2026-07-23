@@ -542,7 +542,7 @@ async function queryGraphQL(opname, variables) {
                     banner { url width height isOptimized }
                     children {
                         iterator items {
-                            id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt
+                            id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt isPaid
                             albumContent { mediaSources { url width height isOptimized } }
                             mediaSources { url width height isOptimized }
                         }
@@ -554,7 +554,7 @@ async function queryGraphQL(opname, variables) {
             query SubredditChildrenQuery($subredditId: Int!, $iterator: String, $filter: GalleryFilter, $sortBy: GallerySortBy, $limit: Int!, $isNsfw: NsfwFilter!) {
                 getSubredditChildren(data: {subredditId: $subredditId, iterator: $iterator, filter: $filter, sortBy: $sortBy, limit: $limit, nsfw: $isNsfw}) {
                     iterator items {
-                        id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt
+                        id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt isPaid
                         albumContent { mediaSources { url width height isOptimized } }
                         mediaSources { url width height isOptimized }
                     }
@@ -593,7 +593,7 @@ async function queryGraphQL(opname, variables) {
                     id url title createdAt isNsfw itemsCount
                     children {
                         iterator items {
-                            id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt
+                            id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt isPaid
                             albumContent { mediaSources { url width height isOptimized } }
                             mediaSources { url width height isOptimized }
                         }
@@ -676,6 +676,9 @@ async function queryGraphQL(opname, variables) {
 // Process and Sort Media Assets by Highest Quality
 function processAndAppendPosts(newItems) {
     const validItems = newItems.filter(item => {
+        // Exclude paid/premium posts
+        if (item.isPaid === true || item.is_paid === true) return false;
+        
         // Ensure item has some media sources
         const hasMedia = item.mediaSources && item.mediaSources.length > 0;
         const hasAlbum = item.albumContent && item.albumContent.length > 0;
