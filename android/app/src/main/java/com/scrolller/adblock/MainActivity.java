@@ -84,6 +84,12 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                injectCustomFilters(view);
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 // Inject custom adblock filters and bypass popup script

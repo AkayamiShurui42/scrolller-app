@@ -679,6 +679,19 @@ function processAndAppendPosts(newItems) {
         // Exclude paid/premium posts
         if (item.isPaid === true || item.is_paid === true) return false;
         
+        // Exclude ad/sponsored posts by checking flags, title, description, or URLs
+        if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true) {
+            return false;
+        }
+        if (item.url && typeof item.url === 'string') {
+            const u = item.url.toLowerCase();
+            if (u.includes('cant3am.com') || u.includes('chaturbate') || u.includes('stripchat')) return false;
+        }
+        if (item.title && typeof item.title === 'string') {
+            const t = item.title.toLowerCase();
+            if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\bpro\b/.test(t)) return false;
+        }
+        
         // Ensure item has some media sources
         const hasMedia = item.mediaSources && item.mediaSources.length > 0;
         const hasAlbum = item.albumContent && item.albumContent.length > 0;
