@@ -218,7 +218,7 @@ public class MainActivity extends AppCompatActivity {
                 "        var clone = response.clone();" +
                 "        var json = await clone.json();" +
                 "        var modified = false;" +
-                "                "        function filterAds(obj) {" +
+                "        function filterAds(obj) {" +
                 "          if (!obj || typeof obj !== 'object') return obj;" +
                 "          if (Array.isArray(obj)) {" +
                 "            var originalLength = obj.length;" +
