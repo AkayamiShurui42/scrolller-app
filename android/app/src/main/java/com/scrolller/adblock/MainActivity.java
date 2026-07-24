@@ -151,7 +151,7 @@ public class MainActivity extends AppCompatActivity {
                 "  " +
                 "  var observer = new MutationObserver(function(mutations) {" +
                 "    cleanUpBody();" +
-                "    document.querySelectorAll('div').forEach(function(el) {" +
+                "    document.querySelectorAll('div, section, aside, article, dialog, a, span, p').forEach(function(el) {" +
                 "      var className = el.className || \"\";" +
                 "      if (typeof className === \"string\" && className) {" +
                 "        var lowerClass = className.toLowerCase();" +
@@ -161,6 +161,16 @@ public class MainActivity extends AppCompatActivity {
                 "          return;" +
                 "        }" +
                 "      }" +
+                "      " +
+                "      var label = (el.textContent || \"\").trim().toLowerCase();" +
+                "      if (label === \"sponsored\" || label === \"promoted\" || label === \"advertisement\" || label === \"sponsored post\" || label === \"promoted post\") {" +
+                "        var card = el.closest('[class*=\"card\"]') || el.closest('[class*=\"item\"]') || el.closest('[class*=\"container\"]') || el.closest('[class*=\"wrapper\"]') || el.closest('article');" +
+                "        if (card && card.parentNode) {" +
+                "          card.remove();" +
+                "          return;" +
+                "        }" +
+                "      }" +
+                "      " +
                 "      var text = el.textContent || \"\";" +
                 "      var lowerText = text.toLowerCase();" +
                 "      if ((lowerText.includes(\"ad-free\") || lowerText.includes(\"ad free\") || lowerText.includes(\"remove ads\") || lowerText.includes(\"enjoying scrolller\") || lowerText.includes(\"get premium\")) " +
@@ -192,7 +202,16 @@ public class MainActivity extends AppCompatActivity {
                 "  window.fetch = async function(...args) {" +
                 "    var url = args[0];" +
                 "    var options = args[1];" +
-                "    if (typeof url === 'string' && url.includes('/graphql') && options && options.body) {" +
+                "    var urlStr = '';" +
+                "    if (url) {" +
+                "      if (typeof url === 'string') {" +
+                "        urlStr = url;" +
+                "      } else if (typeof url === 'object') {" +
+                "        urlStr = url.url || (typeof url.toString === 'function' ? url.toString() : '');" +
+                "      }" +
+                "    }" +
+                "    var isScrolllerApi = urlStr && (urlStr.includes('/graphql') || urlStr.includes('/admin') || urlStr.includes('api.scrolller.com'));" +
+                "    if (isScrolllerApi && options && options.body) {" +
                 "      try {" +
                 "        var bodyObj = JSON.parse(options.body);" +
                 "        var modifiedReq = false;" +
@@ -213,13 +232,15 @@ public class MainActivity extends AppCompatActivity {
                 "      } catch (e) { console.error('GraphQL variables auto-correction error:', e); }" +
                 "    }" +
                 "    var response = await originalFetch.apply(this, args);" +
-                "    if (typeof url === 'string' && url.includes('/graphql')) {" +
+                "    if (isScrolllerApi) {" +
                 "      try {" +
                 "        var clone = response.clone();" +
                 "        var json = await clone.json();" +
                 "        var modified = false;" +
                 "        function filterAds(obj) {" +
                 "          if (!obj || typeof obj !== 'object') return obj;" +
+                "          if ('isPremium' in obj) obj.isPremium = true;" +
+                "          if ('status' in obj) obj.status = 'ACTIVE';" +
                 "          if (Array.isArray(obj)) {" +
                 "            var originalLength = obj.length;" +
                 "            var filtered = obj.filter(item => {" +
@@ -237,6 +258,8 @@ public class MainActivity extends AppCompatActivity {
                 "                  var d = item.description.toLowerCase();" +
                 "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('premium') || d.includes('unlock') || /\\bpro\\b/.test(d) || d.includes('wank') || d.includes('wish me luck') || d.includes('link in bio') || d.includes('onlyfans') || d.includes('snapchat') || d.includes('bio link')) return false;" +
                 "                }" +
+                "                if ('isPremium' in item) item.isPremium = true;" +
+                "                if ('status' in item) item.status = 'ACTIVE';" +
                 "                /* Force HD media quality by replacing all sources with the highest resolution original */" +
                 "                if (item.mediaSources && Array.isArray(item.mediaSources) && item.mediaSources.length > 0) {" +
                 "                  var sorted = [...item.mediaSources].sort((a, b) => {" +
@@ -255,6 +278,8 @@ public class MainActivity extends AppCompatActivity {
                 "                }" +
                 "                if (item.albumContent && Array.isArray(item.albumContent)) {" +
                 "                  item.albumContent.forEach(slide => {" +
+                "                    if ('isPremium' in slide) slide.isPremium = true;" +
+                "                    if ('status' in slide) slide.status = 'ACTIVE';" +
                 "                    if (slide.mediaSources && Array.isArray(slide.mediaSources) && slide.mediaSources.length > 0) {" +
                 "                      var sorted = [...slide.mediaSources].sort((a, b) => {" +
                 "                        if (b.width !== a.width) return b.width - a.width;" +
@@ -291,10 +316,13 @@ public class MainActivity extends AppCompatActivity {
                 "        }" +
                 "        filterAds(json);" +
                 "        if (modified) {" +
+                "          var newHeaders = new Headers(response.headers);" +
+                "          newHeaders.delete('content-length');" +
+                "          newHeaders.set('access-control-allow-origin', '*');" +
                 "          return new Response(JSON.stringify(json), {" +
                 "            status: response.status," +
                 "            statusText: response.statusText," +
-                "            headers: response.headers" +
+                "            headers: newHeaders" +
                 "          });" +
                 "        }" +
                 "      } catch (err) { console.error(err); }" +
