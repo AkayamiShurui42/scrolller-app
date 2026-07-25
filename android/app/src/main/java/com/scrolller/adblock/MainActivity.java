@@ -148,7 +148,10 @@ public class MainActivity extends AppCompatActivity {
                 "    div[class*=\"hiddenContentContainer\"] { display: block !important; filter: none !important; opacity: 1 !important; }" +
                 "    img, video, [class*=\"imageMedia\"], [class*=\"videoMedia\"], div[class*=\"mediaContainer\"] { filter: none !important; backdrop-filter: none !important; opacity: 1 !important; visibility: visible !important; }" +
                 "  ';" +
-                "  document.head.appendChild(style);" +
+                "    var target = document.head || document.documentElement || document.body;
+    if (target) {
+      target.appendChild(style);
+    }" +
                 "  " +
                 "  function cleanUpBody() {" +
                 "    if (document.body) {" +
