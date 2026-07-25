@@ -163,10 +163,61 @@ public class MainActivity extends AppCompatActivity {
                 "    div[class*=\"hiddenContentContainer\"] { display: block !important; filter: none !important; opacity: 1 !important; }" +
                 "    img, video, [class*=\"imageMedia\"], [class*=\"videoMedia\"], div[class*=\"mediaContainer\"] { filter: none !important; backdrop-filter: none !important; opacity: 1 !important; visibility: visible !important; }" +
                 "  ';" +
-                "    var target = document.head || document.documentElement || document.body;" +
-                "    if (target) {" +
-                "      target.appendChild(style);" +
+                "    function injectStyle() {" +
+                "      var target = document.head || document.documentElement || document.body;" +
+                "      if (style && target && !style.parentNode) {" +
+                "        target.appendChild(style);" +
+                "      }" +
                 "    }" +
+                "    " +
+                "    function startObserver() {" +
+                "      var target = document.documentElement || document.body;" +
+                "      if (target) {" +
+                "        injectStyle();" +
+                "        var observer = new MutationObserver(function(mutations) {" +
+                "          cleanUpBody();" +
+                "          document.querySelectorAll('div, section, aside, article, dialog, a, span, p').forEach(function(el) {" +
+                "            var className = el.className || \"\";" +
+                "            if (typeof className === \"string\" && className) {" +
+                "              var lowerClass = className.toLowerCase();" +
+                "              if ((lowerClass.includes(\"premium\") || lowerClass.includes(\"upgrade\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"adblock\") || lowerClass.includes(\"billing\") || lowerClass.includes(\"sponsor\") || lowerClass.includes(\"promot\")) " +
+                "                  && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
+                "                el.remove();" +
+                "                return;" +
+                "              }" +
+                "            }" +
+                "            " +
+                "            var label = (el.textContent || \"\").trim().toLowerCase();" +
+                "            if (label === \"sponsored\" || label === \"promoted\" || label === \"advertisement\" || label === \"sponsored post\" || label === \"promoted post\") {" +
+                "              var card = el.closest('[class*=\"card\"]') || el.closest('[class*=\"item\"]') || el.closest('[class*=\"container\"]') || el.closest('[class*=\"wrapper\"]') || el.closest('article');" +
+                "              if (card && card.parentNode) {" +
+                "                card.remove();" +
+                "                return;" +
+                "              }" +
+                "            }" +
+                "            " +
+                "            var text = el.textContent || \"\";" +
+                "            var lowerText = text.toLowerCase();" +
+                "            if ((lowerText.includes(\"ad-free\") || lowerText.includes(\"ad free\") || lowerText.includes(\"remove ads\") || lowerText.includes(\"enjoying scrolller\") || lowerText.includes(\"get premium\")) " +
+                "                && !lowerText.includes(\"login\") && !lowerText.includes(\"username\") && !lowerText.includes(\"password\") && !lowerText.includes(\"collection\") && !lowerText.includes(\"search\")) {" +
+                "              var modal = el.closest('[class*=\"Dialog\"]') || el.closest('[class*=\"Modal\"]') || el.closest('[class*=\"popup\"]') || el;" +
+                "              if (modal && modal.parentNode) {" +
+                "                modal.remove();" +
+                "              }" +
+                "            }" +
+                "          });" +
+                "        });" +
+                "        observer.observe(target, { childList: true, subtree: true });" +
+                "      } else {" +
+                "        setTimeout(startObserver, 50);" +
+                "      }" +
+                "    }" +
+                "    " +
+                "    startObserver();" +
+                "    setInterval(function() {" +
+                "      injectStyle();" +
+                "      cleanUpBody();" +
+                "    }, 200);" +
                 "  " +
                 "  function cleanUpBody() {" +
                 "    if (document.body) {" +
@@ -177,42 +228,6 @@ public class MainActivity extends AppCompatActivity {
                 "      document.documentElement.style.overflow = \"auto\";" +
                 "    }" +
                 "  }" +
-                "  " +
-                "  var observer = new MutationObserver(function(mutations) {" +
-                "    cleanUpBody();" +
-                "    document.querySelectorAll('div, section, aside, article, dialog, a, span, p').forEach(function(el) {" +
-                "      var className = el.className || \"\";" +
-                "      if (typeof className === \"string\" && className) {" +
-                "        var lowerClass = className.toLowerCase();" +
-                "        if ((lowerClass.includes(\"premium\") || lowerClass.includes(\"upgrade\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"adblock\") || lowerClass.includes(\"billing\") || lowerClass.includes(\"sponsor\") || lowerClass.includes(\"promot\")) " +
-                "            && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
-                "          el.remove();" +
-                "          return;" +
-                "        }" +
-                "      }" +
-                "      " +
-                "      var label = (el.textContent || \"\").trim().toLowerCase();" +
-                "      if (label === \"sponsored\" || label === \"promoted\" || label === \"advertisement\" || label === \"sponsored post\" || label === \"promoted post\") {" +
-                "        var card = el.closest('[class*=\"card\"]') || el.closest('[class*=\"item\"]') || el.closest('[class*=\"container\"]') || el.closest('[class*=\"wrapper\"]') || el.closest('article');" +
-                "        if (card && card.parentNode) {" +
-                "          card.remove();" +
-                "          return;" +
-                "        }" +
-                "      }" +
-                "      " +
-                "      var text = el.textContent || \"\";" +
-                "      var lowerText = text.toLowerCase();" +
-                "      if ((lowerText.includes(\"ad-free\") || lowerText.includes(\"ad free\") || lowerText.includes(\"remove ads\") || lowerText.includes(\"enjoying scrolller\") || lowerText.includes(\"get premium\")) " +
-                "          && !lowerText.includes(\"login\") && !lowerText.includes(\"username\") && !lowerText.includes(\"password\") && !lowerText.includes(\"collection\") && !lowerText.includes(\"search\")) {" +
-                "        var modal = el.closest('[class*=\"Dialog\"]') || el.closest('[class*=\"Modal\"]') || el.closest('[class*=\"popup\"]') || el;" +
-                "        if (modal && modal.parentNode) {" +
-                "          modal.remove();" +
-                "        }" +
-                "      }" +
-                "    });" +
-                "  });" +
-                "  observer.observe(document.documentElement, { childList: true, subtree: true });" +
-                "  setInterval(cleanUpBody, 200);" +
                 "  " +
                 "  /* Force active premium state inside localStorage for Zustand client store loading initialization */" +
                 "  try {" +
@@ -265,19 +280,27 @@ public class MainActivity extends AppCompatActivity {
                 "      try {" +
                 "        var clone = response.clone();" +
                 "        var json = await clone.json();" +
-                "        var modified = false;" +
+                "        var modified = true;" +
                 "        function filterAds(obj) {" +
                 "          if (!obj || typeof obj !== 'object') return obj;" +
                 "          if ('isPremium' in obj) obj.isPremium = true;" +
                 "          if ('status' in obj) obj.status = 'ACTIVE';" +
+                "          if ('isPaid' in obj) obj.isPaid = false;" +
                 "          if (Array.isArray(obj)) {" +
-                "            var originalLength = obj.length;" +
                 "            var filtered = obj.filter(item => {" +
                 "              if (item && typeof item === 'object') {" +
-                "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true || item.isPaid === true || item.is_paid === true) return false;" +
+                "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true) return false;" +
                 "                if (item.url && typeof item.url === 'string') {" +
                 "                  var u = item.url.toLowerCase();" +
                 "                  if (u.includes('cant3am.com') || u.includes('chaturbate') || u.includes('stripchat')) return false;" +
+                "                }" +
+                "                if (item.reddit_posted_by && typeof item.reddit_posted_by === 'string') {" +
+                "                  var author = item.reddit_posted_by.toLowerCase();" +
+                "                  if (author.includes('scrolller') || author === 'admin' || author === 'official' || author === 'sponsor') return false;" +
+                "                }" +
+                "                if (item.username && typeof item.username === 'string') {" +
+                "                  var user = item.username.toLowerCase();" +
+                "                  if (user.includes('scrolller') || user === 'admin' || user === 'official' || user === 'sponsor') return false;" +
                 "                }" +
                 "                if (item.title && typeof item.title === 'string') {" +
                 "                  var t = item.title.toLowerCase();" +
@@ -287,6 +310,7 @@ public class MainActivity extends AppCompatActivity {
                 "                  var d = item.description.toLowerCase();" +
                 "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('premium') || d.includes('unlock') || /\\bpro\\b/.test(d) || d.includes('wank') || d.includes('wish me luck') || d.includes('link in bio') || d.includes('onlyfans') || d.includes('snapchat') || d.includes('bio link')) return false;" +
                 "                }" +
+                "                if ('isPaid' in item) item.isPaid = false;" +
                 "                if ('isPremium' in item) item.isPremium = true;" +
                 "                if ('status' in item) item.status = 'ACTIVE';" +
                 "                /* Force HD media quality by replacing all sources with the highest resolution original */" +
@@ -307,6 +331,7 @@ public class MainActivity extends AppCompatActivity {
                 "                }" +
                 "                if (item.albumContent && Array.isArray(item.albumContent)) {" +
                 "                  item.albumContent.forEach(slide => {" +
+                "                    if ('isPaid' in slide) slide.isPaid = false;" +
                 "                    if ('isPremium' in slide) slide.isPremium = true;" +
                 "                    if ('status' in slide) slide.status = 'ACTIVE';" +
                 "                    if (slide.mediaSources && Array.isArray(slide.mediaSources) && slide.mediaSources.length > 0) {" +
@@ -329,13 +354,8 @@ public class MainActivity extends AppCompatActivity {
                 "              }" +
                 "              return true;" +
                 "            });" +
-                "            if (filtered.length !== originalLength) {" +
-                "              modified = true;" +
-                "              obj.length = 0;" +
-                "              obj.push(...filtered.map(filterAds));" +
-                "            } else {" +
-                "              obj.forEach((val, idx) => { obj[idx] = filterAds(val); });" +
-                "            }" +
+                "            obj.length = 0;" +
+                "            obj.push(...filtered.map(filterAds));" +
                 "          } else {" +
                 "            for (var key in obj) {" +
                 "              if (obj.hasOwnProperty(key)) obj[key] = filterAds(obj[key]);" +
