@@ -395,43 +395,45 @@ public class MainActivity extends AppCompatActivity {
                 "          if (Array.isArray(obj)) {" +
                 "            var filtered = obj.filter(item => {" +
                 "                if (!item || typeof item !== 'object') return true;" +
-                "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true || item.isPaid === true || item.is_paid === true) return false;" +
-                "                if (isDiscoverQuery && (item.__typename === 'SubredditPost' || (item.mediaSources && Array.isArray(item.mediaSources)))) {" +
-                "                  if (!item.redditPath || typeof item.redditPath !== 'string' || !item.redditPath.includes('/r/')) return false;" +
+                "                if (isDiscoverQuery) {" +
+                "                  if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true || item.isPaid === true || item.is_paid === true) return false;" +
+                "                  if (item.__typename === 'SubredditPost' || (item.mediaSources && Array.isArray(item.mediaSources))) {" +
+                "                    if (!item.redditPath || typeof item.redditPath !== 'string' || !item.redditPath.includes('/r/')) return false;" +
+                "                  }" +
+                "                  if (item.url && typeof item.url === 'string') {" +
+                "                    var u = item.url.toLowerCase();" +
+                "                    if (u.includes('cant3am.com') || u.includes('chaturbate') || u.includes('stripchat')) return false;" +
+                "                  }" +
+                "                  if (item.reddit_posted_by && typeof item.reddit_posted_by === 'string') {" +
+                "                    var author = item.reddit_posted_by.toLowerCase();" +
+                "                    if (author.includes('scroll') || author === 'admin' || author === 'official' || author === 'sponsor') return false;" +
+                "                  }" +
+                "                  if (item.username && typeof item.username === 'string') {" +
+                "                    var user = item.username.toLowerCase();" +
+                "                    if (user.includes('scroll') || user === 'admin' || user === 'official' || user === 'sponsor') return false;" +
+                "                  }" +
+                "                  if (item.displayName && typeof item.displayName === 'string') {" +
+                "                    var dn = item.displayName.toLowerCase();" +
+                "                    if (dn.includes('scroll') || dn === 'admin' || dn === 'official' || dn === 'sponsor') return false;" +
+                "                  }" +
+                "                  if (item.userType && typeof item.userType === 'string') {" +
+                "                    var ut = item.userType.toLowerCase();" +
+                "                    if (ut.includes('scroll') || ut === 'admin' || ut === 'official' || ut === 'sponsor') return false;" +
+                "                  }" +
+                "                  if (item.title && typeof item.title === 'string') {" +
+                "                    var t = item.title.toLowerCase();" +
+                "                    if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\\bpro\\b/.test(t) || t.includes('wank') || t.includes('wish me luck') || t.includes('link in bio') || t.includes('onlyfans') || t.includes('snapchat') || t.includes('bio link')) return false;" +
+                "                  }" +
+                "                  if (item.description && typeof item.description === 'string') {" +
+                "                    var d = item.description.toLowerCase();" +
+                "                    if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('premium') || d.includes('unlock') || /\\bpro\\b/.test(d) || d.includes('wank') || d.includes('wish me luck') || d.includes('link in bio') || d.includes('onlyfans') || d.includes('snapchat') || d.includes('bio link')) return false;" +
+                "                  }" +
                 "                }" +
                 "                if (item.__typename === 'SubredditPost' && item.id) {" +
                 "                  if (window._pgState && window._pgState.seenPostIds) {" +
                 "                    if (window._pgState.seenPostIds.has(item.id)) return false;" +
                 "                    window._pgState.seenPostIds.add(item.id);" +
                 "                  }" +
-                "                }" +
-                "                if (item.url && typeof item.url === 'string') {" +
-                "                  var u = item.url.toLowerCase();" +
-                "                  if (u.includes('cant3am.com') || u.includes('chaturbate') || u.includes('stripchat')) return false;" +
-                "                }" +
-                "                if (item.reddit_posted_by && typeof item.reddit_posted_by === 'string') {" +
-                "                  var author = item.reddit_posted_by.toLowerCase();" +
-                "                  if (author.includes('scroll') || author === 'admin' || author === 'official' || author === 'sponsor') return false;" +
-                "                }" +
-                "                if (item.username && typeof item.username === 'string') {" +
-                "                  var user = item.username.toLowerCase();" +
-                "                  if (user.includes('scroll') || user === 'admin' || user === 'official' || user === 'sponsor') return false;" +
-                "                }" +
-                "                if (item.displayName && typeof item.displayName === 'string') {" +
-                "                  var dn = item.displayName.toLowerCase();" +
-                "                  if (dn.includes('scroll') || dn === 'admin' || dn === 'official' || dn === 'sponsor') return false;" +
-                "                }" +
-                "                if (item.userType && typeof item.userType === 'string') {" +
-                "                  var ut = item.userType.toLowerCase();" +
-                "                  if (ut.includes('scroll') || ut === 'admin' || ut === 'official' || ut === 'sponsor') return false;" +
-                "                }" +
-                "                if (item.title && typeof item.title === 'string') {" +
-                "                  var t = item.title.toLowerCase();" +
-                "                  if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\\bpro\\b/.test(t) || t.includes('wank') || t.includes('wish me luck') || t.includes('link in bio') || t.includes('onlyfans') || t.includes('snapchat') || t.includes('bio link')) return false;" +
-                "                }" +
-                "                if (item.description && typeof item.description === 'string') {" +
-                "                  var d = item.description.toLowerCase();" +
-                "                  if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('premium') || d.includes('unlock') || /\\bpro\\b/.test(d) || d.includes('wank') || d.includes('wish me luck') || d.includes('link in bio') || d.includes('onlyfans') || d.includes('snapchat') || d.includes('bio link')) return false;" +
                 "                }" +
                 "                if ('isPaid' in item) item.isPaid = false;" +
                 "                if ('isPremium' in item) item.isPremium = true;" +
