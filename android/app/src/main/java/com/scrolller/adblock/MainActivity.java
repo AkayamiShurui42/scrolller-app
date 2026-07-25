@@ -406,33 +406,7 @@ public class MainActivity extends AppCompatActivity {
                 "            window._pgState.lastIterator = String(newIt);" +
                 "          }" +
                 "        }" +
-                "        function unlockPremium(obj) {" +
-                "          if (!obj || typeof obj !== 'object') return;" +
-                "          if (Array.isArray(obj)) {" +
-                "            for (var i = 0; i < obj.length; i++) {" +
-                "              unlockPremium(obj[i]);" +
-                "            }" +
-                "          } else {" +
-                "            if ('isPremium' in obj) obj.isPremium = true;" +
-                "            if ('status' in obj) obj.status = 'ACTIVE';" +
-                "            if ('isPaid' in obj) obj.isPaid = false;" +
-                "            for (var k in obj) {" +
-                "              if (obj.hasOwnProperty(k)) unlockPremium(obj[k]);" +
-                "            }" +
-                "          }" +
-                "        }" +
-                "        if (json && json.data) {" +
-                "          unlockPremium(json.data);" +
-                "        }" +
                 "        console.log('SCROLLLER_API_RES: ' + JSON.stringify(json));" +
-                "        var newHeaders = new Headers(response.headers);" +
-                "        newHeaders.delete('content-length');" +
-                "        newHeaders.set('access-control-allow-origin', '*');" +
-                "        return new Response(JSON.stringify(json), {" +
-                "          status: response.status," +
-                "          statusText: response.statusText," +
-                "          headers: newHeaders" +
-                "        });" +
                 "      } catch (err) { console.error(err); }" +
                 "    }" +
                 "    return response;" +
