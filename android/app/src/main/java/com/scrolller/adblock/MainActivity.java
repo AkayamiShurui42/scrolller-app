@@ -91,20 +91,23 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                String url = request.getUrl().toString();
-                
-                // Bypass anti-adblock detection checks by returning successful mock empty scripts
-                if (url.contains("doubleclick.net") || 
-                    url.contains("googlesyndication.com") || 
-                    url.contains("google-analytics.com") || 
-                    url.contains("googletagmanager.com")) {
-                    return new WebResourceResponse("application/javascript", "UTF-8", 
-                            new ByteArrayInputStream("console.log('Mocked Ad Network response for Adblock Detection bypass');".getBytes()));
-                }
-                
-                // Block other ad networks, webcams, and trackers
-                if (isAdOrCamsUrl(url)) {
-                    return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream("".getBytes()));
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    String url = request.getUrl().toString();
+                    
+                    // Bypass anti-adblock detection checks by returning successful mock empty scripts
+                    if (url.contains("doubleclick.net") || 
+                        url.contains("googlesyndication.com") || 
+                        url.contains("google-analytics.com") || 
+                        url.contains("googletagmanager.com")) {
+                        return new WebResourceResponse("application/javascript", "UTF-8", 
+                                new ByteArrayInputStream("console.log('Mocked Ad Network response for Adblock Detection bypass');".getBytes()));
+                    }
+                    
+                    // Whitelist blocker: if not in whitelisted domains, block completely
+                    if (!isAllowedDomain(url)) {
+                        Log.d("SCROLLLER_AD_BLOCK", "Blocked non-whitelisted resource: " + url);
+                        return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream("".getBytes()));
+                    }
                 }
                 return super.shouldInterceptRequest(view, request);
             }
@@ -126,24 +129,24 @@ public class MainActivity extends AppCompatActivity {
         webView.loadUrl("https://scrolller.com");
     }
 
-    private boolean isAdOrCamsUrl(String url) {
-        String lowerUrl = url.toLowerCase();
-        return lowerUrl.contains("exoclick") || 
-               lowerUrl.contains("juicyads") || 
-               lowerUrl.contains("realsrv") || 
-               lowerUrl.contains("chaturbate") || 
-               lowerUrl.contains("stripchat") || 
-               lowerUrl.contains("cams") || 
-               lowerUrl.contains("popads") || 
-               lowerUrl.contains("trafficjunky") || 
-               lowerUrl.contains("onclickads") || 
-               lowerUrl.contains("adservice") || 
-               lowerUrl.contains("adsystem") || 
-               lowerUrl.contains("sponsored") || 
-               lowerUrl.contains("sponsor") || 
-               lowerUrl.contains("promotion") || 
-               lowerUrl.contains("promoted") || 
-               lowerUrl.contains("a.cant3am.com");
+    private boolean isAllowedDomain(String url) {
+        if (url == null) return false;
+        try {
+            android.net.Uri uri = android.net.Uri.parse(url);
+            String host = uri.getHost();
+            if (host == null) return true; // Allow relative/local paths
+            host = host.toLowerCase();
+            return host.endsWith("scrolller.com") ||
+                   host.endsWith("reddit.com") ||
+                   host.endsWith("redd.it") ||
+                   host.endsWith("redgifs.com") ||
+                   host.endsWith("imgur.com") ||
+                   host.endsWith("gfycat.com") ||
+                   host.endsWith("googleapis.com") ||
+                   host.endsWith("gstatic.com");
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void injectCustomFilters(WebView view) {
@@ -198,7 +201,7 @@ public class MainActivity extends AppCompatActivity {
                 "            " +
                 "            var text = el.textContent || \"\";" +
                 "            var lowerText = text.toLowerCase();" +
-                "            if ((lowerText.includes(\"ad-free\") || lowerText.includes(\"ad free\") || lowerText.includes(\"remove ads\") || lowerText.includes(\"enjoying scrolller\") || lowerText.includes(\"get premium\")) " +
+                "            if ((lowerText.includes(\"ad-free\") || lowerText.includes(\"ad free\") || lowerText.includes(\"remove ads\") || lowerText.includes(\"enjoying scrolller\") || lowerText.includes(\"get premium\") || lowerText.includes(\"adblock\") || lowerText.includes(\"ad block\") || lowerText.includes(\"adblocker\") || lowerText.includes(\"ad-blocker\") || lowerText.includes(\"disable ad\") || lowerText.includes(\"disable your ad\") || lowerText.includes(\"turn off ad\") || lowerText.includes(\"support us\") || lowerText.includes(\"ad blocker\")) " +
                 "                && !lowerText.includes(\"login\") && !lowerText.includes(\"username\") && !lowerText.includes(\"password\") && !lowerText.includes(\"collection\") && !lowerText.includes(\"search\")) {" +
                 "              var modal = el.closest('[class*=\"Dialog\"]') || el.closest('[class*=\"Modal\"]') || el.closest('[class*=\"popup\"]') || el;" +
                 "              if (modal && modal.parentNode) {" +
@@ -207,7 +210,7 @@ public class MainActivity extends AppCompatActivity {
                 "            }" +
                 "          });" +
                 "        });" +
-                "        observer.observe(target, { childList: true, subtree: true });" +
+                "        observer.observe(target, { childList: true, subtree: true, characterData: true });" +
                 "      } else {" +
                 "        setTimeout(startObserver, 50);" +
                 "      }" +
