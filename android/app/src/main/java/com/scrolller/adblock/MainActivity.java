@@ -10,6 +10,9 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
+import android.webkit.ConsoleMessage;
+import android.util.Log;
 import androidx.appcompat.app.AppCompatActivity;
 import java.io.ByteArrayInputStream;
 
@@ -51,6 +54,14 @@ public class MainActivity extends AppCompatActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
         }
+
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
+                Log.d("SCROLLLER_CONSOLE", consoleMessage.message());
+                return true;
+            }
+        });
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -314,6 +325,7 @@ public class MainActivity extends AppCompatActivity {
                 "          }" +
                 "          return obj;" +
                 "        }" +
+                "        console.log('SCROLLLER_API_RES: ' + JSON.stringify(json));" +
                 "        filterAds(json);" +
                 "        if (modified) {" +
                 "          var newHeaders = new Headers(response.headers);" +
