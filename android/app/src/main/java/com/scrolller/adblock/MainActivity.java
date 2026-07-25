@@ -295,9 +295,17 @@ public class MainActivity extends AppCompatActivity {
                 "      }" +
                 "    }" +
                 "    var isScrolllerApi = urlStr && (urlStr.includes('/graphql') || urlStr.includes('/admin') || urlStr.includes('api.scrolller.com'));" +
+                "    var isDiscoverQuery = false;" +
                 "    if (isScrolllerApi && options && options.body) {" +
                 "      try {" +
                 "        var bodyObj = JSON.parse(options.body);" +
+                "        if (bodyObj && bodyObj.query) {" +
+                "          var q = bodyObj.query.toLowerCase();" +
+                "          var isUserQuery = q.includes('favorite') || q.includes('collection') || q.includes('user') || q.includes('me') || q.includes('my');" +
+                "          if (!isUserQuery && (q.includes('discover') || q.includes('feed') || q.includes('explore') || q.includes('home') || q.includes('subreddit'))) {" +
+                "            isDiscoverQuery = true;" +
+                "          }" +
+                "        }" +
                 "        var modifiedReq = false;" +
                 "        if (bodyObj && bodyObj.variables) {" +
                 "          for (var key in bodyObj.variables) {" +
@@ -330,7 +338,7 @@ public class MainActivity extends AppCompatActivity {
                 "            var filtered = obj.filter(item => {" +
                 "                if (!item || typeof item !== 'object') return true;" +
                 "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true || item.isPaid === true || item.is_paid === true) return false;" +
-                "                if (item.__typename === 'SubredditPost' || (item.mediaSources && Array.isArray(item.mediaSources))) {" +
+                "                if (isDiscoverQuery && (item.__typename === 'SubredditPost' || (item.mediaSources && Array.isArray(item.mediaSources)))) {" +
                 "                  if (!item.redditPath || typeof item.redditPath !== 'string' || !item.redditPath.includes('/r/')) return false;" +
                 "                }" +
                 "                if (item.url && typeof item.url === 'string') {" +
