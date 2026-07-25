@@ -66,11 +66,26 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (url != null) {
+                    String host = android.net.Uri.parse(url).getHost();
+                    if (host != null && !host.contains("scrolller.com")) {
+                        Log.d("SCROLLLER_NAV_BLOCK", "Blocked external navigation to: " + url);
+                        return true;
+                    }
+                }
                 return false;
             }
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    String url = request.getUrl().toString();
+                    String host = request.getUrl().getHost();
+                    if (host != null && !host.contains("scrolller.com")) {
+                        Log.d("SCROLLLER_NAV_BLOCK", "Blocked external navigation to: " + url);
+                        return true;
+                    }
+                }
                 return false;
             }
 
@@ -148,10 +163,10 @@ public class MainActivity extends AppCompatActivity {
                 "    div[class*=\"hiddenContentContainer\"] { display: block !important; filter: none !important; opacity: 1 !important; }" +
                 "    img, video, [class*=\"imageMedia\"], [class*=\"videoMedia\"], div[class*=\"mediaContainer\"] { filter: none !important; backdrop-filter: none !important; opacity: 1 !important; visibility: visible !important; }" +
                 "  ';" +
-                "    var target = document.head || document.documentElement || document.body;
-    if (target) {
-      target.appendChild(style);
-    }" +
+                "    var target = document.head || document.documentElement || document.body;" +
+                "    if (target) {" +
+                "      target.appendChild(style);" +
+                "    }" +
                 "  " +
                 "  function cleanUpBody() {" +
                 "    if (document.body) {" +
