@@ -288,8 +288,8 @@ public class MainActivity extends AppCompatActivity {
                 "          if ('isPaid' in obj) obj.isPaid = false;" +
                 "          if (Array.isArray(obj)) {" +
                 "            var filtered = obj.filter(item => {" +
-                "              if (item && typeof item === 'object') {" +
-                "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true) return false;" +
+                "                if (!item || typeof item !== 'object') return true;" +
+                "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true || item.isPaid === true || item.is_paid === true) return false;" +
                 "                if (item.url && typeof item.url === 'string') {" +
                 "                  var u = item.url.toLowerCase();" +
                 "                  if (u.includes('cant3am.com') || u.includes('chaturbate') || u.includes('stripchat')) return false;" +
@@ -313,7 +313,7 @@ public class MainActivity extends AppCompatActivity {
                 "                if ('isPaid' in item) item.isPaid = false;" +
                 "                if ('isPremium' in item) item.isPremium = true;" +
                 "                if ('status' in item) item.status = 'ACTIVE';" +
-                "                /* Force HD media quality by replacing all sources with the highest resolution original */" +
+                "                /* Force HD media quality by truncating the array to only contain the highest resolution original source */" +
                 "                if (item.mediaSources && Array.isArray(item.mediaSources) && item.mediaSources.length > 0) {" +
                 "                  var sorted = [...item.mediaSources].sort((a, b) => {" +
                 "                    if (b.width !== a.width) return b.width - a.width;" +
@@ -321,12 +321,8 @@ public class MainActivity extends AppCompatActivity {
                 "                  });" +
                 "                  var best = sorted[0];" +
                 "                  if (best) {" +
-                "                    item.mediaSources.forEach(src => {" +
-                "                      src.url = best.url;" +
-                "                      src.width = best.width;" +
-                "                      src.height = best.height;" +
-                "                      src.isOptimized = true;" +
-                "                    });" +
+                "                    item.mediaSources.length = 0;" +
+                "                    item.mediaSources.push(best);" +
                 "                  }" +
                 "                }" +
                 "                if (item.albumContent && Array.isArray(item.albumContent)) {" +
@@ -341,17 +337,12 @@ public class MainActivity extends AppCompatActivity {
                 "                      });" +
                 "                      var best = sorted[0];" +
                 "                      if (best) {" +
-                "                        slide.mediaSources.forEach(src => {" +
-                "                          src.url = best.url;" +
-                "                          src.width = best.width;" +
-                "                          src.height = best.height;" +
-                "                          src.isOptimized = true;" +
-                "                        });" +
+                "                        slide.mediaSources.length = 0;" +
+                "                        slide.mediaSources.push(best);" +
                 "                      }" +
                 "                    }" +
                 "                  });" +
                 "                }" +
-                "              }" +
                 "              return true;" +
                 "            });" +
                 "            obj.length = 0;" +
