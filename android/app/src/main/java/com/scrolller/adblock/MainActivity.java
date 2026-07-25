@@ -183,10 +183,12 @@ public class MainActivity extends AppCompatActivity {
                 "            var className = el.className || \"\";" +
                 "            if (typeof className === \"string\" && className) {" +
                 "              var lowerClass = className.toLowerCase();" +
-                "              if ((lowerClass.includes(\"premium\") || lowerClass.includes(\"upgrade\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"adblock\") || lowerClass.includes(\"billing\") || lowerClass.includes(\"sponsor\") || lowerClass.includes(\"promot\")) " +
-                "                  && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
-                "                el.remove();" +
-                "                return;" +
+                "              if ((lowerClass.includes(\"adblock\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"ad-block\")) && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
+                "                var m = el.closest('[class*=\"Dialog\"]') || el.closest('[class*=\"Modal\"]') || el.closest('[class*=\"popup\"]') || el;" +
+                "                if (m && m.parentNode) {" +
+                "                  m.remove();" +
+                "                  return;" +
+                "                }" +
                 "              }" +
                 "            }" +
                 "            " +
