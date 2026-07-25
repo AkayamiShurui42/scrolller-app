@@ -339,11 +339,19 @@ public class MainActivity extends AppCompatActivity {
                 "                }" +
                 "                if (item.reddit_posted_by && typeof item.reddit_posted_by === 'string') {" +
                 "                  var author = item.reddit_posted_by.toLowerCase();" +
-                "                  if (author.includes('scrolller') || author === 'admin' || author === 'official' || author === 'sponsor') return false;" +
+                "                  if (author.includes('scroll') || author === 'admin' || author === 'official' || author === 'sponsor') return false;" +
                 "                }" +
                 "                if (item.username && typeof item.username === 'string') {" +
                 "                  var user = item.username.toLowerCase();" +
-                "                  if (user.includes('scrolller') || user === 'admin' || user === 'official' || user === 'sponsor') return false;" +
+                "                  if (user.includes('scroll') || user === 'admin' || user === 'official' || user === 'sponsor') return false;" +
+                "                }" +
+                "                if (item.displayName && typeof item.displayName === 'string') {" +
+                "                  var dn = item.displayName.toLowerCase();" +
+                "                  if (dn.includes('scroll') || dn === 'admin' || dn === 'official' || dn === 'sponsor') return false;" +
+                "                }" +
+                "                if (item.userType && typeof item.userType === 'string') {" +
+                "                  var ut = item.userType.toLowerCase();" +
+                "                  if (ut.includes('scroll') || ut === 'admin' || ut === 'official' || ut === 'sponsor') return false;" +
                 "                }" +
                 "                if (item.title && typeof item.title === 'string') {" +
                 "                  var t = item.title.toLowerCase();" +
