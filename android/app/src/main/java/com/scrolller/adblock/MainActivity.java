@@ -242,6 +242,43 @@ public class MainActivity extends AppCompatActivity {
                 "    }" +
                 "  } catch (e) { console.error('Local login patch error:', e); }" +
                 "  " +
+                "  /* --- XHR and WS Proxies --- */" +
+                "  var blockedPatterns = ['exoclick', 'juicyads', 'cant3am', 'realsrv'];" +
+                "  function shouldBlockUrl(url) {" +
+                "    if (!url) return false;" +
+                "    var lowerUrl = url.toString().toLowerCase();" +
+                "    return blockedPatterns.some(pattern => lowerUrl.includes(pattern));" +
+                "  }" +
+                "  var originalXHROpen = XMLHttpRequest.prototype.open;" +
+                "  XMLHttpRequest.prototype.open = new Proxy(originalXHROpen, {" +
+                "    apply: function(target, thisArg, args) {" +
+                "      if (shouldBlockUrl(args[1])) {" +
+                "        console.log('Blocked XHR to: ' + args[1]);" +
+                "        args[1] = 'about:blank';" +
+                "      }" +
+                "      return target.apply(thisArg, args);" +
+                "    }" +
+                "  });" +
+                "  var OriginalWebSocket = window.WebSocket;" +
+                "  window.WebSocket = new Proxy(OriginalWebSocket, {" +
+                "    construct: function(target, args) {" +
+                "      if (shouldBlockUrl(args[0])) {" +
+                "        console.log('Blocked WS to: ' + args[0]);" +
+                "        return { send: function(){}, close: function(){}, readyState: 0, addEventListener: function(){}, removeEventListener: function(){}, url: args[0] };" +
+                "      }" +
+                "      return new target(...args);" +
+                "    }" +
+                "  });" +
+                "  var originalToString = Function.prototype.toString;" +
+                "  Function.prototype.toString = new Proxy(originalToString, {" +
+                "    apply: function(target, thisArg, args) {" +
+                "      if (thisArg === XMLHttpRequest.prototype.open || thisArg === window.WebSocket) {" +
+                "        return 'function () { [native code] }';" +
+                "      }" +
+                "      return target.apply(thisArg, args);" +
+                "    }" +
+                "  });" +
+                "  " +
                 "  var originalFetch = window.fetch;" +
                 "  window.fetch = async function(...args) {" +
                 "    var url = args[0];" +
