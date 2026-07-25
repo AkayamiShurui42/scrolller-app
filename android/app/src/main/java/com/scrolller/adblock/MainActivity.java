@@ -318,6 +318,63 @@ public class MainActivity extends AppCompatActivity {
                 "              }" +
                 "            }" +
                 "          }" +
+                "          try {" +
+                "            var opName = null;" +
+                "            if (bodyObj.query) {" +
+                "              if (bodyObj.query.includes('SubredditQuery')) opName = 'SubredditQuery';" +
+                "              else if (bodyObj.query.includes('SubredditChildrenQuery')) opName = 'SubredditChildrenQuery';" +
+                "              else if (bodyObj.query.includes('FavoritesQuery')) opName = 'FavoritesQuery';" +
+                "              else if (bodyObj.query.includes('PaidCollections')) opName = 'PaidCollections';" +
+                "              else if (bodyObj.query.includes('DiscoverFilteredSubredditsQuery')) opName = 'DiscoverFilteredSubredditsQuery';" +
+                "            }" +
+                "            if (opName) {" +
+                "              var contextKey = null;" +
+                "              var isFeedQuery = false;" +
+                "              var curIt = bodyObj.variables.iterator;" +
+                "              var curSort = bodyObj.variables.sortBy;" +
+                "              if (opName === 'SubredditQuery') {" +
+                "                contextKey = 'sub_' + bodyObj.variables.url + '_' + curSort + '_' + bodyObj.variables.filter;" +
+                "                isFeedQuery = true;" +
+                "              } else if (opName === 'SubredditChildrenQuery') {" +
+                "                contextKey = 'subchild_' + bodyObj.variables.subredditId + '_' + curSort + '_' + bodyObj.variables.filter + '_' + bodyObj.variables.isNsfw;" +
+                "                isFeedQuery = true;" +
+                "              } else if (opName === 'FavoritesQuery') {" +
+                "                contextKey = 'fav_' + curSort + '_' + bodyObj.variables.filter + '_' + bodyObj.variables.nsfw;" +
+                "                isFeedQuery = true;" +
+                "              } else if (opName === 'PaidCollections') {" +
+                "                contextKey = 'paidcol_' + bodyObj.variables.iterator;" +
+                "                isFeedQuery = true;" +
+                "              } else if (opName === 'DiscoverFilteredSubredditsQuery') {" +
+                "                contextKey = 'discover_' + curSort + '_' + bodyObj.variables.nsfw;" +
+                "                isFeedQuery = true;" +
+                "              }" +
+                "              if (isFeedQuery && contextKey) {" +
+                "                if (!window._pgState) {" +
+                "                  window._pgState = {" +
+                "                    activeContext: null," +
+                "                    lastIterator: null," +
+                "                    fallbackActive: false," +
+                "                    seenPostIds: new Set()" +
+                "                  };" +
+                "                }" +
+                "                if (window._pgState.activeContext !== contextKey) {" +
+                "                  window._pgState.activeContext = contextKey;" +
+                "                  window._pgState.lastIterator = null;" +
+                "                  window._pgState.fallbackActive = false;" +
+                "                  window._pgState.seenPostIds.clear();" +
+                "                }" +
+                "                if ((curIt === null || curIt === undefined) && window._pgState.lastIterator) {" +
+                "                  bodyObj.variables.iterator = window._pgState.lastIterator;" +
+                "                  modifiedReq = true;" +
+                "                }" +
+                "                if (curSort === 'TOP' && (window._pgState.lastIterator === '1' || window._pgState.fallbackActive)) {" +
+                "                  window._pgState.fallbackActive = true;" +
+                "                  bodyObj.variables.sortBy = 'NEW';" +
+                "                  modifiedReq = true;" +
+                "                }" +
+                "              }" +
+                "            }" +
+                "          } catch (pe) { console.error('Pagination correction error:', pe); }" +
                 "        }" +
                 "        if (modifiedReq) {" +
                 "          options.body = JSON.stringify(bodyObj);" +
@@ -341,6 +398,12 @@ public class MainActivity extends AppCompatActivity {
                 "                if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true || item.isPaid === true || item.is_paid === true) return false;" +
                 "                if (isDiscoverQuery && (item.__typename === 'SubredditPost' || (item.mediaSources && Array.isArray(item.mediaSources)))) {" +
                 "                  if (!item.redditPath || typeof item.redditPath !== 'string' || !item.redditPath.includes('/r/')) return false;" +
+                "                }" +
+                "                if (item.__typename === 'SubredditPost' && item.id) {" +
+                "                  if (window._pgState && window._pgState.seenPostIds) {" +
+                "                    if (window._pgState.seenPostIds.has(item.id)) return false;" +
+                "                    window._pgState.seenPostIds.add(item.id);" +
+                "                  }" +
                 "                }" +
                 "                if (item.url && typeof item.url === 'string') {" +
                 "                  var u = item.url.toLowerCase();" +
@@ -415,6 +478,24 @@ public class MainActivity extends AppCompatActivity {
                 "          return obj;" +
                 "        }" +
                 "        console.log('SCROLLLER_API_RES: ' + JSON.stringify(json));" +
+                "        if (json && json.data && window._pgState) {" +
+                "          var d = json.data;" +
+                "          var newIt = null;" +
+                "          if (d.getSubreddit && d.getSubreddit.children) {" +
+                "            newIt = d.getSubreddit.children.iterator;" +
+                "          } else if (d.getSubredditChildren) {" +
+                "            newIt = d.getSubredditChildren.iterator;" +
+                "          } else if (d.getFavorites) {" +
+                "            newIt = d.getFavorites.iterator;" +
+                "          } else if (d.getMyPaidCollections) {" +
+                "            newIt = d.getMyPaidCollections.iterator;" +
+                "          } else if (d.discoverFilteredSubreddits) {" +
+                "            newIt = d.discoverFilteredSubreddits.iterator;" +
+                "          }" +
+                "          if (newIt) {" +
+                "            window._pgState.lastIterator = String(newIt);" +
+                "          }" +
+                "        }" +
                 "        filterAds(json);" +
                 "        if (modified) {" +
                 "          var newHeaders = new Headers(response.headers);" +
