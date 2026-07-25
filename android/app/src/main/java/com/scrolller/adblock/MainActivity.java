@@ -378,7 +378,7 @@ public class MainActivity extends AppCompatActivity {
                 "            }" +
                 "          } catch (pe) { console.error('Pagination correction error:', pe); }" +
                 "        }" +
-                "        if (modifiedReq) {" +
+"              if (modifiedReq) {" +
                 "          options.body = JSON.stringify(bodyObj);" +
                 "        }" +
                 "      } catch (e) { console.error('GraphQL variables auto-correction error:', e); }" +
@@ -388,100 +388,6 @@ public class MainActivity extends AppCompatActivity {
                 "      try {" +
                 "        var clone = response.clone();" +
                 "        var json = await clone.json();" +
-                "        var modified = true;" +
-                "        function filterAds(obj) {" +
-                "          if (!obj || typeof obj !== 'object') return obj;" +
-                "          if ('isPremium' in obj) obj.isPremium = true;" +
-                "          if ('status' in obj) obj.status = 'ACTIVE';" +
-                "          if ('isPaid' in obj) obj.isPaid = false;" +
-                "          if (Array.isArray(obj)) {" +
-                "            var filtered = obj.filter(item => {" +
-                "                if (!item || typeof item !== 'object') return true;" +
-                "                if (isDiscoverQuery) {" +
-                "                  if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true || item.isPaid === true || item.is_paid === true) return false;" +
-                "                  if (item.__typename === 'SubredditPost' || (item.mediaSources && Array.isArray(item.mediaSources))) {" +
-                "                    if (!item.redditPath || typeof item.redditPath !== 'string' || !item.redditPath.includes('/r/')) return false;" +
-                "                  }" +
-                "                  if (item.url && typeof item.url === 'string') {" +
-                "                    var u = item.url.toLowerCase();" +
-                "                    if (u.includes('cant3am.com') || u.includes('chaturbate') || u.includes('stripchat')) return false;" +
-                "                  }" +
-                "                  if (item.reddit_posted_by && typeof item.reddit_posted_by === 'string') {" +
-                "                    var author = item.reddit_posted_by.toLowerCase();" +
-                "                    if (author.includes('scroll') || author === 'admin' || author === 'official' || author === 'sponsor') return false;" +
-                "                  }" +
-                "                  if (item.username && typeof item.username === 'string') {" +
-                "                    var user = item.username.toLowerCase();" +
-                "                    if (user.includes('scroll') || user === 'admin' || user === 'official' || user === 'sponsor') return false;" +
-                "                  }" +
-                "                  if (item.displayName && typeof item.displayName === 'string') {" +
-                "                    var dn = item.displayName.toLowerCase();" +
-                "                    if (dn.includes('scroll') || dn === 'admin' || dn === 'official' || dn === 'sponsor') return false;" +
-                "                  }" +
-                "                  if (item.userType && typeof item.userType === 'string') {" +
-                "                    var ut = item.userType.toLowerCase();" +
-                "                    if (ut.includes('scroll') || ut === 'admin' || ut === 'official' || ut === 'sponsor') return false;" +
-                "                  }" +
-                "                  if (item.title && typeof item.title === 'string') {" +
-                "                    var t = item.title.toLowerCase();" +
-                "                    if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\\bpro\\b/.test(t) || t.includes('wank') || t.includes('wish me luck') || t.includes('link in bio') || t.includes('onlyfans') || t.includes('snapchat') || t.includes('bio link')) return false;" +
-                "                  }" +
-                "                  if (item.description && typeof item.description === 'string') {" +
-                "                    var d = item.description.toLowerCase();" +
-                "                    if (d.includes('cam') || d.includes('sponsor') || d.includes('promot') || d.includes('premium') || d.includes('unlock') || /\\bpro\\b/.test(d) || d.includes('wank') || d.includes('wish me luck') || d.includes('link in bio') || d.includes('onlyfans') || d.includes('snapchat') || d.includes('bio link')) return false;" +
-                "                  }" +
-                "                }" +
-                "                if (item.__typename === 'SubredditPost' && item.id) {" +
-                "                  if (window._pgState && window._pgState.seenPostIds) {" +
-                "                    if (window._pgState.seenPostIds.has(item.id)) return false;" +
-                "                    window._pgState.seenPostIds.add(item.id);" +
-                "                  }" +
-                "                }" +
-                "                if ('isPaid' in item) item.isPaid = false;" +
-                "                if ('isPremium' in item) item.isPremium = true;" +
-                "                if ('status' in item) item.status = 'ACTIVE';" +
-                "                /* Force HD media quality by truncating the array to only contain the highest resolution original source */" +
-                "                if (item.mediaSources && Array.isArray(item.mediaSources) && item.mediaSources.length > 0) {" +
-                "                  var sorted = [...item.mediaSources].sort((a, b) => {" +
-                "                    if (b.width !== a.width) return b.width - a.width;" +
-                "                    return (a.isOptimized ? 1 : 0) - (b.isOptimized ? 0 : 1);" +
-                "                  });" +
-                "                  var best = sorted[0];" +
-                "                  if (best) {" +
-                "                    item.mediaSources.length = 0;" +
-                "                    item.mediaSources.push(best);" +
-                "                  }" +
-                "                }" +
-                "                if (item.albumContent && Array.isArray(item.albumContent)) {" +
-                "                  item.albumContent.forEach(slide => {" +
-                "                    if ('isPaid' in slide) slide.isPaid = false;" +
-                "                    if ('isPremium' in slide) slide.isPremium = true;" +
-                "                    if ('status' in slide) slide.status = 'ACTIVE';" +
-                "                    if (slide.mediaSources && Array.isArray(slide.mediaSources) && slide.mediaSources.length > 0) {" +
-                "                      var sorted = [...slide.mediaSources].sort((a, b) => {" +
-                "                        if (b.width !== a.width) return b.width - a.width;" +
-                "                        return (a.isOptimized ? 1 : 0) - (b.isOptimized ? 0 : 1);" +
-                "                      });" +
-                "                      var best = sorted[0];" +
-                "                      if (best) {" +
-                "                        slide.mediaSources.length = 0;" +
-                "                        slide.mediaSources.push(best);" +
-                "                      }" +
-                "                    }" +
-                "                  });" +
-                "                }" +
-                "              return true;" +
-                "            });" +
-                "            obj.length = 0;" +
-                "            obj.push(...filtered.map(filterAds));" +
-                "          } else {" +
-                "            for (var key in obj) {" +
-                "              if (obj.hasOwnProperty(key)) obj[key] = filterAds(obj[key]);" +
-                "            }" +
-                "          }" +
-                "          return obj;" +
-                "        }" +
-                "        console.log('SCROLLLER_API_RES: ' + JSON.stringify(json));" +
                 "        if (json && json.data && window._pgState) {" +
                 "          var d = json.data;" +
                 "          var newIt = null;" +
@@ -500,17 +406,33 @@ public class MainActivity extends AppCompatActivity {
                 "            window._pgState.lastIterator = String(newIt);" +
                 "          }" +
                 "        }" +
-                "        filterAds(json);" +
-                "        if (modified) {" +
-                "          var newHeaders = new Headers(response.headers);" +
-                "          newHeaders.delete('content-length');" +
-                "          newHeaders.set('access-control-allow-origin', '*');" +
-                "          return new Response(JSON.stringify(json), {" +
-                "            status: response.status," +
-                "            statusText: response.statusText," +
-                "            headers: newHeaders" +
-                "          });" +
+                "        function unlockPremium(obj) {" +
+                "          if (!obj || typeof obj !== 'object') return;" +
+                "          if (Array.isArray(obj)) {" +
+                "            for (var i = 0; i < obj.length; i++) {" +
+                "              unlockPremium(obj[i]);" +
+                "            }" +
+                "          } else {" +
+                "            if ('isPremium' in obj) obj.isPremium = true;" +
+                "            if ('status' in obj) obj.status = 'ACTIVE';" +
+                "            if ('isPaid' in obj) obj.isPaid = false;" +
+                "            for (var k in obj) {" +
+                "              if (obj.hasOwnProperty(k)) unlockPremium(obj[k]);" +
+                "            }" +
+                "          }" +
                 "        }" +
+                "        if (json && json.data) {" +
+                "          unlockPremium(json.data);" +
+                "        }" +
+                "        console.log('SCROLLLER_API_RES: ' + JSON.stringify(json));" +
+                "        var newHeaders = new Headers(response.headers);" +
+                "        newHeaders.delete('content-length');" +
+                "        newHeaders.set('access-control-allow-origin', '*');" +
+                "        return new Response(JSON.stringify(json), {" +
+                "          status: response.status," +
+                "          statusText: response.statusText," +
+                "          headers: newHeaders" +
+                "        });" +
                 "      } catch (err) { console.error(err); }" +
                 "    }" +
                 "    return response;" +
