@@ -299,6 +299,7 @@ public class MainActivity extends AppCompatActivity {
                 "    if (isScrolllerApi && options && options.body) {" +
                 "      try {" +
                 "        var bodyObj = JSON.parse(options.body);" +
+                "        console.log('SCROLLLER_API_REQ: ' + options.body);" +
                 "        if (bodyObj && bodyObj.query) {" +
                 "          var q = bodyObj.query.toLowerCase();" +
                 "          var isUserQuery = q.includes('favorite') || q.includes('collection') || q.includes('user') || q.includes('me') || q.includes('my');" +
