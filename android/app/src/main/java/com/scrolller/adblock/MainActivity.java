@@ -158,7 +158,7 @@ public class MainActivity extends AppCompatActivity {
                 "  " +
                 "  var style = document.createElement('style');" +
                 "  style.innerHTML = '" +
-                "    iframe, ins, [class*=\"Cam\"], [class*=\"cam\"], [class*=\"sponsored\"], [class*=\"sponsor\"], [class*=\"Sponsor\"], [class*=\"promoted\"], [class*=\"Promoted\"], [class*=\"promotion\"], [class*=\"Promotion\"], [class*=\"adContainer\"], [class*=\"exoclick\"], [class*=\"juicyads\"], a[href*=\"chaturbate\"], a[href*=\"stripchat\"], [class*=\"Premium\"], [class*=\"Upgrade\"], [class*=\"paywall\"], [class*=\"Paywall\"], [class*=\"Adblock\"], [class*=\"AdBlock\"], [class*=\"ad-block\"], [class*=\"Billing\"] { display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important; }" +
+                "    iframe, ins, [class*=\"Cam\"], [class*=\"cam\"], [class*=\"sponsored\"], [class*=\"sponsor\"], [class*=\"Sponsor\"], [class*=\"promoted\"], [class*=\"Promoted\"], [class*=\"promotion\"], [class*=\"Promotion\"], [class*=\"adContainer\"], [class*=\"exoclick\"], [class*=\"juicyads\"], a[href*=\"chaturbate\"], a[href*=\"stripchat\"], [class*=\"paywall\"], [class*=\"Paywall\"], [class*=\"Adblock\"], [class*=\"AdBlock\"], [class*=\"ad-block\"], [class*=\"Billing\"] { display: none !important; height: 0 !important; width: 0 !important; opacity: 0 !important; pointer-events: none !important; }" +
                 "    div[class*=\"slide\"]:has(iframe), div[class*=\"slide\"]:has(a[href*=\"chaturbate\"]), div[class*=\"slide\"]:has(a[href*=\"stripchat\"]), div[class*=\"slide\"]:has([class*=\"Cam\"]), div[class*=\"slide\"]:has([class*=\"cam\"]), div[class*=\"slide\"]:has([class*=\"sponsored\"]), div[class*=\"slide\"]:has([class*=\"sponsor\"]), div[class*=\"slide\"]:has([class*=\"Sponsor\"]), div[class*=\"slide\"]:has([class*=\"promoted\"]), div[class*=\"slide\"]:has([class*=\"Promoted\"]), div[class*=\"slide\"]:has([class*=\"promotion\"]), div[class*=\"slide\"]:has([class*=\"Promotion\"]), div[class*=\"card\"]:has(iframe), div[class*=\"card\"]:has([class*=\"cam\"]), div[class*=\"card\"]:has([class*=\"sponsored\"]) { display: none !important; height: 0 !important; width: 0 !important; visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }" +
                 "    html, body { overflow: auto !important; position: initial !important; pointer-events: auto !important; }" +
                 "    /* Client-side Premium Collection Unlock Bypass */" +
@@ -277,31 +277,28 @@ public class MainActivity extends AppCompatActivity {
                 "  var originalToString = Function.prototype.toString;" +
                 "  Function.prototype.toString = new Proxy(originalToString, {" +
                 "    apply: function(target, thisArg, args) {" +
-                "      if (thisArg === XMLHttpRequest.prototype.open || thisArg === window.WebSocket) {" +
-                "        return 'function () { [native code] }';" +
-                "      }" +
+                "      if (thisArg === XMLHttpRequest.prototype.open) return 'function open() { [native code] }';" +
+                "      if (thisArg === window.WebSocket) return 'function WebSocket() { [native code] }';" +
+                "      if (thisArg === window.fetch) return 'function fetch() { [native code] }';" +
                 "      return target.apply(thisArg, args);" +
                 "    }" +
                 "  });" +
                 "  " +
                 "  var originalFetch = window.fetch;" +
-                "  window.fetch = async function(...args) {" +
-                "    var url = args[0];" +
-                "    var options = args[1];" +
+                "  window.fetch = async function(input, init) {" +
                 "    var urlStr = '';" +
-                "    if (url) {" +
-                "      if (typeof url === 'string') {" +
-                "        urlStr = url;" +
-                "      } else if (typeof url === 'object') {" +
-                "        urlStr = url.url || (typeof url.toString === 'function' ? url.toString() : '');" +
-                "      }" +
+                "    var requestInit = init || {};" +
+                "    if (typeof input === 'string') {" +
+                "      urlStr = input;" +
+                "    } else if (input && typeof input === 'object') {" +
+                "      urlStr = input.url || '';" +
                 "    }" +
                 "    var isScrolllerApi = urlStr && (urlStr.includes('/graphql') || urlStr.includes('/admin') || urlStr.includes('api.scrolller.com'));" +
                 "    var isDiscoverQuery = false;" +
-                "    if (isScrolllerApi && options && options.body) {" +
+                "    if (isScrolllerApi && requestInit && requestInit.body && typeof requestInit.body === 'string') {" +
                 "      try {" +
-                "        var bodyObj = JSON.parse(options.body);" +
-                "        console.log('SCROLLLER_API_REQ: ' + options.body);" +
+                "        var bodyObj = JSON.parse(requestInit.body);" +
+                "        console.log('SCROLLLER_API_REQ: ' + requestInit.body);" +
                 "        if (bodyObj && bodyObj.query) {" +
                 "          var q = bodyObj.query.toLowerCase();" +
                 "          var isUserQuery = q.includes('favorite') || q.includes('collection') || q.includes('user') || q.includes('me') || q.includes('my');" +
@@ -321,8 +318,8 @@ public class MainActivity extends AppCompatActivity {
                 "            }" +
                 "          }" +
                 "          try {" +
-                "            var opName = null;" +
-                "            if (bodyObj.query) {" +
+                "            var opName = bodyObj.operationName;" +
+                "            if (!opName && bodyObj.query) {" +
                 "              if (bodyObj.query.includes('SubredditQuery')) opName = 'SubredditQuery';" +
                 "              else if (bodyObj.query.includes('SubredditChildrenQuery')) opName = 'SubredditChildrenQuery';" +
                 "              else if (bodyObj.query.includes('FavoritesQuery')) opName = 'FavoritesQuery';" +
@@ -330,27 +327,11 @@ public class MainActivity extends AppCompatActivity {
                 "              else if (bodyObj.query.includes('DiscoverFilteredSubredditsQuery')) opName = 'DiscoverFilteredSubredditsQuery';" +
                 "            }" +
                 "            if (opName) {" +
-                "              var contextKey = null;" +
-                "              var isFeedQuery = false;" +
-                "              var curIt = bodyObj.variables.iterator;" +
-                "              var curSort = bodyObj.variables.sortBy;" +
-                "              if (opName === 'SubredditQuery') {" +
-                "                contextKey = 'sub_' + bodyObj.variables.url + '_' + curSort + '_' + bodyObj.variables.filter;" +
-                "                isFeedQuery = true;" +
-                "              } else if (opName === 'SubredditChildrenQuery') {" +
-                "                contextKey = 'subchild_' + bodyObj.variables.subredditId + '_' + curSort + '_' + bodyObj.variables.filter + '_' + bodyObj.variables.isNsfw;" +
-                "                isFeedQuery = true;" +
-                "              } else if (opName === 'FavoritesQuery') {" +
-                "                contextKey = 'fav_' + curSort + '_' + bodyObj.variables.filter + '_' + bodyObj.variables.nsfw;" +
-                "                isFeedQuery = true;" +
-                "              } else if (opName === 'PaidCollections') {" +
-                "                contextKey = 'paidcol_' + bodyObj.variables.iterator;" +
-                "                isFeedQuery = true;" +
-                "              } else if (opName === 'DiscoverFilteredSubredditsQuery') {" +
-                "                contextKey = 'discover_' + curSort + '_' + bodyObj.variables.nsfw;" +
-                "                isFeedQuery = true;" +
-                "              }" +
-                "              if (isFeedQuery && contextKey) {" +
+                "              var isFeedQuery = opName === 'SubredditQuery' || opName === 'SubredditChildrenQuery' || opName === 'FavoritesQuery' || opName === 'PaidCollections' || opName === 'DiscoverFilteredSubredditsQuery';" +
+                "              if (isFeedQuery) {" +
+                "                var curIt = bodyObj.variables.iterator;" +
+                "                var curSort = bodyObj.variables.sortBy || 'HOT';" +
+                "                var contextKey = opName + '_' + curSort + '_' + (bodyObj.variables.url || bodyObj.variables.subredditId || '');" +
                 "                if (!window._pgState) {" +
                 "                  window._pgState = {" +
                 "                    activeContext: null," +
@@ -378,12 +359,12 @@ public class MainActivity extends AppCompatActivity {
                 "            }" +
                 "          } catch (pe) { console.error('Pagination correction error:', pe); }" +
                 "        }" +
-"              if (modifiedReq) {" +
-                "          options.body = JSON.stringify(bodyObj);" +
+                "        if (modifiedReq) {" +
+                "          requestInit.body = JSON.stringify(bodyObj);" +
                 "        }" +
                 "      } catch (e) { console.error('GraphQL variables auto-correction error:', e); }" +
                 "    }" +
-                "    var response = await originalFetch.apply(this, args);" +
+                "    var response = await originalFetch(input, requestInit);" +
                 "    if (isScrolllerApi) {" +
                 "      try {" +
                 "        var clone = response.clone();" +
@@ -406,7 +387,68 @@ public class MainActivity extends AppCompatActivity {
                 "            window._pgState.lastIterator = String(newIt);" +
                 "          }" +
                 "        }" +
+                "        var modified = false;" +
+                "        if (json && json.data) {" +
+                "          if (json.data.getLoggedInUser) {" +
+                "            json.data.getLoggedInUser.isPremium = true;" +
+                "            json.data.getLoggedInUser.status = 'ACTIVE';" +
+                "            modified = true;" +
+                "          }" +
+                "          if (json.data.login) {" +
+                "            json.data.login.isPremium = true;" +
+                "            json.data.login.status = 'ACTIVE';" +
+                "            modified = true;" +
+                "          }" +
+                "          function unlockPremium(obj) {" +
+                "            if (!obj || typeof obj !== 'object') return;" +
+                "            if (Array.isArray(obj)) {" +
+                "              for (var i = 0; i < obj.length; i++) {" +
+                "                unlockPremium(obj[i]);" +
+                "              }" +
+                "            } else {" +
+                "              var isPost = obj.__typename === 'SubredditPost' || obj.mediaSources || obj.blurredMediaSources;" +
+                "              if (isPost) {" +
+                "                if ('isPaid' in obj) obj.isPaid = false;" +
+                "                if ('isPremium' in obj) obj.isPremium = true;" +
+                "                if ('status' in obj) obj.status = 'ACTIVE';" +
+                "                if ((!obj.mediaSources || obj.mediaSources.length === 0) && obj.blurredMediaSources && obj.blurredMediaSources.length > 0) {" +
+                "                  obj.mediaSources = obj.blurredMediaSources;" +
+                "                  modified = true;" +
+                "                }" +
+                "                if (obj.albumContent && Array.isArray(obj.albumContent)) {" +
+                "                  obj.albumContent.forEach(slide => {" +
+                "                    if (slide) {" +
+                "                      slide.isPaid = false;" +
+                "                      slide.isPremium = true;" +
+                "                      slide.status = 'ACTIVE';" +
+                "                      if ((!slide.mediaSources || slide.mediaSources.length === 0) && slide.blurredMediaSources && slide.blurredMediaSources.length > 0) {" +
+                "                        slide.mediaSources = slide.blurredMediaSources;" +
+                "                        modified = true;" +
+                "                      }" +
+                "                    }" +
+                "                  });" +
+                "                }" +
+                "              }" +
+                "              for (var k in obj) {" +
+                "                if (obj.hasOwnProperty(k) && k !== 'mediaSources' && k !== 'blurredMediaSources' && k !== 'albumContent') {" +
+                "                  unlockPremium(obj[k]);" +
+                "                }" +
+                "              }" +
+                "            }" +
+                "          }" +
+                "          unlockPremium(json.data);" +
+                "        }" +
                 "        console.log('SCROLLLER_API_RES: ' + JSON.stringify(json));" +
+                "        if (modified) {" +
+                "          var newHeaders = new Headers(response.headers);" +
+                "          newHeaders.delete('content-length');" +
+                "          newHeaders.set('access-control-allow-origin', '*');" +
+                "          return new Response(JSON.stringify(json), {" +
+                "            status: response.status," +
+                "            statusText: response.statusText," +
+                "            headers: newHeaders" +
+                "          });" +
+                "        }" +
                 "      } catch (err) { console.error(err); }" +
                 "    }" +
                 "    return response;" +
