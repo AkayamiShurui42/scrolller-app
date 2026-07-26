@@ -320,11 +320,11 @@ public class MainActivity extends AppCompatActivity {
                 "          try {" +
                 "            var opName = bodyObj.operationName;" +
                 "            if (!opName && bodyObj.query) {" +
-                "              if (bodyObj.query.includes('SubredditQuery')) opName = 'SubredditQuery';" +
-                "              else if (bodyObj.query.includes('SubredditChildrenQuery')) opName = 'SubredditChildrenQuery';" +
-                "              else if (bodyObj.query.includes('FavoritesQuery')) opName = 'FavoritesQuery';" +
-                "              else if (bodyObj.query.includes('PaidCollections')) opName = 'PaidCollections';" +
-                "              else if (bodyObj.query.includes('DiscoverFilteredSubredditsQuery')) opName = 'DiscoverFilteredSubredditsQuery';" +
+                "              if (bodyObj.query.includes('SubredditQuery') || bodyObj.query.includes('getSubreddit')) opName = 'SubredditQuery';" +
+                "              else if (bodyObj.query.includes('SubredditChildrenQuery') || bodyObj.query.includes('getSubredditChildren')) opName = 'SubredditChildrenQuery';" +
+                "              else if (bodyObj.query.includes('FavoritesQuery') || bodyObj.query.includes('getFavorites')) opName = 'FavoritesQuery';" +
+                "              else if (bodyObj.query.includes('PaidCollections') || bodyObj.query.includes('getMyPaidCollections')) opName = 'PaidCollections';" +
+                "              else if (bodyObj.query.includes('DiscoverFilteredSubredditsQuery') || bodyObj.query.includes('discoverFilteredSubreddits')) opName = 'DiscoverFilteredSubredditsQuery';" +
                 "            }" +
                 "            if (opName) {" +
                 "              var isFeedQuery = opName === 'SubredditQuery' || opName === 'SubredditChildrenQuery' || opName === 'FavoritesQuery' || opName === 'PaidCollections' || opName === 'DiscoverFilteredSubredditsQuery';" +
@@ -415,18 +415,15 @@ public class MainActivity extends AppCompatActivity {
                 "                  obj.mediaSources = obj.blurredMediaSources;" +
                 "                  modified = true;" +
                 "                }" +
-                "                if (obj.albumContent && Array.isArray(obj.albumContent)) {" +
-                "                  obj.albumContent.forEach(slide => {" +
-                "                    if (slide) {" +
-                "                      slide.isPaid = false;" +
-                "                      slide.isPremium = true;" +
-                "                      slide.status = 'ACTIVE';" +
-                "                      if ((!slide.mediaSources || slide.mediaSources.length === 0) && slide.blurredMediaSources && slide.blurredMediaSources.length > 0) {" +
-                "                        slide.mediaSources = slide.blurredMediaSources;" +
-                "                        modified = true;" +
-                "                      }" +
-                "                    }" +
-                "                  });" +
+                "                if (obj.albumContent && typeof obj.albumContent === 'object') {" +
+                "                  var album = obj.albumContent;" +
+                "                  if ('isPaid' in album) album.isPaid = false;" +
+                "                  if ('isPremium' in album) album.isPremium = true;" +
+                "                  if ('status' in album) album.status = 'ACTIVE';" +
+                "                  if ((!album.mediaSources || album.mediaSources.length === 0) && album.blurredMediaSources && album.blurredMediaSources.length > 0) {" +
+                "                    album.mediaSources = album.blurredMediaSources;" +
+                "                    modified = true;" +
+                "                  }" +
                 "                }" +
                 "              }" +
                 "              for (var k in obj) {" +
