@@ -287,7 +287,6 @@ public class MainActivity extends AppCompatActivity {
                 "  var originalFetch = window.fetch;" +
                 "  window.fetch = async function(input, init) {" +
                 "    var urlStr = '';" +
-                "    var requestInit = init || {};" +
                 "    if (typeof input === 'string') {" +
                 "      urlStr = input;" +
                 "    } else if (input && typeof input === 'object') {" +
@@ -295,10 +294,10 @@ public class MainActivity extends AppCompatActivity {
                 "    }" +
                 "    var isScrolllerApi = urlStr && (urlStr.includes('/graphql') || urlStr.includes('/admin') || urlStr.includes('api.scrolller.com'));" +
                 "    var isDiscoverQuery = false;" +
-                "    if (isScrolllerApi && requestInit && requestInit.body && typeof requestInit.body === 'string') {" +
+                "    if (isScrolllerApi && init && init.body && typeof init.body === 'string') {" +
                 "      try {" +
-                "        var bodyObj = JSON.parse(requestInit.body);" +
-                "        console.log('SCROLLLER_API_REQ: ' + requestInit.body);" +
+                "        var bodyObj = JSON.parse(init.body);" +
+                "        console.log('SCROLLLER_API_REQ: ' + init.body);" +
                 "        if (bodyObj && bodyObj.query) {" +
                 "          var q = bodyObj.query.toLowerCase();" +
                 "          var isUserQuery = q.includes('favorite') || q.includes('collection') || q.includes('user') || q.includes('me') || q.includes('my');" +
@@ -360,11 +359,11 @@ public class MainActivity extends AppCompatActivity {
                 "          } catch (pe) { console.error('Pagination correction error:', pe); }" +
                 "        }" +
                 "        if (modifiedReq) {" +
-                "          requestInit.body = JSON.stringify(bodyObj);" +
+                "          init.body = JSON.stringify(bodyObj);" +
                 "        }" +
                 "      } catch (e) { console.error('GraphQL variables auto-correction error:', e); }" +
                 "    }" +
-                "    var response = await originalFetch(input, requestInit);" +
+                "    var response = await originalFetch(input, init);" +
                 "    if (isScrolllerApi) {" +
                 "      try {" +
                 "        var clone = response.clone();" +
