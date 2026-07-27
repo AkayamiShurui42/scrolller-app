@@ -179,40 +179,8 @@ public class MainActivity extends AppCompatActivity {
                 "        injectStyle();" +
                 "        var observer = new MutationObserver(function(mutations) {" +
                 "          cleanUpBody();" +
-                "          document.querySelectorAll('div, section, aside, article, dialog, a, span, p').forEach(function(el) {" +
-                "            var className = el.className || \"\";" +
-                "            if (typeof className === \"string\" && className) {" +
-                "              var lowerClass = className.toLowerCase();" +
-                "              if ((lowerClass.includes(\"adblock\") || lowerClass.includes(\"paywall\") || lowerClass.includes(\"ad-block\")) && !lowerClass.includes(\"login\") && !lowerClass.includes(\"signin\") && !lowerClass.includes(\"auth\")) {" +
-                "                var m = el.closest('[class*=\"Dialog\"]') || el.closest('[class*=\"Modal\"]') || el.closest('[class*=\"popup\"]') || el;" +
-                "                if (m && m.parentNode) {" +
-                "                  m.remove();" +
-                "                  return;" +
-                "                }" +
-                "              }" +
-                "            }" +
-                "            " +
-                "            var label = (el.textContent || \"\").trim().toLowerCase();" +
-                "            if (label === \"sponsored\" || label === \"promoted\" || label === \"advertisement\" || label === \"sponsored post\" || label === \"promoted post\") {" +
-                "              var card = el.closest('[class*=\"card\"]') || el.closest('[class*=\"item\"]') || el.closest('[class*=\"container\"]') || el.closest('[class*=\"wrapper\"]') || el.closest('article');" +
-                "              if (card && card.parentNode) {" +
-                "                card.remove();" +
-                "                return;" +
-                "              }" +
-                "            }" +
-                "            " +
-                "            var text = el.textContent || \"\";" +
-                "            var lowerText = text.toLowerCase();" +
-                "            if ((lowerText.includes(\"ad-free\") || lowerText.includes(\"ad free\") || lowerText.includes(\"remove ads\") || lowerText.includes(\"enjoying scrolller\") || lowerText.includes(\"get premium\") || lowerText.includes(\"adblock\") || lowerText.includes(\"ad block\") || lowerText.includes(\"adblocker\") || lowerText.includes(\"ad-blocker\") || lowerText.includes(\"disable ad\") || lowerText.includes(\"disable your ad\") || lowerText.includes(\"turn off ad\") || lowerText.includes(\"support us\") || lowerText.includes(\"ad blocker\")) " +
-                "                && !lowerText.includes(\"login\") && !lowerText.includes(\"username\") && !lowerText.includes(\"password\") && !lowerText.includes(\"collection\") && !lowerText.includes(\"search\")) {" +
-                "              var modal = el.closest('[class*=\"Dialog\"]') || el.closest('[class*=\"Modal\"]') || el.closest('[class*=\"popup\"]') || el;" +
-                "              if (modal && modal.parentNode) {" +
-                "                modal.remove();" +
-                "              }" +
-                "            }" +
-                "          });" +
                 "        });" +
-                "        observer.observe(target, { childList: true, subtree: true, characterData: true });" +
+                "        observer.observe(target, { childList: true, subtree: true });" +
                 "      } else {" +
                 "        setTimeout(startObserver, 50);" +
                 "      }" +
@@ -233,19 +201,6 @@ public class MainActivity extends AppCompatActivity {
                 "      document.documentElement.style.overflow = \"auto\";" +
                 "    }" +
                 "  }" +
-                "  " +
-                "  /* Force active premium state inside localStorage for Zustand client store loading initialization */" +
-                "  try {" +
-                "    var localLogin = localStorage.getItem('scrolller-login-details');" +
-                "    if (localLogin) {" +
-                "      var loginObj = JSON.parse(localLogin);" +
-                "      if (loginObj && !loginObj.isPremium) {" +
-                "        loginObj.isPremium = true;" +
-                "        loginObj.status = 'ACTIVE';" +
-                "        localStorage.setItem('scrolller-login-details', JSON.stringify(loginObj));" +
-                "      }" +
-                "    }" +
-                "  } catch (e) { console.error('Local login patch error:', e); }" +
                 "  " +
                 "  /* --- XHR and WS Proxies --- */" +
                 "  var blockedPatterns = ['exoclick', 'juicyads', 'cant3am', 'realsrv'];" +
