@@ -343,6 +343,26 @@ public class MainActivity extends AppCompatActivity {
                 "        }" +
                 "        var modified = false;" +
                 "        if (json && json.data) {" +
+                "          if (json.data.getLoggedInUser) {" +
+                "            if (json.data.getLoggedInUser.isPremium !== true) {" +
+                "              json.data.getLoggedInUser.isPremium = true;" +
+                "              modified = true;" +
+                "            }" +
+                "            if (json.data.getLoggedInUser.status !== 'ACTIVE') {" +
+                "              json.data.getLoggedInUser.status = 'ACTIVE';" +
+                "              modified = true;" +
+                "            }" +
+                "          }" +
+                "          if (json.data.login) {" +
+                "            if (json.data.login.isPremium !== true) {" +
+                "              json.data.login.isPremium = true;" +
+                "              modified = true;" +
+                "            }" +
+                "            if (json.data.login.status !== 'ACTIVE') {" +
+                "              json.data.login.status = 'ACTIVE';" +
+                "              modified = true;" +
+                "            }" +
+                "          }" +
                 "          function unlockPremium(obj) {" +
                 "            if (!obj || typeof obj !== 'object') return;" +
                 "            if (Array.isArray(obj)) {" +
