@@ -389,16 +389,6 @@ public class MainActivity extends AppCompatActivity {
                 "        }" +
                 "        var modified = false;" +
                 "        if (json && json.data) {" +
-                "          if (json.data.getLoggedInUser) {" +
-                "            json.data.getLoggedInUser.isPremium = true;" +
-                "            json.data.getLoggedInUser.status = 'ACTIVE';" +
-                "            modified = true;" +
-                "          }" +
-                "          if (json.data.login) {" +
-                "            json.data.login.isPremium = true;" +
-                "            json.data.login.status = 'ACTIVE';" +
-                "            modified = true;" +
-                "          }" +
                 "          function unlockPremium(obj) {" +
                 "            if (!obj || typeof obj !== 'object') return;" +
                 "            if (Array.isArray(obj)) {" +
@@ -408,18 +398,36 @@ public class MainActivity extends AppCompatActivity {
                 "            } else {" +
                 "              var isPost = obj.__typename === 'SubredditPost' || obj.mediaSources || obj.blurredMediaSources;" +
                 "              if (isPost) {" +
-                "                if ('isPaid' in obj) obj.isPaid = false;" +
-                "                if ('isPremium' in obj) obj.isPremium = true;" +
-                "                if ('status' in obj) obj.status = 'ACTIVE';" +
+                "                if ('isPaid' in obj && obj.isPaid !== false) {" +
+                "                  obj.isPaid = false;" +
+                "                  modified = true;" +
+                "                }" +
+                "                if ('isPremium' in obj && obj.isPremium !== true) {" +
+                "                  obj.isPremium = true;" +
+                "                  modified = true;" +
+                "                }" +
+                "                if ('status' in obj && obj.status !== 'ACTIVE') {" +
+                "                  obj.status = 'ACTIVE';" +
+                "                  modified = true;" +
+                "                }" +
                 "                if ((!obj.mediaSources || obj.mediaSources.length === 0) && obj.blurredMediaSources && obj.blurredMediaSources.length > 0) {" +
                 "                  obj.mediaSources = obj.blurredMediaSources;" +
                 "                  modified = true;" +
                 "                }" +
                 "                if (obj.albumContent && typeof obj.albumContent === 'object') {" +
                 "                  var album = obj.albumContent;" +
-                "                  if ('isPaid' in album) album.isPaid = false;" +
-                "                  if ('isPremium' in album) album.isPremium = true;" +
-                "                  if ('status' in album) album.status = 'ACTIVE';" +
+                "                  if ('isPaid' in album && album.isPaid !== false) {" +
+                "                    album.isPaid = false;" +
+                "                    modified = true;" +
+                "                  }" +
+                "                  if ('isPremium' in album && album.isPremium !== true) {" +
+                "                    album.isPremium = true;" +
+                "                    modified = true;" +
+                "                  }" +
+                "                  if ('status' in album && album.status !== 'ACTIVE') {" +
+                "                    album.status = 'ACTIVE';" +
+                "                    modified = true;" +
+                "                  }" +
                 "                  if ((!album.mediaSources || album.mediaSources.length === 0) && album.blurredMediaSources && album.blurredMediaSources.length > 0) {" +
                 "                    album.mediaSources = album.blurredMediaSources;" +
                 "                    modified = true;" +
