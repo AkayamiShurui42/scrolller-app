@@ -32,14 +32,23 @@ public class MainActivity extends AppCompatActivity {
         // Hide navigation and status bars for true immersive full screen mode
         setImmersiveMode();
 
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setAllowFileAccess(true);
         
+        // Optimize cache mode
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        
+        // Block popups and multiple windows natively
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setSupportMultipleWindows(false);
+
         // Force high-quality desktop video streams by setting desktop user agent
-        String desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        String desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36";
         settings.setUserAgentString(desktopUserAgent);
 
         // Scale pages properly like a desktop browser
@@ -173,11 +182,51 @@ public class MainActivity extends AppCompatActivity {
                 "      }" +
                 "    }" +
                 "    " +
+                "    function injectPrefetches() {" +
+                "      var target = document.head || document.documentElement || document.body;" +
+                "      if (!target || window.prefetchesInjected) return;" +
+                "      window.prefetchesInjected = true;" +
+                "      var domains = [" +
+                "        'https://api.scrolller.com'," +
+                "        'https://images.scrolller.com'," +
+                "        'https://video.scrolller.com'," +
+                "        'https://v3.redgifs.com'," +
+                "        'https://i.imgur.com'," +
+                "        'https://i.redd.it'," +
+                "        'https://v.redd.it'" +
+                "      ];" +
+                "      domains.forEach(function(domain) {" +
+                "        var linkPrefetch = document.createElement(\"link\");" +
+                "        linkPrefetch.rel = \"dns-prefetch\";" +
+                "        linkPrefetch.href = domain;" +
+                "        target.appendChild(linkPrefetch);" +
+                "        var linkPreconnect = document.createElement(\"link\");" +
+                "        linkPreconnect.rel = \"preconnect\";" +
+                "        linkPreconnect.href = domain;" +
+                "        linkPreconnect.crossOrigin = \"anonymous\";" +
+                "        target.appendChild(linkPreconnect);" +
+                "      });" +
+                "    }" +
+                "    " +
+                "    function cleanUpBody() {" +
+                "      if (document.body) {" +
+                "        document.body.style.overflow = \"auto\";" +
+                "        document.body.style.position = \"initial\";" +
+                "      }" +
+                "      if (document.documentElement) {" +
+                "        document.documentElement.style.overflow = \"auto\";" +
+                "      }" +
+                "    }" +
+                "    " +
                 "    function startObserver() {" +
                 "      var target = document.documentElement || document.body;" +
                 "      if (target) {" +
                 "        injectStyle();" +
+                "        injectPrefetches();" +
+                "        cleanUpBody();" +
                 "        var observer = new MutationObserver(function(mutations) {" +
+                "          injectStyle();" +
+                "          injectPrefetches();" +
                 "          cleanUpBody();" +
                 "        });" +
                 "        observer.observe(target, { childList: true, subtree: true });" +
@@ -187,20 +236,6 @@ public class MainActivity extends AppCompatActivity {
                 "    }" +
                 "    " +
                 "    startObserver();" +
-                "    setInterval(function() {" +
-                "      injectStyle();" +
-                "      cleanUpBody();" +
-                "    }, 200);" +
-                "  " +
-                "  function cleanUpBody() {" +
-                "    if (document.body) {" +
-                "      document.body.style.overflow = \"auto\";" +
-                "      document.body.style.position = \"initial\";" +
-                "    }" +
-                "    if (document.documentElement) {" +
-                "      document.documentElement.style.overflow = \"auto\";" +
-                "    }" +
-                "  }" +
                 "  " +
                 "  /* --- XHR and WS Proxies --- */" +
                 "  var blockedPatterns = ['exoclick', 'juicyads', 'cant3am', 'realsrv'];" +
