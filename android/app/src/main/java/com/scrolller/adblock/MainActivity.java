@@ -415,7 +415,37 @@ public class MainActivity extends AppCompatActivity {
                 "              }" +
                 "            }" +
                 "          }" +
+                "          function filterAdPosts(obj) {" +
+                "            if (!obj || typeof obj !== 'object') return;" +
+                "            if (Array.isArray(obj)) {" +
+                "              for (var i = 0; i < obj.length; i++) {" +
+                "                filterAdPosts(obj[i]);" +
+                "              }" +
+                "            } else {" +
+                "              if (obj.items && Array.isArray(obj.items)) {" +
+                "                var lenBefore = obj.items.length;" +
+                "                obj.items = obj.items.filter(item => {" +
+                "                  if (item && item.username) {" +
+                "                    var u = item.username.toLowerCase();" +
+                "                    if (u.includes('scrolller')) {" +
+                "                      return false;" +
+                "                    }" +
+                "                  }" +
+                "                  return true;" +
+                "                });" +
+                "                if (obj.items.length !== lenBefore) {" +
+                "                  modified = true;" +
+                "                }" +
+                "              }" +
+                "              for (var k in obj) {" +
+                "                if (obj.hasOwnProperty(k) && k !== 'items') {" +
+                "                  filterAdPosts(obj[k]);" +
+                "                }" +
+                "              }" +
+                "            }" +
+                "          }" +
                 "          unlockPremium(json.data);" +
+                "          filterAdPosts(json.data);" +
                 "        }" +
                 "        console.log('SCROLLLER_API_RES: ' + JSON.stringify(json));" +
                 "        if (modified) {" +
