@@ -425,9 +425,14 @@ public class MainActivity extends AppCompatActivity {
                 "              if (obj.items && Array.isArray(obj.items)) {" +
                 "                var lenBefore = obj.items.length;" +
                 "                obj.items = obj.items.filter(item => {" +
-                "                  if (item && item.username) {" +
-                "                    var u = item.username.toLowerCase();" +
-                "                    if (u.includes('scrolller')) {" +
+                "                  if (item) {" +
+                "                    if (item.username) {" +
+                "                      var u = item.username.toLowerCase();" +
+                "                      if (u.includes('scrolller')) {" +
+                "                        return false;" +
+                "                      }" +
+                "                    }" +
+                "                    if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true) {" +
                 "                      return false;" +
                 "                    }" +
                 "                  }" +
