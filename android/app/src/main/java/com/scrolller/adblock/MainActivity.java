@@ -478,7 +478,7 @@ public class MainActivity extends AppCompatActivity {
                 "                }" +
                 "              }" +
                 "              for (var k in obj) {" +
-                "                if (obj.hasOwnProperty(k) && k !== 'items') {" +
+                "                if (obj.hasOwnProperty(k)) {" +
                 "                  filterAdPosts(obj[k]);" +
                 "                }" +
                 "              }" +
@@ -491,7 +491,9 @@ public class MainActivity extends AppCompatActivity {
                 "        if (modified) {" +
                 "          var newHeaders = new Headers(response.headers);" +
                 "          newHeaders.delete('content-length');" +
-                "          newHeaders.set('access-control-allow-origin', '*');" +
+                "          if (!newHeaders.has('access-control-allow-origin')) {" +
+                "            newHeaders.set('access-control-allow-origin', '*');" +
+                "          }" +
                 "          return new Response(JSON.stringify(json), {" +
                 "            status: response.status," +
                 "            statusText: response.statusText," +
