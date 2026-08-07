@@ -338,7 +338,7 @@ public class MainActivity extends AppCompatActivity {
                 "                      })" +
                 "                    });" +
                 "                  } else {" +
-                "                    bodyObj.variables.limit = 150;" +
+                "                    bodyObj.variables.limit = 5000;" +
                 "                    modifiedReq = true;" +
                 "                  }" +
                 "                } else {" +

@@ -417,7 +417,7 @@ async function loadSubreddit(name) {
         document.getElementById('loading-indicator').classList.remove('hidden');
 
         const isTopSort = state.sortBy === 'TOP';
-        const limitToUse = isTopSort ? 150 : 50;
+        const limitToUse = isTopSort ? 5000 : 50;
 
         // Fetch initial subreddit details & first children page
         const response = await queryGraphQL('SubredditQuery', {
@@ -449,10 +449,22 @@ async function loadSubreddit(name) {
         // Process first page children
         if (sub.children && sub.children.items) {
             state.iterator = isTopSort ? null : sub.children.iterator;
-            processAndAppendPosts(sub.children.items);
-            if (isTopSort || !state.iterator) {
-                state.hasMore = false;
-                document.getElementById('feed-end').classList.remove('hidden');
+            if (isTopSort) {
+                state.topPostsBuffer = sub.children.items;
+                state.topPostsIndex = 0;
+                const firstBatch = state.topPostsBuffer.slice(0, 50);
+                state.topPostsIndex = 50;
+                processAndAppendPosts(firstBatch);
+                state.hasMore = state.topPostsBuffer.length > 50;
+                if (!state.hasMore) {
+                    document.getElementById('feed-end').classList.remove('hidden');
+                }
+            } else {
+                processAndAppendPosts(sub.children.items);
+                if (!state.iterator) {
+                    state.hasMore = false;
+                    document.getElementById('feed-end').classList.remove('hidden');
+                }
             }
         } else {
             state.hasMore = false;
@@ -473,8 +485,18 @@ async function fetchSubredditChildren() {
     if (!state.subredditId || !state.hasMore) return;
     
     if (state.sortBy === 'TOP') {
-        state.hasMore = false;
-        document.getElementById('feed-end').classList.remove('hidden');
+        if (state.topPostsBuffer && state.topPostsIndex < state.topPostsBuffer.length) {
+            const nextBatch = state.topPostsBuffer.slice(state.topPostsIndex, state.topPostsIndex + 50);
+            state.topPostsIndex += nextBatch.length;
+            processAndAppendPosts(nextBatch);
+            if (state.topPostsIndex >= state.topPostsBuffer.length) {
+                state.hasMore = false;
+                document.getElementById('feed-end').classList.remove('hidden');
+            }
+        } else {
+            state.hasMore = false;
+            document.getElementById('feed-end').classList.remove('hidden');
+        }
         return;
     }
     
@@ -1343,7 +1365,7 @@ async function loadCollection(id, displayName) {
         document.getElementById('star-sub-btn').classList.add('hidden');
         
         const isTopSort = state.sortBy === 'TOP';
-        const limitToUse = isTopSort ? 150 : 50;
+        const limitToUse = isTopSort ? 5000 : 50;
 
         const response = await queryGraphQL('GetCollection', {
             id: id,
@@ -1372,10 +1394,22 @@ async function loadCollection(id, displayName) {
         
         if (col.children && col.children.items && col.children.items.length > 0) {
             state.iterator = isTopSort ? null : col.children.iterator;
-            processAndAppendPosts(col.children.items);
-            if (isTopSort || !state.iterator) {
-                state.hasMore = false;
-                document.getElementById('feed-end').classList.remove('hidden');
+            if (isTopSort) {
+                state.topPostsBuffer = col.children.items;
+                state.topPostsIndex = 0;
+                const firstBatch = state.topPostsBuffer.slice(0, 50);
+                state.topPostsIndex = 50;
+                processAndAppendPosts(firstBatch);
+                state.hasMore = state.topPostsBuffer.length > 50;
+                if (!state.hasMore) {
+                    document.getElementById('feed-end').classList.remove('hidden');
+                }
+            } else {
+                processAndAppendPosts(col.children.items);
+                if (!state.iterator) {
+                    state.hasMore = false;
+                    document.getElementById('feed-end').classList.remove('hidden');
+                }
             }
         } else {
             state.hasMore = false;
