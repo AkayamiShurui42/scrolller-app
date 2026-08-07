@@ -319,29 +319,22 @@ public class MainActivity extends AppCompatActivity {
                 "              var isFeedQuery = opName === 'SubredditQuery' || opName === 'SubredditChildrenQuery' || opName === 'FavoritesQuery' || opName === 'PaidCollections' || opName === 'DiscoverFilteredSubredditsQuery';" +
                 "              if (isFeedQuery) {" +
                 "                var curIt = bodyObj.variables.iterator;" +
-                "                var curSort = bodyObj.variables.sortBy || 'HOT';" +
+                "                var curSort = bodyObj.variables.sortBy || bodyObj.variables.filter || 'HOT';" +
                 "                var contextKey = opName + '_' + curSort + '_' + (bodyObj.variables.url || bodyObj.variables.subredditId || '');" +
                 "                if (!window._pgState) {" +
                 "                  window._pgState = {" +
                 "                    activeContext: null," +
                 "                    lastIterator: null," +
-                "                    fallbackActive: false," +
                 "                    seenPostIds: new Set()" +
                 "                  };" +
                 "                }" +
                 "                if (window._pgState.activeContext !== contextKey) {" +
                 "                  window._pgState.activeContext = contextKey;" +
                 "                  window._pgState.lastIterator = null;" +
-                "                  window._pgState.fallbackActive = false;" +
                 "                  window._pgState.seenPostIds.clear();" +
                 "                }" +
                 "                if ((curIt === null || curIt === undefined) && window._pgState.lastIterator) {" +
                 "                  bodyObj.variables.iterator = window._pgState.lastIterator;" +
-                "                  modifiedReq = true;" +
-                "                }" +
-                "                if (curSort === 'TOP' && (window._pgState.lastIterator === '1' || window._pgState.fallbackActive)) {" +
-                "                  window._pgState.fallbackActive = true;" +
-                "                  bodyObj.variables.sortBy = 'NEW';" +
                 "                  modifiedReq = true;" +
                 "                }" +
                 "              }" +
