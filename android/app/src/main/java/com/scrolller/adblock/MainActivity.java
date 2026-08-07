@@ -320,22 +320,45 @@ public class MainActivity extends AppCompatActivity {
                 "              if (isFeedQuery) {" +
                 "                var curIt = bodyObj.variables.iterator;" +
                 "                var curSort = bodyObj.variables.sortBy || bodyObj.variables.filter || 'HOT';" +
-                "                var contextKey = opName + '_' + curSort + '_' + (bodyObj.variables.url || bodyObj.variables.subredditId || '');" +
-                "                if (!window._pgState) {" +
-                "                  window._pgState = {" +
-                "                    activeContext: null," +
-                "                    lastIterator: null," +
-                "                    seenPostIds: new Set()" +
-                "                  };" +
-                "                }" +
-                "                if (window._pgState.activeContext !== contextKey) {" +
-                "                  window._pgState.activeContext = contextKey;" +
-                "                  window._pgState.lastIterator = null;" +
-                "                  window._pgState.seenPostIds.clear();" +
-                "                }" +
-                "                if ((curIt === null || curIt === undefined) && window._pgState.lastIterator) {" +
-                "                  bodyObj.variables.iterator = window._pgState.lastIterator;" +
-                "                  modifiedReq = true;" +
+                "                if (curSort === 'TOP') {" +
+                "                  if (curIt !== null && curIt !== undefined) {" +
+                "                    var mockRes = {" +
+                "                      data: {" +
+                "                        getSubreddit: { children: { iterator: null, items: [] } }," +
+                "                        getSubredditChildren: { iterator: null, items: [] }," +
+                "                        discoverFilteredSubreddits: { iterator: null, items: [] }" +
+                "                      }" +
+                "                    };" +
+                "                    return new Response(JSON.stringify(mockRes), {" +
+                "                      status: 200," +
+                "                      statusText: 'OK'," +
+                "                      headers: new Headers({" +
+                "                        'Content-Type': 'application/json'," +
+                "                        'Access-Control-Allow-Origin': '*'" +
+                "                      })" +
+                "                    });" +
+                "                  } else {" +
+                "                    bodyObj.variables.limit = 150;" +
+                "                    modifiedReq = true;" +
+                "                  }" +
+                "                } else {" +
+                "                  var contextKey = opName + '_' + curSort + '_' + (bodyObj.variables.url || bodyObj.variables.subredditId || '');" +
+                "                  if (!window._pgState) {" +
+                "                    window._pgState = {" +
+                "                      activeContext: null," +
+                "                      lastIterator: null," +
+                "                      seenPostIds: new Set()" +
+                "                    };" +
+                "                  }" +
+                "                  if (window._pgState.activeContext !== contextKey) {" +
+                "                    window._pgState.activeContext = contextKey;" +
+                "                    window._pgState.lastIterator = null;" +
+                "                    window._pgState.seenPostIds.clear();" +
+                "                  }" +
+                "                  if ((curIt === null || curIt === undefined) && window._pgState.lastIterator) {" +
+                "                    bodyObj.variables.iterator = window._pgState.lastIterator;" +
+                "                    modifiedReq = true;" +
+                "                  }" +
                 "                }" +
                 "              }" +
                 "            }" +

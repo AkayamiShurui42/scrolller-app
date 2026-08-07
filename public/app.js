@@ -24,7 +24,9 @@ const state = {
     gridCols: 2,
     token: localStorage.getItem('scrolller_token') || '',
     userProfile: null,
-    userCollections: []
+    userCollections: [],
+    topPostsBuffer: [],
+    topPostsIndex: 0
 };
 
 // SVG icons for direct JS rendering
@@ -414,12 +416,15 @@ async function loadSubreddit(name) {
         state.loading = true;
         document.getElementById('loading-indicator').classList.remove('hidden');
 
+        const isTopSort = state.sortBy === 'TOP';
+        const limitToUse = isTopSort ? 150 : 50;
+
         // Fetch initial subreddit details & first children page
         const response = await queryGraphQL('SubredditQuery', {
             url: `/r/${name}`,
             filter: state.filter === 'ALL' ? null : state.filter,
             sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy, // Oldest queries via 'NEW' and client sorts
-            limit: 50,
+            limit: limitToUse,
             iterator: null
         });
 
@@ -443,8 +448,12 @@ async function loadSubreddit(name) {
 
         // Process first page children
         if (sub.children && sub.children.items) {
-            state.iterator = sub.children.iterator;
+            state.iterator = isTopSort ? null : sub.children.iterator;
             processAndAppendPosts(sub.children.items);
+            if (isTopSort || !state.iterator) {
+                state.hasMore = false;
+                document.getElementById('feed-end').classList.remove('hidden');
+            }
         } else {
             state.hasMore = false;
         }
@@ -462,6 +471,12 @@ async function loadSubreddit(name) {
 // Fetch Next Children Page (Infinite Scroll)
 async function fetchSubredditChildren() {
     if (!state.subredditId || !state.hasMore) return;
+    
+    if (state.sortBy === 'TOP') {
+        state.hasMore = false;
+        document.getElementById('feed-end').classList.remove('hidden');
+        return;
+    }
     
     try {
         state.loading = true;
@@ -1327,11 +1342,14 @@ async function loadCollection(id, displayName) {
         document.getElementById('feed-end').classList.add('hidden');
         document.getElementById('star-sub-btn').classList.add('hidden');
         
+        const isTopSort = state.sortBy === 'TOP';
+        const limitToUse = isTopSort ? 150 : 50;
+
         const response = await queryGraphQL('GetCollection', {
             id: id,
             filter: state.filter === 'ALL' ? null : state.filter,
             sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy,
-            limit: 50,
+            limit: limitToUse,
             iterator: null
         });
         
@@ -1353,8 +1371,12 @@ async function loadCollection(id, displayName) {
         });
         
         if (col.children && col.children.items && col.children.items.length > 0) {
-            state.iterator = col.children.iterator;
+            state.iterator = isTopSort ? null : col.children.iterator;
             processAndAppendPosts(col.children.items);
+            if (isTopSort || !state.iterator) {
+                state.hasMore = false;
+                document.getElementById('feed-end').classList.remove('hidden');
+            }
         } else {
             state.hasMore = false;
             document.getElementById('feed-end').classList.remove('hidden');

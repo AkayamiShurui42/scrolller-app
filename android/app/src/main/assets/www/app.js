@@ -24,7 +24,9 @@ const state = {
     gridCols: 2,
     token: localStorage.getItem('scrolller_token') || '',
     userProfile: null,
-    userCollections: []
+    userCollections: [],
+    topPostsBuffer: [],
+    topPostsIndex: 0
 };
 
 // SVG icons for direct JS rendering
@@ -414,12 +416,15 @@ async function loadSubreddit(name) {
         state.loading = true;
         document.getElementById('loading-indicator').classList.remove('hidden');
 
+        const isTopSort = state.sortBy === 'TOP';
+        const limitToUse = isTopSort ? 150 : 50;
+
         // Fetch initial subreddit details & first children page
         const response = await queryGraphQL('SubredditQuery', {
             url: `/r/${name}`,
             filter: state.filter === 'ALL' ? null : state.filter,
             sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy, // Oldest queries via 'NEW' and client sorts
-            limit: 50,
+            limit: limitToUse,
             iterator: null
         });
 
@@ -443,8 +448,12 @@ async function loadSubreddit(name) {
 
         // Process first page children
         if (sub.children && sub.children.items) {
-            state.iterator = sub.children.iterator;
+            state.iterator = isTopSort ? null : sub.children.iterator;
             processAndAppendPosts(sub.children.items);
+            if (isTopSort || !state.iterator) {
+                state.hasMore = false;
+                document.getElementById('feed-end').classList.remove('hidden');
+            }
         } else {
             state.hasMore = false;
         }
@@ -462,6 +471,12 @@ async function loadSubreddit(name) {
 // Fetch Next Children Page (Infinite Scroll)
 async function fetchSubredditChildren() {
     if (!state.subredditId || !state.hasMore) return;
+    
+    if (state.sortBy === 'TOP') {
+        state.hasMore = false;
+        document.getElementById('feed-end').classList.remove('hidden');
+        return;
+    }
     
     try {
         state.loading = true;
@@ -542,7 +557,7 @@ async function queryGraphQL(opname, variables) {
                     banner { url width height isOptimized }
                     children {
                         iterator items {
-                            id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt
+                            id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt isPaid
                             albumContent { mediaSources { url width height isOptimized } }
                             mediaSources { url width height isOptimized }
                         }
@@ -554,7 +569,7 @@ async function queryGraphQL(opname, variables) {
             query SubredditChildrenQuery($subredditId: Int!, $iterator: String, $filter: GalleryFilter, $sortBy: GallerySortBy, $limit: Int!, $isNsfw: NsfwFilter!) {
                 getSubredditChildren(data: {subredditId: $subredditId, iterator: $iterator, filter: $filter, sortBy: $sortBy, limit: $limit, nsfw: $isNsfw}) {
                     iterator items {
-                        id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt
+                        id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt isPaid
                         albumContent { mediaSources { url width height isOptimized } }
                         mediaSources { url width height isOptimized }
                     }
@@ -593,7 +608,7 @@ async function queryGraphQL(opname, variables) {
                     id url title createdAt isNsfw itemsCount
                     children {
                         iterator items {
-                            id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt
+                            id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt isPaid
                             albumContent { mediaSources { url width height isOptimized } }
                             mediaSources { url width height isOptimized }
                         }
@@ -676,6 +691,22 @@ async function queryGraphQL(opname, variables) {
 // Process and Sort Media Assets by Highest Quality
 function processAndAppendPosts(newItems) {
     const validItems = newItems.filter(item => {
+        // Exclude paid/premium posts
+        if (item.isPaid === true || item.is_paid === true) return false;
+        
+        // Exclude ad/sponsored posts by checking flags, title, description, or URLs
+        if (item.isAd === true || item.is_ad === true || item.isSponsor === true || item.is_sponsor === true || item.sponsored === true || item.isPromoted === true || item.is_promoted === true || item.promoted === true || item.promotion === true) {
+            return false;
+        }
+        if (item.url && typeof item.url === 'string') {
+            const u = item.url.toLowerCase();
+            if (u.includes('cant3am.com') || u.includes('chaturbate') || u.includes('stripchat')) return false;
+        }
+        if (item.title && typeof item.title === 'string') {
+            const t = item.title.toLowerCase();
+            if (t.includes('cam') || t.includes('sponsor') || t.includes('promot') || t.includes('premium') || t.includes('unlock') || /\bpro\b/.test(t) || t.includes('wank') || t.includes('wish me luck') || t.includes('link in bio') || t.includes('onlyfans') || t.includes('snapchat') || t.includes('bio link')) return false;
+        }
+        
         // Ensure item has some media sources
         const hasMedia = item.mediaSources && item.mediaSources.length > 0;
         const hasAlbum = item.albumContent && item.albumContent.length > 0;
@@ -1311,11 +1342,14 @@ async function loadCollection(id, displayName) {
         document.getElementById('feed-end').classList.add('hidden');
         document.getElementById('star-sub-btn').classList.add('hidden');
         
+        const isTopSort = state.sortBy === 'TOP';
+        const limitToUse = isTopSort ? 150 : 50;
+
         const response = await queryGraphQL('GetCollection', {
             id: id,
             filter: state.filter === 'ALL' ? null : state.filter,
             sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy,
-            limit: 50,
+            limit: limitToUse,
             iterator: null
         });
         
@@ -1337,8 +1371,12 @@ async function loadCollection(id, displayName) {
         });
         
         if (col.children && col.children.items && col.children.items.length > 0) {
-            state.iterator = col.children.iterator;
+            state.iterator = isTopSort ? null : col.children.iterator;
             processAndAppendPosts(col.children.items);
+            if (isTopSort || !state.iterator) {
+                state.hasMore = false;
+                document.getElementById('feed-end').classList.remove('hidden');
+            }
         } else {
             state.hasMore = false;
             document.getElementById('feed-end').classList.remove('hidden');
