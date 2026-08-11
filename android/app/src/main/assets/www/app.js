@@ -417,13 +417,14 @@ async function loadSubreddit(name) {
         document.getElementById('loading-indicator').classList.remove('hidden');
 
         const isTopSort = state.sortBy === 'TOP';
-        const limitToUse = isTopSort ? 5000 : 50;
+        const isOldSort = state.sortBy === 'OLD';
+        const limitToUse = (isTopSort || isOldSort) ? 5000 : 50;
 
         // Fetch initial subreddit details & first children page
         const response = await queryGraphQL('SubredditQuery', {
             url: `/r/${name}`,
             filter: state.filter === 'ALL' ? null : state.filter,
-            sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy, // Oldest queries via 'NEW' and client sorts
+            sortBy: isOldSort ? 'NEW' : state.sortBy, // Oldest queries via 'NEW' and client sorts
             limit: limitToUse,
             iterator: null
         });
@@ -448,8 +449,8 @@ async function loadSubreddit(name) {
 
         // Process first page children
         if (sub.children && sub.children.items) {
-            state.iterator = isTopSort ? null : sub.children.iterator;
             if (isTopSort) {
+                state.iterator = null;
                 state.topPostsBuffer = sub.children.items;
                 state.topPostsIndex = 0;
                 const firstBatch = state.topPostsBuffer.slice(0, 50);
@@ -459,7 +460,21 @@ async function loadSubreddit(name) {
                 if (!state.hasMore) {
                     document.getElementById('feed-end').classList.remove('hidden');
                 }
+            } else if (isOldSort) {
+                state.iterator = null;
+                // Sort all fetched items by oldest date client-side
+                const sortedItems = [...sub.children.items].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                state.topPostsBuffer = sortedItems;
+                state.topPostsIndex = 0;
+                const firstBatch = state.topPostsBuffer.slice(0, 50);
+                state.topPostsIndex = 50;
+                processAndAppendPosts(firstBatch);
+                state.hasMore = state.topPostsBuffer.length > 50;
+                if (!state.hasMore) {
+                    document.getElementById('feed-end').classList.remove('hidden');
+                }
             } else {
+                state.iterator = sub.children.iterator;
                 processAndAppendPosts(sub.children.items);
                 if (!state.iterator) {
                     state.hasMore = false;
@@ -484,7 +499,8 @@ async function loadSubreddit(name) {
 async function fetchSubredditChildren() {
     if (!state.subredditId || !state.hasMore) return;
     
-    if (state.sortBy === 'TOP') {
+    const isBufferedSort = state.sortBy === 'TOP' || state.sortBy === 'OLD';
+    if (isBufferedSort) {
         if (state.topPostsBuffer && state.topPostsIndex < state.topPostsBuffer.length) {
             const nextBatch = state.topPostsBuffer.slice(state.topPostsIndex, state.topPostsIndex + 50);
             state.topPostsIndex += nextBatch.length;
@@ -566,7 +582,11 @@ async function fetchSubredditChildren() {
 // Reload current feed
 function reloadFeed() {
     document.getElementById('feed-end').classList.add('hidden');
-    loadSubreddit(state.currentSubreddit);
+    if (state.isCollection) {
+        loadCollection(state.subredditId);
+    } else {
+        loadSubreddit(state.currentSubreddit);
+    }
 }
 
 // GraphQL Fetch Helper (Proxy vs Direct)
@@ -813,12 +833,14 @@ function processAndAppendPosts(newItems) {
 function getHighestQuality(sources) {
     if (!sources || sources.length === 0) return null;
     const sorted = [...sources].sort((a, b) => {
-        // Sort by width descending
-        if (b.width !== a.width) {
-            return b.width - a.width;
+        const wA = a.width || 0;
+        const wB = b.width || 0;
+        if (wB !== wA) {
+            return wB - wA;
         }
-        // Prefer unoptimized (original file) over optimized versions
-        return (a.isOptimized ? 1 : 0) - (b.isOptimized ? 0 : 1);
+        const optA = a.isOptimized ? 1 : 0;
+        const optB = b.isOptimized ? 1 : 0;
+        return optA - optB;
     });
     return sorted[0];
 }
@@ -1365,12 +1387,13 @@ async function loadCollection(id, displayName) {
         document.getElementById('star-sub-btn').classList.add('hidden');
         
         const isTopSort = state.sortBy === 'TOP';
-        const limitToUse = isTopSort ? 5000 : 50;
+        const isOldSort = state.sortBy === 'OLD';
+        const limitToUse = (isTopSort || isOldSort) ? 5000 : 50;
 
         const response = await queryGraphQL('GetCollection', {
             id: id,
             filter: state.filter === 'ALL' ? null : state.filter,
-            sortBy: state.sortBy === 'OLD' ? 'NEW' : state.sortBy,
+            sortBy: isOldSort ? 'NEW' : state.sortBy,
             limit: limitToUse,
             iterator: null
         });
@@ -1393,8 +1416,8 @@ async function loadCollection(id, displayName) {
         });
         
         if (col.children && col.children.items && col.children.items.length > 0) {
-            state.iterator = isTopSort ? null : col.children.iterator;
             if (isTopSort) {
+                state.iterator = null;
                 state.topPostsBuffer = col.children.items;
                 state.topPostsIndex = 0;
                 const firstBatch = state.topPostsBuffer.slice(0, 50);
@@ -1404,7 +1427,21 @@ async function loadCollection(id, displayName) {
                 if (!state.hasMore) {
                     document.getElementById('feed-end').classList.remove('hidden');
                 }
+            } else if (isOldSort) {
+                state.iterator = null;
+                // Sort all fetched items by oldest date client-side
+                const sortedItems = [...col.children.items].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                state.topPostsBuffer = sortedItems;
+                state.topPostsIndex = 0;
+                const firstBatch = state.topPostsBuffer.slice(0, 50);
+                state.topPostsIndex = 50;
+                processAndAppendPosts(firstBatch);
+                state.hasMore = state.topPostsBuffer.length > 50;
+                if (!state.hasMore) {
+                    document.getElementById('feed-end').classList.remove('hidden');
+                }
             } else {
+                state.iterator = col.children.iterator;
                 processAndAppendPosts(col.children.items);
                 if (!state.iterator) {
                     state.hasMore = false;
