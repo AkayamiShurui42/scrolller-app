@@ -24,7 +24,39 @@ jobs:
       - name: Copy PWA Assets to Android Assets Folder
         run: |
           mkdir -p android/app/src/main/assets/www
+          rm -rf android/app/src/main/assets/www/*
           cp -r public/* android/app/src/main/assets/www/
+
+      - name: Enable Scrolller Pro APK enhancements
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          index = Path('android/app/src/main/assets/www/index.html')
+          html = index.read_text(encoding='utf-8')
+          marker = '<script src="enhancements.js"></script>'
+          if marker not in html:
+              html = html.replace('</body>', f'    {marker}\n</body>')
+          index.write_text(html, encoding='utf-8')
+
+          activity = Path('android/app/src/main/java/com/scrolller/adblock/MainActivity.java')
+          java = activity.read_text(encoding='utf-8')
+          java = java.replace(
+              'settings.setAllowFileAccess(true);',
+              'settings.setAllowFileAccess(true);\n        settings.setAllowContentAccess(true);\n        settings.setAllowUniversalAccessFromFileURLs(true);'
+          )
+          java = java.replace(
+              'webView.loadUrl("https://scrolller.com");',
+              'webView.loadUrl("file:///android_asset/www/index.html");'
+          )
+          activity.write_text(java, encoding='utf-8')
+          PY
+
+      - name: Verify enhanced APK wiring
+        run: |
+          grep -q 'enhancements.js' android/app/src/main/assets/www/index.html
+          grep -q 'file:///android_asset/www/index.html' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'setAllowUniversalAccessFromFileURLs(true)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
 
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 8.5
