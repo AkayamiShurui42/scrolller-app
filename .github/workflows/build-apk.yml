@@ -33,6 +33,7 @@ jobs:
         run: |
           node --check public/app.js
           node --check public/enhancements.js
+          node --check public/auth-bridge.js
 
       - name: Prepare stable debug signing key
         run: |
@@ -46,37 +47,93 @@ jobs:
           rm -rf android/app/src/main/assets/www/*
           cp -r public/* android/app/src/main/assets/www/
 
-      - name: Enable Scrolller Pro APK enhancements
+      - name: Enable post corpus UI and website authentication
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
           index = Path('android/app/src/main/assets/www/index.html')
           html = index.read_text(encoding='utf-8')
-          marker = '<script src="enhancements.js"></script>'
-          if marker not in html:
-              html = html.replace('</body>', f'    {marker}\n</body>')
+          for script in ('enhancements.js', 'auth-bridge.js'):
+              marker = f'<script src="{script}"></script>'
+              if marker not in html:
+                  html = html.replace('</body>', f'    {marker}\n</body>')
           index.write_text(html, encoding='utf-8')
+
+          # Preserve cookies from the real Scrolller website login when calling
+          # Scrolller's API from the bundled client.
+          app = Path('android/app/src/main/assets/www/app.js')
+          js = app.read_text(encoding='utf-8')
+          if "credentials: 'include'" not in js:
+              js = js.replace(
+                  "headers: headers,\n        body: JSON.stringify(payload)",
+                  "headers: headers,\n        credentials: 'include',\n        body: JSON.stringify(payload)"
+              )
+          app.write_text(js, encoding='utf-8')
 
           activity = Path('android/app/src/main/java/com/scrolller/adblock/MainActivity.java')
           java = activity.read_text(encoding='utf-8')
+
+          if 'private AuthBridge authBridge;' not in java:
+              java = java.replace(
+                  'private WebView webView;',
+                  'private WebView webView;\n    private AuthBridge authBridge;'
+              )
+
+          if 'webView.addJavascriptInterface(authBridge, "NativeAuth");' not in java:
+              java = java.replace(
+                  'setContentView(webView);',
+                  'setContentView(webView);\n\n        authBridge = new AuthBridge(this, webView);\n        webView.addJavascriptInterface(authBridge, "NativeAuth");'
+              )
+
           java = java.replace(
               'settings.setAllowFileAccess(true);',
               'settings.setAllowFileAccess(true);\n        settings.setAllowContentAccess(true);\n        settings.setAllowUniversalAccessFromFileURLs(true);'
           )
+
+          java = java.replace(
+              'public boolean shouldOverrideUrlLoading(WebView view, String url) {\n                if (url != null) {',
+              'public boolean shouldOverrideUrlLoading(WebView view, String url) {\n                if (authBridge != null && authBridge.isLoginMode()) return false;\n                if (url != null) {'
+          )
+
+          java = java.replace(
+              'if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {\n                    String url = request.getUrl().toString();\n                    String host = request.getUrl().getHost();',
+              'if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {\n                    if (authBridge != null && authBridge.isLoginMode()) return false;\n                    String url = request.getUrl().toString();\n                    String host = request.getUrl().getHost();',
+              1
+          )
+
+          intercept_needle = 'String url = request.getUrl().toString();\n                    \n                    // Bypass anti-adblock detection checks'
+          intercept_replacement = 'String url = request.getUrl().toString();\n                    if (authBridge != null && authBridge.isLoginMode()) {\n                        return super.shouldInterceptRequest(view, request);\n                    }\n                    \n                    // Bypass anti-adblock detection checks'
+          java = java.replace(intercept_needle, intercept_replacement)
+
+          java = java.replace(
+              'super.onPageStarted(view, url, favicon);\n                injectCustomFilters(view);',
+              'super.onPageStarted(view, url, favicon);\n                if (authBridge == null || !authBridge.isLoginMode()) injectCustomFilters(view);'
+          )
+
+          java = java.replace(
+              'super.onPageFinished(view, url);\n                // Inject custom adblock filters and bypass popup script\n                injectCustomFilters(view);',
+              'super.onPageFinished(view, url);\n                if (authBridge != null) authBridge.onPageFinished(url);\n                // Keep login pages untouched; apply filters only to the custom client.\n                if (authBridge == null || !authBridge.isLoginMode()) injectCustomFilters(view);'
+          )
+
           java = java.replace(
               'webView.loadUrl("https://scrolller.com");',
               'webView.loadUrl("file:///android_asset/www/index.html");'
           )
+
           activity.write_text(java, encoding='utf-8')
           PY
 
       - name: Verify enhanced APK wiring
         run: |
           grep -q 'enhancements.js' android/app/src/main/assets/www/index.html
+          grep -q 'auth-bridge.js' android/app/src/main/assets/www/index.html
+          grep -q "credentials: 'include'" android/app/src/main/assets/www/app.js
           grep -q 'file:///android_asset/www/index.html' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'setAllowUniversalAccessFromFileURLs(true)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'addJavascriptInterface(authBridge, "NativeAuth")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'authBridge.onPageFinished(url)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           node --check android/app/src/main/assets/www/enhancements.js
+          node --check android/app/src/main/assets/www/auth-bridge.js
 
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 8.11.1
@@ -101,7 +158,7 @@ jobs:
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: scrolller-pro-post-corpus-android16-apk
+          name: scrolller-pro-post-corpus-website-login-android16-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
