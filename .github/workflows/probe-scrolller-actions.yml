@@ -9,30 +9,23 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect current Scrolller login API
+      - name: Validate add-to-collection mutation field
         run: |
           python3 - <<'PY'
-          import re, urllib.request, urllib.parse
-          UA='Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36'
-          def get(u):
-              r=urllib.request.Request(u,headers={'User-Agent':UA})
-              with urllib.request.urlopen(r,timeout=30) as x:return x.read().decode('utf-8','replace')
-          html=get('https://scrolller.com/')
-          srcs=re.findall(r'<script[^>]+src=["\']([^"\']+)',html,re.I)
-          needles=['loginUser','logInUser','loginMutation','mutation Login','signIn','LogIn','login(data','password','username']
-          for src in srcs:
-              url=urllib.parse.urljoin('https://scrolller.com/',src)
-              try: js=get(url)
-              except Exception: continue
-              if not any(n in js for n in needles): continue
-              print('\n===',url,'===')
-              for n in needles:
-                  start=0; count=0
-                  while True:
-                      p=js.find(n,start)
-                      if p<0 or count>=6: break
-                      text=js[max(0,p-1800):p+4400].replace('\n',' ')
-                      if 'graphQLQuery' in text or 'mutation' in text.lower() or 'login' in text.lower():
-                          print('\nTERM',n,'\n',text[:6200])
-                      start=p+len(n); count+=1
+          import json, urllib.request, urllib.error
+          endpoint='https://api.scrolller.com/admin'
+          q='mutation AddPostToCollection($postId:Int!,$collectionId:Int!){addPostToCollection(data:{postId:$postId,collectionId:$collectionId})}'
+          body=json.dumps({'query':q,'variables':{'postId':0,'collectionId':0}}).encode()
+          req=urllib.request.Request(endpoint,data=body,headers={'Content-Type':'application/json','Accept':'application/json','User-Agent':'Mozilla/5.0'})
+          try:
+              with urllib.request.urlopen(req,timeout=30) as r: raw=r.read().decode()
+          except urllib.error.HTTPError as e:
+              raw=e.read().decode()
+          print(raw)
+          data=json.loads(raw or '{}')
+          text=' '.join(str(x.get('message','')) for x in (data.get('errors') or []))
+          assert 'Cannot query field' not in text, text
+          assert 'Unknown argument' not in text, text
+          assert 'Unknown type' not in text, text
+          print('Mutation schema accepted; resolver/auth error is expected without a session.')
           PY
