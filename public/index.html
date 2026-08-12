@@ -80,13 +80,23 @@
   </div>
 </section>
 
+<section id="saveSheet" class="sheet hidden" aria-modal="true">
+  <div class="sheet-card collections-card">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head"><b>Add to collection</b><button data-close>×</button></div>
+    <div id="savePostTitle" class="save-post-title"></div>
+    <div class="hint">Choose one of your existing Scrolller collections.</div>
+    <div id="saveCollectionResults" class="results"></div>
+  </div>
+</section>
+
 <section id="accountSheet" class="sheet hidden" aria-modal="true">
   <div class="sheet-card account-card">
     <div class="sheet-handle"></div>
     <div class="sheet-head"><b>Scrolller account</b><button data-close>×</button></div>
     <div id="accountStatus" class="account-status">Checking sign-in…</div>
     <button id="loginBtn" class="primary wide">Sign in to Scrolller</button>
-    <p class="hint">Sign-in opens Scrolller only for authentication. Android Back returns to the native feed afterward.</p>
+    <p class="hint">Sign-in opens Scrolller only for authentication. The app automatically removes Scrolller's false ad-block warning while the login page is open. Android Back returns here after sign-in.</p>
   </div>
 </section>
 
