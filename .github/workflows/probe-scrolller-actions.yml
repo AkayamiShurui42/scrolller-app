@@ -19,15 +19,24 @@ jobs:
               with urllib.request.urlopen(r,timeout=30) as x:return x.read().decode('utf-8','replace')
           html=get('https://scrolller.com/')
           srcs=re.findall(r'<script[^>]+src=["\']([^"\']+)',html,re.I)
-          terms=['addPostToCollection','removePostFromCollection','createCollection','AddPostToCollection','RemovePostFromCollection','getUserCollections','userCollectionQuery','savePost','favorite','bookmark','collectionId','postId']
+          needles=['userCollectionsState','showAddToCollectionPopup','getUserCollections','addFavorite','removeFavorite','getPostIsFavorite','addPosts','removePosts']
           for src in srcs:
               url=urllib.parse.urljoin('https://scrolller.com/',src)
               try: js=get(url)
               except Exception: continue
-              hits=[t for t in terms if t in js]
-              if not hits: continue
+              if not any(n in js for n in needles):
+                  continue
               print('\n===',url,'===')
-              for t in hits:
-                  p=js.find(t)
-                  print('\nTERM',t,'\n',js[max(0,p-1200):p+3200].replace('\n',' ')[:4400])
+              for n in needles:
+                  start=0
+                  count=0
+                  while True:
+                      p=js.find(n,start)
+                      if p<0 or count>=4: break
+                      print('\nTERM',n,'\n',js[max(0,p-2200):p+5200].replace('\n',' ')[:7400])
+                      start=p+len(n)
+                      count+=1
+              for m in re.finditer(r'mutation[^"\\]{0,1600}(?:Collection|Favorite)[^"\\]{0,1600}',js,re.I):
+                  p=m.start()
+                  print('\nMUTATION CANDIDATE\n',js[max(0,p-500):p+3800].replace('\n',' ')[:4300])
           PY
