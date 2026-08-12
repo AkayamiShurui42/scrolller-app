@@ -52,11 +52,9 @@ public class MainActivity extends AppCompatActivity {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         }
 
-        CookieManager cookieManager = CookieManager.getInstance();
-        cookieManager.setAcceptCookie(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            cookieManager.setAcceptThirdPartyCookies(webView, true);
-        }
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) cookies.setAcceptThirdPartyCookies(webView, true);
 
         authBridge = new AuthBridge(this, webView);
         webView.addJavascriptInterface(authBridge, "NativeAuth");
@@ -83,15 +81,22 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        getWindow().setStatusBarColor(Color.BLACK);
-        getWindow().setNavigationBarColor(Color.BLACK);
-        webView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-
-        if (savedInstanceState == null) {
-            webView.loadUrl(APP_URL);
-        } else {
-            webView.restoreState(savedInstanceState);
+        // True edge-to-edge canvas. CSS safe-area insets keep controls clear of cutouts
+        // while media is allowed to use the full physical display.
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setStatusBarContrastEnforced(false);
+            getWindow().setNavigationBarContrastEnforced(false);
         }
+        webView.setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        );
+
+        if (savedInstanceState == null) webView.loadUrl(APP_URL);
+        else webView.restoreState(savedInstanceState);
     }
 
     @Override
@@ -111,16 +116,9 @@ public class MainActivity extends AppCompatActivity {
                 "(function(){try{return !!(window.ScrolllerNativeBack&&window.ScrolllerNativeBack());}catch(e){return false;}})();",
                 result -> {
                     if ("true".equals(result)) return;
-                    if (webView.canGoBack()) {
-                        webView.goBack();
-                    } else {
-                        exitFromBack();
-                    }
+                    if (webView.canGoBack()) webView.goBack();
+                    else finish();
                 }
         );
-    }
-
-    private void exitFromBack() {
-        super.onBackPressed();
     }
 }
