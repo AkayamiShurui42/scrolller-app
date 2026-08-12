@@ -16,9 +16,7 @@
       window.NativeAuth.openLogin();
     } catch (error) {
       console.error('Unable to open Scrolller website login:', error);
-      if (typeof showToast === 'function') {
-        showToast('Unable to open Scrolller sign-in.');
-      }
+      if (typeof showToast === 'function') showToast('Unable to open Scrolller sign-in.');
     }
   }
 
@@ -31,16 +29,11 @@
     }
 
     const oldModal = document.getElementById('signin-modal');
-    if (oldModal && nativeAuthAvailable()) {
-      // The APK uses the website login instead of manual bearer-token entry.
-      oldModal.classList.add('hidden');
-    }
+    if (oldModal && nativeAuthAvailable()) oldModal.classList.add('hidden');
 
-    const signOut = document.getElementById('signout-btn');
-    if (signOut && nativeAuthAvailable()) {
-      signOut.addEventListener('click', () => {
-        try { window.NativeAuth.clearToken(); } catch (_) {}
-      }, true);
+    // On Android, check whether the WebView already has a usable Scrolller login.
+    if (nativeAuthAvailable() && typeof syncUserProfile === 'function' && !state.token) {
+      setTimeout(() => syncUserProfile(''), 350);
     }
   }
 
