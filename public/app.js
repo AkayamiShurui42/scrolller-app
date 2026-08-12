@@ -1,5 +1,11 @@
 const $ = id => document.getElementById(id);
 
+const PRELOAD_LIMIT = 5000;
+const SEARCH_COLLECTION_LIMIT = 8;
+const INITIAL_RENDER_COUNT = 80;
+const RENDER_CHUNK = 60;
+const DEFAULT_COLLECTIONS = ['funny', 'pics', 'videos', 'aww', 'art'];
+
 const state = {
   scope: 'POSTS',
   searchContext: 'HERE',
@@ -12,16 +18,19 @@ const state = {
   rawPosts: [],
   history: [],
   activeIndex: 0,
+  renderedCount: 0,
   currentLabel: 'Feed',
   currentCollection: null,
   account: null,
-  categoryTitles: []
+  categoryTitles: [],
+  savePost: null
 };
 
 const pending = new Map();
+const preloadCache = new Map();
+const userCollectionCache = new Map();
 let requestSeq = 0;
 let videoObserver = null;
-let collectionLoadBusy = false;
 
 window.__nativeMediaResult = (id, ok, body, status) => {
   const item = pending.get(id);
@@ -48,7 +57,7 @@ function toast(message) {
   el.textContent = message;
   el.classList.remove('hidden');
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.add('hidden'), 2800);
+  toast._t = setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
 function setBusy(on, text = 'Loading…') {
@@ -83,6 +92,7 @@ function snapshot() {
     posts: state.posts,
     rawPosts: state.rawPosts,
     activeIndex: currentVisibleIndex(),
+    renderedCount: state.renderedCount,
     currentLabel: state.currentLabel,
     currentCollection: state.currentCollection ? { ...state.currentCollection } : null
   };
@@ -98,7 +108,7 @@ function restore(s) {
   syncControls();
   syncSearchContext();
   $('titleBtn').textContent = state.currentLabel || 'Scrolller';
-  renderFeed();
+  renderFeed(Math.max(INITIAL_RENDER_COUNT, s.renderedCount || 0));
   setTimeout(() => scrollToIndex(s.activeIndex || 0, false), 40);
 }
 
@@ -115,15 +125,26 @@ window.ScrolllerNativeBack = function () {
   return false;
 };
 
+const POST_FIELDS = `
+  id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt isPaid
+  favoriteCount isFavorite
+  albumContent{mediaSources{url width height isOptimized}}
+  mediaSources{url width height isOptimized}
+`;
+
 const QUERIES = {
-  SubredditQuery: `query SubredditQuery($url:String!,$iterator:String,$sortBy:GallerySortBy,$filter:GalleryFilter,$limit:Int!){getSubreddit(data:{url:$url,iterator:$iterator,filter:$filter,limit:$limit,sortBy:$sortBy}){id url title description isNsfw children{iterator items{id url title subredditId subredditTitle subredditUrl redditPath isNsfw hasAudio createdAt isPaid albumContent{mediaSources{url width height isOptimized}} mediaSources{url width height isOptimized}}}}}`,
+  SubredditQuery: `query SubredditQuery($url:String!,$iterator:String,$sortBy:GallerySortBy,$filter:GalleryFilter,$limit:Int!){getSubreddit(data:{url:$url,iterator:$iterator,filter:$filter,limit:$limit,sortBy:$sortBy}){id url title description isNsfw children{iterator items{${POST_FIELDS}}}}}`,
   SearchSubreddits: `query SearchSubredditsQuery($query:String!,$limit:Int!,$isNsfw:Boolean!,$pageIndex:Int!){searchSubreddits(data:{query:$query,isNsfw:$isNsfw,limit:$limit,pageIndex:$pageIndex}){id title url secondary_title description is_nsfw item_count preview_images{url width height}}}`,
   SearchCollections: `query SearchCollectionsQuery($query:String!,$limit:Int!,$isNsfw:Boolean!,$pageIndex:Int!){searchCollections(data:{query:$query,isNsfw:$isNsfw,limit:$limit,pageIndex:$pageIndex}){id title description is_nsfw url preview_images{url width height}}}`,
   GetCategories: `query GetCategories($is_nsfw:Boolean!){categories(data:{is_nsfw:$is_nsfw}){title}}`,
   GetCategory: `query GetCategory($url:String!){getCategory(data:{url:$url}){id url title isNsfw}}`,
   GetCategorySubreddits: `query GetCategorySubreddits($categoryId:Int!){getCategorySubreddits(data:{categoryId:$categoryId}){subreddits{subredditUrl}}}`,
-  GetUserCollections: `query GetUserCollections{getUserCollections{id url title isNsfw}}`,
-  GetLoggedInUser: `query GetLoggedInUser{getLoggedInUser{id username email}}`
+  GetUserCollections: `query GetUserCollectionsQuery{getUserCollections{id title url is_nsfw is_private description posts{id}}}`,
+  UserCollectionContent: `query getUserCollectionContentQuery($iterator:String,$nsfw:NsfwFilter,$filter:GalleryFilter,$sortBy:GallerySortBy,$limit:Int!,$collectionId:Int!){getUserCollectionContent(data:{nsfw:$nsfw,limit:$limit,sortBy:$sortBy,filter:$filter,iterator:$iterator,collectionId:$collectionId}){iterator items{${POST_FIELDS}}}}`,
+  GetLoggedInUser: `query GetLoggedInUser{getLoggedInUser{id username email}}`,
+  AddFavorite: `mutation AddFavorite($url:String!){addFavorite(url:$url)}`,
+  RemoveFavorite: `mutation RemoveFavorite($url:String!){removeFavorite(url:$url)}`,
+  AddPostToCollection: `mutation AddPostToCollection($postId:Int!,$collectionId:Int!){addPostToCollection(data:{postId:$postId,collectionId:$collectionId})}`
 };
 
 async function gql(operation, variables = {}) {
@@ -135,7 +156,7 @@ async function gql(operation, variables = {}) {
     { 'Content-Type': 'application/json' }
   );
   const json = JSON.parse(res.body || '{}');
-  if (json.errors?.length) throw new Error(json.errors[0].message || 'Scrolller API error');
+  if (json.errors?.length) throw new Error(json.errors.map(x => x.message || 'Scrolller API error').join(' · '));
   return json.data || {};
 }
 
@@ -158,22 +179,26 @@ function normalizeScrolller(item) {
   const sources = item.mediaSources || [];
   const video = bestSource(sources.filter(s => /\.(mp4|webm)(\?|$)/i.test(s.url || '')));
   const image = bestSource(sources.filter(s => !/\.(mp4|webm)(\?|$)/i.test(s.url || '')));
-  const url = album[0] || video?.url || image?.url;
-  if (!url) return null;
+  const mediaUrl = album[0] || video?.url || image?.url;
+  if (!mediaUrl) return null;
 
-  const mediaType = album.length > 1 ? 'ALBUM' : video ? 'VIDEO' : /\.gif(\?|$)/i.test(url) ? 'GIF' : 'IMAGE';
+  const mediaType = album.length > 1 ? 'ALBUM' : video ? 'VIDEO' : /\.gif(\?|$)/i.test(mediaUrl) ? 'GIF' : 'IMAGE';
   return {
     id: `scrolller:${item.id}`,
+    postId: Number(item.id),
+    postUrl: item.url || '',
     title: item.title || 'Untitled',
     collection: item.subredditTitle || item.subredditUrl || 'Scrolller',
     collectionUrl: item.subredditUrl || '',
-    url,
+    url: mediaUrl,
     poster: image?.url || album[0] || '',
     album,
     mediaType,
     nsfw: !!item.isNsfw,
     created: item.createdAt ? Date.parse(item.createdAt) || 0 : 0,
-    sourceUrl: item.redditPath ? `https://reddit.com${item.redditPath}` : ''
+    sourceUrl: item.redditPath ? `https://reddit.com${item.redditPath}` : '',
+    isFavorite: !!item.isFavorite,
+    favoriteCount: Number(item.favoriteCount || 0)
   };
 }
 
@@ -181,92 +206,114 @@ function categorySlug(title) {
   return String(title || '').trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+function normalizeCollectionUrl(url) {
+  return String(url || '').trim().replace(/^https?:\/\/(?:www\.)?scrolller\.com\//i, '').replace(/^\/+/, '').replace(/^r\//i, '').replace(/\/+$/, '');
+}
+
 function nsfwBooleanForSearch() {
   return state.nsfw !== 'SFW';
 }
 
-async function searchSubreddits(query, maxPages = 4) {
-  const all = [];
-  const seen = new Set();
-  for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
-    const d = await gql('SearchSubreddits', {
-      query: query || '',
+function nsfwEnum() {
+  if (state.nsfw === 'SFW') return 'SFW';
+  if (state.nsfw === 'NSFW') return 'NSFW';
+  return 'ALL';
+}
+
+function preloadKey(url) {
+  return `${normalizeCollectionUrl(url).toLowerCase()}|${state.sort}|${state.nsfw}`;
+}
+
+async function searchSubreddits(query) {
+  const d = await gql('SearchSubreddits', {
+    query: (query || '').trim(),
+    limit: 50,
+    isNsfw: nsfwBooleanForSearch(),
+    pageIndex: 0
+  });
+  return d.searchSubreddits || [];
+}
+
+async function searchPublicCollections(query) {
+  try {
+    const d = await gql('SearchCollections', {
+      query: (query || '').trim(),
       limit: 50,
       isNsfw: nsfwBooleanForSearch(),
-      pageIndex
+      pageIndex: 0
     });
-    const items = d.searchSubreddits || [];
-    for (const c of items) {
-      const key = String(c.id || c.url || '').toLowerCase();
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        all.push(c);
-      }
-    }
-    if (items.length < 50) break;
+    return d.searchCollections || [];
+  } catch (e) {
+    return [];
   }
-  return all;
 }
 
-async function searchUserCollections(query, maxPages = 3) {
-  const all = [];
-  const seen = new Set();
-  for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
-    try {
-      const d = await gql('SearchCollections', {
-        query: query || '',
-        limit: 50,
-        isNsfw: nsfwBooleanForSearch(),
-        pageIndex
-      });
-      const items = d.searchCollections || [];
-      for (const c of items) {
-        const key = String(c.id || c.url || '').toLowerCase();
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          all.push(c);
-        }
-      }
-      if (items.length < 50) break;
-    } catch (e) {
-      break;
-    }
+async function preloadSubreddit(url, limit = PRELOAD_LIMIT) {
+  const clean = normalizeCollectionUrl(url);
+  if (!clean) throw new Error('Invalid collection URL');
+  const key = preloadKey(clean);
+  if (preloadCache.has(key)) return preloadCache.get(key);
+
+  const promise = (async () => {
+    const d = await gql('SubredditQuery', {
+      url: clean,
+      iterator: null,
+      sortBy: state.sort === 'RANDOM' ? 'RANDOM' : state.sort,
+      filter: null,
+      limit
+    });
+    const sub = d.getSubreddit || {};
+    const children = sub.children || {};
+    return {
+      title: sub.title || clean,
+      description: sub.description || '',
+      url: sub.url || clean,
+      posts: (children.items || []).map(normalizeScrolller).filter(Boolean)
+    };
+  })();
+
+  preloadCache.set(key, promise);
+  try {
+    const result = await promise;
+    preloadCache.set(key, result);
+    return result;
+  } catch (e) {
+    preloadCache.delete(key);
+    throw e;
   }
-  return all;
 }
 
-async function scrolllerSubredditPage(url, iterator = null, limit = 50) {
-  const d = await gql('SubredditQuery', {
-    url,
-    iterator,
-    sortBy: state.sort === 'RANDOM' ? 'RANDOM' : state.sort,
-    filter: null,
-    limit
-  });
-  const sub = d.getSubreddit || {};
-  const children = sub.children || {};
-  return {
-    title: sub.title || url,
-    description: sub.description || '',
-    url: sub.url || url,
-    posts: (children.items || []).map(normalizeScrolller).filter(Boolean),
-    iterator: children.iterator || null
-  };
-}
-
-async function collectSubredditPosts(url, maxItems = 200) {
-  const out = [];
-  let iterator = null;
-  const seenCursors = new Set();
-  do {
-    const page = await scrolllerSubredditPage(url, iterator, Math.min(50, maxItems - out.length));
-    out.push(...page.posts);
-    const next = page.iterator;
-    if (!next || seenCursors.has(next) || out.length >= maxItems || page.posts.length === 0) break;
-    seenCursors.add(next);
-    iterator = next;
-  } while (out.length < maxItems);
-  return out;
+async function preloadUserCollection(collection) {
+  const id = Number(collection?.id);
+  if (!Number.isFinite(id)) throw new Error('Invalid account collection');
+  const key = `${id}|${state.sort}|${state.nsfw}`;
+  if (userCollectionCache.has(key)) return userCollectionCache.get(key);
+  const promise = (async () => {
+    const d = await gql('UserCollectionContent', {
+      iterator: null,
+      nsfw: nsfwEnum(),
+      filter: null,
+      sortBy: state.sort === 'RANDOM' ? 'RANDOM' : state.sort,
+      limit: PRELOAD_LIMIT,
+      collectionId: id
+    });
+    const root = d.getUserCollectionContent || {};
+    return {
+      title: collection.title || collection.url || `Collection ${id}`,
+      url: collection.url || '',
+      id,
+      posts: (root.items || []).map(normalizeScrolller).filter(Boolean)
+    };
+  })();
+  userCollectionCache.set(key, promise);
+  try {
+    const result = await promise;
+    userCollectionCache.set(key, result);
+    return result;
+  } catch (e) {
+    userCollectionCache.delete(key);
+    throw e;
+  }
 }
 
 async function categoryCollections(title) {
@@ -276,18 +323,10 @@ async function categoryCollections(title) {
   return (s.getCategorySubreddits?.subreddits || []).map(x => x.subredditUrl).filter(Boolean);
 }
 
-async function fetchManyCollections(urls, perCollection = 80, cap = 600) {
-  const out = [];
-  const uniqueUrls = [...new Set(urls.filter(Boolean))];
-  for (let i = 0; i < uniqueUrls.length && out.length < cap; i += 4) {
-    const batchUrls = uniqueUrls.slice(i, i + 4);
-    const batch = await Promise.allSettled(batchUrls.map(u => collectSubredditPosts(u, perCollection)));
-    for (const r of batch) {
-      if (r.status === 'fulfilled') out.push(...r.value);
-      if (out.length >= cap) break;
-    }
-  }
-  return out.slice(0, cap);
+async function preloadManyCollections(urls, maxCollections = SEARCH_COLLECTION_LIMIT) {
+  const unique = [...new Set((urls || []).map(normalizeCollectionUrl).filter(Boolean))].slice(0, maxCollections);
+  const settled = await Promise.allSettled(unique.map(u => preloadSubreddit(u)));
+  return settled.flatMap(r => r.status === 'fulfilled' ? r.value.posts : []);
 }
 
 function scorePost(post, query) {
@@ -314,40 +353,47 @@ async function searchScrolllerPosts(query) {
 
   if (state.category !== 'ALL') {
     urls = await categoryCollections(state.category);
+  } else if (q) {
+    const groups = (await searchSubreddits(q)).filter(g => g.item_count !== 0 && g.url);
+    urls = groups.map(g => g.url);
+    if (!urls.length) urls = [q];
   } else {
-    let groups = await searchSubreddits(q, q ? 3 : 1);
-    if (q) groups = groups.filter(g => g.item_count !== 0);
-    urls = groups.map(g => g.url).filter(Boolean);
-    if (!urls.length) urls = q ? [q] : ['funny', 'pics', 'videos', 'aww', 'art'];
+    urls = DEFAULT_COLLECTIONS;
   }
 
-  const posts = await fetchManyCollections(urls.slice(0, q ? 16 : 12), q ? 90 : 70, q ? 900 : 500);
+  const posts = await preloadManyCollections(urls, q ? SEARCH_COLLECTION_LIMIT : DEFAULT_COLLECTIONS.length);
   if (!q) return posts;
 
-  const ranked = posts.map(p => ({ p, score: scorePost(p, q) }));
-  ranked.sort((a, b) => b.score - a.score || b.p.created - a.p.created);
-
-  const direct = ranked.filter(x => x.score > 0).map(x => x.p);
-  const related = ranked.filter(x => x.score === 0).map(x => x.p);
-  return [...direct, ...related];
+  return posts
+    .map(p => ({ p, score: scorePost(p, q) }))
+    .sort((a, b) => b.score - a.score || b.p.created - a.p.created)
+    .map(x => x.p);
 }
 
-async function searchWithinCurrentCollection(query) {
-  if (!state.currentCollection?.url) return [];
+function searchCorpus(corpus, query) {
   const q = (query || '').trim().toLowerCase();
-  const corpus = await collectSubredditPosts(state.currentCollection.url, 700);
-  if (!q) return corpus;
+  if (!q) return [...corpus];
   const words = q.split(/\s+/).filter(Boolean);
   return corpus
     .map(p => {
       const title = (p.title || '').toLowerCase();
+      const collection = (p.collection || '').toLowerCase();
       let score = title.includes(q) ? 100 : 0;
-      for (const w of words) if (title.includes(w)) score += 10;
+      if (collection.includes(q)) score += 40;
+      for (const w of words) {
+        if (title.includes(w)) score += 10;
+        if (collection.includes(w)) score += 4;
+      }
       return { p, score };
     })
     .filter(x => x.score > 0)
     .sort((a, b) => b.score - a.score)
     .map(x => x.p);
+}
+
+async function searchWithinCurrentCollection(query) {
+  const corpus = state.currentCollection?.corpus || state.rawPosts || [];
+  return searchCorpus(corpus, query);
 }
 
 function filterPosts(posts) {
@@ -363,7 +409,7 @@ function filterPosts(posts) {
     return true;
   });
   if (state.sort === 'NEW') out.sort((a, b) => b.created - a.created);
-  if (state.sort === 'RANDOM') out.sort(() => Math.random() - 0.5);
+  if (state.sort === 'RANDOM') out = [...out].sort(() => Math.random() - 0.5);
   return out;
 }
 
@@ -372,15 +418,17 @@ async function runSearch(query = state.query, push = true, forceGlobal = false) 
   closeSheets();
   state.query = (query || '').trim();
   localStorage.setItem('query', state.query);
-  setBusy(true, 'Searching posts…');
+  setBusy(true, state.currentCollection && !forceGlobal ? 'Searching preloaded posts…' : 'Preloading posts…');
   $('empty').classList.add('hidden');
+
   try {
-    const useCurrent = !forceGlobal && state.searchContext === 'HERE' && state.currentCollection?.url;
+    const useCurrent = !forceGlobal && state.searchContext === 'HERE' && state.currentCollection?.corpus;
     state.rawPosts = useCurrent
       ? await searchWithinCurrentCollection(state.query)
       : await searchScrolllerPosts(state.query);
     state.posts = filterPosts(state.rawPosts);
     state.activeIndex = 0;
+    state.renderedCount = 0;
     state.currentLabel = useCurrent
       ? `${state.currentCollection.title}: ${state.query || 'All posts'}`
       : state.query ? `Search: ${state.query}` : (state.category !== 'ALL' ? state.category : 'Feed');
@@ -403,7 +451,11 @@ function mediaMarkup(p) {
   if (p.mediaType === 'VIDEO' || p.mediaType === 'GIF') {
     return `<div class="media-frame"><video class="post-media" src="${escapeHtml(p.url)}" ${p.poster ? `poster="${escapeHtml(p.poster)}"` : ''} loop playsinline muted preload="metadata"></video></div>`;
   }
-  return `<div class="media-frame"><img class="post-media" src="${escapeHtml(p.url)}" alt=""></div>`;
+  return `<div class="media-frame"><img class="post-media" src="${escapeHtml(p.url)}" alt="" loading="lazy" decoding="async"></div>`;
+}
+
+function favoriteButtonMarkup(p) {
+  return `<button class="action favorite${p.isFavorite ? ' active' : ''}" type="button"><b>${p.isFavorite ? '♥' : '♡'}</b>${p.isFavorite ? 'Saved' : 'Favorite'}</button>`;
 }
 
 function createPostElement(p, i) {
@@ -421,6 +473,8 @@ function createPostElement(p, i) {
       </div>
     </div>
     <div class="actions">
+      ${favoriteButtonMarkup(p)}
+      <button class="action save-collection" type="button"><b>＋</b>Collection</button>
       <button class="action similar" type="button"><b>≈</b>Similar</button>
       ${p.album?.length > 1 ? '<button class="action next-album" type="button"><b>›</b>Album</button>' : ''}
       ${p.mediaType === 'VIDEO' || p.mediaType === 'GIF' ? '<button class="action mute" type="button"><b>◖</b>Sound</button>' : ''}
@@ -431,6 +485,8 @@ function createPostElement(p, i) {
     if (p.collectionUrl) openCollectionByUrl(p.collectionUrl, p.collection);
   };
   el.querySelector('.similar').onclick = () => similarFrom(p);
+  el.querySelector('.favorite').onclick = e => toggleFavorite(p, e.currentTarget);
+  el.querySelector('.save-collection').onclick = () => openSaveToCollection(p);
 
   const mute = el.querySelector('.mute');
   if (mute) {
@@ -468,65 +524,43 @@ function ensureVideoObserver(reset = false) {
   }
 }
 
-function renderFeed() {
+function appendBufferedPosts(targetCount) {
   const feed = $('feed');
-  ensureVideoObserver(true);
-  feed.innerHTML = '';
-  $('empty').classList.toggle('hidden', !!state.posts.length);
-  const frag = document.createDocumentFragment();
-  state.posts.forEach((p, i) => frag.appendChild(createPostElement(p, i)));
-  feed.appendChild(frag);
-  feed.querySelectorAll('video.post-media').forEach(v => videoObserver.observe(v));
-  setTimeout(() => scrollToIndex(Math.min(state.activeIndex, Math.max(0, state.posts.length - 1)), false), 30);
-}
-
-function appendFeedPosts(newPosts) {
-  if (!newPosts.length) return;
+  const from = state.renderedCount;
+  const to = Math.min(state.posts.length, Math.max(targetCount, from));
+  if (to <= from) return;
   ensureVideoObserver(false);
-  const feed = $('feed');
-  const start = state.posts.length - newPosts.length;
   const frag = document.createDocumentFragment();
-  newPosts.forEach((p, j) => frag.appendChild(createPostElement(p, start + j)));
+  for (let i = from; i < to; i++) frag.appendChild(createPostElement(state.posts[i], i));
   feed.appendChild(frag);
-  [...feed.children].slice(start).forEach(el => {
+  [...feed.children].slice(from).forEach(el => {
     const v = el.querySelector('video.post-media');
     if (v) videoObserver.observe(v);
   });
+  state.renderedCount = to;
+}
+
+function renderFeed(requestedCount = INITIAL_RENDER_COUNT) {
+  const feed = $('feed');
+  ensureVideoObserver(true);
+  feed.innerHTML = '';
+  state.renderedCount = 0;
+  $('empty').classList.toggle('hidden', !!state.posts.length);
+  appendBufferedPosts(Math.max(requestedCount, Math.min(INITIAL_RENDER_COUNT, state.posts.length)));
+  setTimeout(() => scrollToIndex(Math.min(state.activeIndex, Math.max(0, state.renderedCount - 1)), false), 30);
 }
 
 function scrollToIndex(i, smooth = true) {
+  if (i >= state.renderedCount) appendBufferedPosts(i + RENDER_CHUNK);
   const c = $('feed').children[i];
   if (c) c.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
 }
 
-async function loadMoreCurrentCollection() {
-  const c = state.currentCollection;
-  if (!c?.url || c.exhausted || collectionLoadBusy || !c.nextIterator) return;
-  collectionLoadBusy = true;
-  try {
-    const page = await scrolllerSubredditPage(c.url, c.nextIterator, 50);
-    c.nextIterator = page.iterator;
-    if (!page.iterator || !page.posts.length) c.exhausted = true;
-    const existing = new Set(state.posts.map(p => p.url.replace(/\?.*$/, '').toLowerCase()));
-    const add = filterPosts(page.posts).filter(p => {
-      const k = p.url.replace(/\?.*$/, '').toLowerCase();
-      if (existing.has(k)) return false;
-      existing.add(k);
-      return true;
-    });
-    state.rawPosts.push(...page.posts);
-    state.posts.push(...add);
-    appendFeedPosts(add);
-  } catch (e) {
-    c.exhausted = true;
-  } finally {
-    collectionLoadBusy = false;
-  }
-}
-
 $('feed').addEventListener('scroll', () => {
   state.activeIndex = currentVisibleIndex();
-  if (state.currentCollection && state.activeIndex >= Math.max(0, state.posts.length - 6)) loadMoreCurrentCollection();
+  if (state.renderedCount < state.posts.length && state.activeIndex >= Math.max(0, state.renderedCount - 8)) {
+    appendBufferedPosts(state.renderedCount + RENDER_CHUNK);
+  }
 }, { passive: true });
 
 async function similarFrom(post) {
@@ -542,23 +576,25 @@ async function openCollectionByUrl(url, title = '') {
   if (!url) return;
   pushHistory();
   closeSheets();
-  setBusy(true, 'Opening collection…');
+  setBusy(true, 'Preloading entire collection…');
   try {
-    const page = await scrolllerSubredditPage(url, null, 50);
-    state.currentCollection = {
-      url,
-      title: title || page.title || url,
-      nextIterator: page.iterator,
-      exhausted: !page.iterator
+    const loaded = await preloadSubreddit(url);
+    const collection = {
+      kind: 'subreddit',
+      url: normalizeCollectionUrl(url),
+      title: title || loaded.title || url,
+      corpus: loaded.posts
     };
+    state.currentCollection = collection;
     state.searchContext = 'HERE';
     state.query = '';
     state.category = 'ALL';
-    state.currentLabel = state.currentCollection.title;
+    state.currentLabel = collection.title;
     $('titleBtn').textContent = state.currentLabel;
-    state.rawPosts = page.posts;
-    state.posts = filterPosts(page.posts);
+    state.rawPosts = collection.corpus;
+    state.posts = filterPosts(collection.corpus);
     state.activeIndex = 0;
+    state.renderedCount = 0;
     syncControls();
     syncSearchContext();
     renderFeed();
@@ -566,6 +602,125 @@ async function openCollectionByUrl(url, title = '') {
     toast(e.message);
   } finally {
     setBusy(false);
+  }
+}
+
+async function openUserCollection(collection) {
+  pushHistory();
+  closeSheets();
+  setBusy(true, 'Preloading your collection…');
+  try {
+    const loaded = await preloadUserCollection(collection);
+    state.currentCollection = {
+      kind: 'user',
+      id: Number(collection.id),
+      url: collection.url || '',
+      title: loaded.title,
+      corpus: loaded.posts
+    };
+    state.searchContext = 'HERE';
+    state.query = '';
+    state.category = 'ALL';
+    state.currentLabel = loaded.title;
+    $('titleBtn').textContent = state.currentLabel;
+    state.rawPosts = loaded.posts;
+    state.posts = filterPosts(loaded.posts);
+    state.activeIndex = 0;
+    state.renderedCount = 0;
+    syncControls();
+    syncSearchContext();
+    renderFeed();
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function hasNativeToken() {
+  try {
+    return !!(window.NativeAuth && NativeAuth.getToken && NativeAuth.getToken());
+  } catch (e) {
+    return false;
+  }
+}
+
+async function ensureSignedIn() {
+  if (state.account || hasNativeToken()) return true;
+  await checkAccount();
+  if (state.account || hasNativeToken()) return true;
+  openSheet('accountSheet');
+  toast('Sign in to save posts.');
+  return false;
+}
+
+async function toggleFavorite(post, button) {
+  if (!post.postUrl || !(await ensureSignedIn())) return;
+  const previous = post.isFavorite;
+  post.isFavorite = !previous;
+  if (button) {
+    button.classList.toggle('active', post.isFavorite);
+    button.innerHTML = `<b>${post.isFavorite ? '♥' : '♡'}</b>${post.isFavorite ? 'Saved' : 'Favorite'}`;
+  }
+  try {
+    await gql(post.isFavorite ? 'AddFavorite' : 'RemoveFavorite', { url: post.postUrl });
+    post.favoriteCount = Math.max(0, post.favoriteCount + (post.isFavorite ? 1 : -1));
+  } catch (e) {
+    post.isFavorite = previous;
+    if (button) {
+      button.classList.toggle('active', post.isFavorite);
+      button.innerHTML = `<b>${post.isFavorite ? '♥' : '♡'}</b>${post.isFavorite ? 'Saved' : 'Favorite'}`;
+    }
+    toast(e.message);
+  }
+}
+
+async function getMyCollections() {
+  const d = await gql('GetUserCollections', {});
+  return d.getUserCollections || [];
+}
+
+async function openSaveToCollection(post) {
+  if (!Number.isFinite(post.postId) || !(await ensureSignedIn())) return;
+  state.savePost = post;
+  $('savePostTitle').textContent = post.title || 'Post';
+  const box = $('saveCollectionResults');
+  box.innerHTML = '<div class="result">Loading your collections…</div>';
+  openSheet('saveSheet');
+  try {
+    const collections = await getMyCollections();
+    box.innerHTML = '';
+    for (const c of collections) {
+      const added = (c.posts || []).some(x => Number(x.id) === post.postId);
+      const el = document.createElement('button');
+      el.className = `result save-target${added ? ' already-added' : ''}`;
+      el.type = 'button';
+      el.innerHTML = `<div class="result-title">${escapeHtml(c.title || c.url || `Collection ${c.id}`)}</div>
+        <div class="result-sub">${added ? 'Already in collection' : 'Tap to add'}</div>`;
+      el.disabled = added;
+      if (!added) {
+        el.onclick = async () => {
+          el.disabled = true;
+          el.querySelector('.result-sub').textContent = 'Adding…';
+          try {
+            await gql('AddPostToCollection', { postId: post.postId, collectionId: Number(c.id) });
+            c.posts = [...(c.posts || []), { id: post.postId }];
+            el.classList.add('already-added');
+            el.querySelector('.result-sub').textContent = 'Added';
+            userCollectionCache.clear();
+            toast(`Added to ${c.title || 'collection'}`);
+          } catch (e) {
+            el.disabled = false;
+            el.querySelector('.result-sub').textContent = 'Tap to add';
+            toast(e.message);
+          }
+        };
+      }
+      box.appendChild(el);
+    }
+    if (!collections.length) box.innerHTML = '<div class="result">No account collections were returned.</div>';
+  } catch (e) {
+    box.innerHTML = `<div class="result">${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -610,7 +765,8 @@ async function showCategoryCollections(title) {
     const urls = await categoryCollections(title);
     box.innerHTML = '';
     urls.forEach(url => {
-      const el = document.createElement('div');
+      const el = document.createElement('button');
+      el.type = 'button';
       el.className = 'result';
       el.innerHTML = `<div class="result-title">${escapeHtml(url)}</div><div class="result-sub">${escapeHtml(title)} collection</div>`;
       el.onclick = () => openCollectionByUrl(url, url);
@@ -624,19 +780,31 @@ async function showCategoryCollections(title) {
 
 async function showCollectionResults(query, target = 'collectionResults') {
   const box = $(target);
-  box.innerHTML = '<div class="result">Searching all collections…</div>';
+  box.innerHTML = '<div class="result">Searching the website collection indexes…</div>';
   try {
     const q = (query || '').trim();
-    const items = await searchSubreddits(q, 6);
+    const [subreddits, publicCollections] = await Promise.all([searchSubreddits(q), searchPublicCollections(q)]);
     box.innerHTML = '';
-    items.forEach(c => {
-      const el = document.createElement('div');
+
+    subreddits.forEach(c => {
+      const el = document.createElement('button');
+      el.type = 'button';
       el.className = 'result';
-      el.innerHTML = `<div class="result-title">${escapeHtml(c.title || c.url)}</div><div class="result-sub">${escapeHtml(c.description || '')}${Number.isFinite(c.item_count) ? ` · ${c.item_count} items` : ''}</div>`;
+      el.innerHTML = `<div class="result-title">${escapeHtml(c.title || c.url)}</div><div class="result-sub">Website collection${Number.isFinite(c.item_count) ? ` · ${c.item_count} items` : ''}${c.description ? ` · ${escapeHtml(c.description)}` : ''}</div>`;
       el.onclick = () => openCollectionByUrl(c.url, c.title || c.url);
       box.appendChild(el);
     });
-    if (!items.length) box.innerHTML = '<div class="result">No collections found.</div>';
+
+    publicCollections.forEach(c => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'result';
+      el.innerHTML = `<div class="result-title">${escapeHtml(c.title || c.url)}</div><div class="result-sub">Scrolller user collection${c.description ? ` · ${escapeHtml(c.description)}` : ''}</div>`;
+      el.onclick = () => openUserCollection(c);
+      box.appendChild(el);
+    });
+
+    if (!subreddits.length && !publicCollections.length) box.innerHTML = '<div class="result">No collections found.</div>';
   } catch (e) {
     box.innerHTML = `<div class="result">${escapeHtml(e.message)}</div>`;
   }
@@ -646,19 +814,19 @@ async function showMyCollections() {
   const box = $('collectionResults');
   box.innerHTML = '<div class="result">Loading account collections…</div>';
   try {
-    const d = await gql('GetUserCollections', {});
-    const items = d.getUserCollections || [];
+    const items = await getMyCollections();
     box.innerHTML = '';
     items.forEach(c => {
-      const el = document.createElement('div');
+      const el = document.createElement('button');
+      el.type = 'button';
       el.className = 'result';
-      el.innerHTML = `<div class="result-title">${escapeHtml(c.title || c.url)}</div><div class="result-sub">Your Scrolller collection</div>`;
-      el.onclick = () => openCollectionByUrl(c.url, c.title || c.url);
+      el.innerHTML = `<div class="result-title">${escapeHtml(c.title || c.url)}</div><div class="result-sub">Your Scrolller collection · ${(c.posts || []).length} saved posts</div>`;
+      el.onclick = () => openUserCollection(c);
       box.appendChild(el);
     });
     if (!items.length) box.innerHTML = '<div class="result">No account collections were returned.</div>';
   } catch (e) {
-    box.innerHTML = '<div class="result">Sign in first, then return with Android Back.</div>';
+    box.innerHTML = '<div class="result">Sign in first, then try again.</div>';
   }
 }
 
@@ -672,17 +840,18 @@ async function checkAccount() {
       status.textContent = `Signed in as ${u.username}`;
       $('loginBtn').textContent = 'Refresh sign-in';
       $('accountBtn').textContent = '✓';
-      return;
+      return true;
     }
   } catch (e) {}
   state.account = null;
-  status.textContent = 'Not signed in';
+  status.textContent = hasNativeToken() ? 'Session saved — verifying account…' : 'Not signed in';
   $('loginBtn').textContent = 'Sign in to Scrolller';
-  $('accountBtn').textContent = '●';
+  $('accountBtn').textContent = hasNativeToken() ? '◐' : '●';
+  return false;
 }
 
 function syncSearchContext() {
-  const visible = state.scope === 'POSTS' && !!state.currentCollection?.url;
+  const visible = state.scope === 'POSTS' && !!state.currentCollection?.corpus;
   $('searchContext').classList.toggle('hidden', !visible);
   if (visible) $('searchContextLabel').textContent = `Search inside ${state.currentCollection.title}`;
   $('searchHereBtn').classList.toggle('active', state.searchContext === 'HERE');
@@ -726,7 +895,14 @@ $('feedBtn').onclick = async () => {
 $('randomBtn').onclick = async () => {
   state.sort = 'RANDOM';
   localStorage.setItem('sort', state.sort);
-  await runSearch(state.query, true, state.searchContext === 'ALL');
+  if (state.currentCollection?.corpus) {
+    state.rawPosts = [...state.currentCollection.corpus];
+    state.posts = filterPosts(state.rawPosts);
+    state.activeIndex = 0;
+    renderFeed();
+  } else {
+    await runSearch(state.query, true, true);
+  }
 };
 
 $('searchForm').onsubmit = async e => {
@@ -740,15 +916,27 @@ $('collectionSearchBtn').onclick = () => showCollectionResults($('collectionQuer
 $('myCollectionsBtn').onclick = showMyCollections;
 
 $('applyFilters').onclick = async () => {
+  const oldSort = state.sort;
+  const oldNsfw = state.nsfw;
   state.sort = $('sortSelect').value;
   state.media = $('mediaSelect').value;
   state.category = $('categorySelect').value;
   state.nsfw = $('nsfwSelect').value;
   ['sort', 'media', 'category', 'nsfw'].forEach(k => localStorage.setItem(k, state[k]));
+  if (oldSort !== state.sort || oldNsfw !== state.nsfw) {
+    preloadCache.clear();
+    userCollectionCache.clear();
+  }
   closeSheets();
   await loadCategories();
-  if (state.currentCollection?.url && state.category === 'ALL') {
-    await openCollectionByUrl(state.currentCollection.url, state.currentCollection.title);
+
+  if (state.currentCollection && state.category === 'ALL') {
+    if (state.currentCollection.kind === 'user') {
+      const c = { id: state.currentCollection.id, url: state.currentCollection.url, title: state.currentCollection.title };
+      await openUserCollection(c);
+    } else {
+      await openCollectionByUrl(state.currentCollection.url, state.currentCollection.title);
+    }
   } else {
     state.currentCollection = null;
     state.searchContext = 'ALL';
