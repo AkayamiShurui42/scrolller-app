@@ -83,7 +83,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Layout behind the status/navigation areas without disabling Android's back gesture.
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
         webView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
@@ -115,9 +114,13 @@ public class MainActivity extends AppCompatActivity {
                     if (webView.canGoBack()) {
                         webView.goBack();
                     } else {
-                        MainActivity.super.onBackPressed();
+                        exitFromBack();
                     }
                 }
         );
+    }
+
+    private void exitFromBack() {
+        super.onBackPressed();
     }
 }
