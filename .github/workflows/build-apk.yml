@@ -46,6 +46,43 @@ jobs:
           grep -q 'Bearer ' android/app/src/main/java/com/scrolller/adblock/MediaBridge.java
           grep -q 'enterWebsiteMode' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
 
+      - name: Smoke test live Scrolller search API
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          endpoint='https://api.scrolller.com/admin'
+          ua='Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36'
+          def gql(query, variables):
+              body=json.dumps({'query':query,'variables':variables}).encode()
+              req=urllib.request.Request(endpoint,data=body,headers={'Content-Type':'application/json','Accept':'application/json','User-Agent':ua})
+              with urllib.request.urlopen(req,timeout=30) as r:
+                  data=json.loads(r.read().decode())
+              if data.get('errors'): raise RuntimeError(data['errors'][0].get('message','GraphQL error'))
+              return data.get('data') or {}
+
+          search='query SearchSubredditsQuery($query:String!,$limit:Int!,$isNsfw:Boolean!,$pageIndex:Int!){searchSubreddits(data:{query:$query,isNsfw:$isNsfw,limit:$limit,pageIndex:$pageIndex}){id title url description is_nsfw item_count}}'
+          result=gql(search,{'query':'walkthrough','limit':20,'isNsfw':True,'pageIndex':0}).get('searchSubreddits') or []
+          assert len(result) >= 2, f'walkthrough collection search returned only {len(result)} results'
+          assert any((x.get('url') or '').lower()=='walkthrough' for x in result), 'expected walkthrough collection missing from pageIndex 0'
+
+          sub='query SubredditQuery($url:String!,$iterator:String,$sortBy:GallerySortBy,$filter:GalleryFilter,$limit:Int!){getSubreddit(data:{url:$url,iterator:$iterator,filter:$filter,limit:$limit,sortBy:$sortBy}){url title children{iterator items{id title subredditTitle subredditUrl mediaSources{url width height}}}}}'
+          loaded=False
+          for candidate in result:
+              if candidate.get('item_count') == 0 or not candidate.get('url'): continue
+              d=gql(sub,{'url':candidate['url'],'iterator':None,'sortBy':'HOT','filter':None,'limit':20})
+              items=((d.get('getSubreddit') or {}).get('children') or {}).get('items') or []
+              if items:
+                  assert all('subredditUrl' in x for x in items[:3]), 'post collection provenance missing'
+                  loaded=True
+                  break
+          assert loaded, 'matched collections returned no post page'
+
+          cats='query GetCategories($is_nsfw:Boolean!){categories(data:{is_nsfw:$is_nsfw}){title}}'
+          categories=gql(cats,{'is_nsfw':False}).get('categories') or []
+          assert len(categories) >= 5, 'website category list unavailable'
+          print('Live Scrolller search smoke test passed:',len(result),'walkthrough matches,',len(categories),'SFW categories')
+          PY
+
       - name: Prepare stable debug signing key
         run: |
           base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
