@@ -12,32 +12,13 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.Locale;
-import java.util.Set;
-import java.util.HashSet;
 
-/**
- * Small native network bridge used by the bundled UI so provider requests are
- * not dependent on WebView CORS behavior. It is deliberately host-restricted.
- */
+/** Native network bridge for direct Scrolller API/media requests. */
 public final class MediaBridge {
-    private static final Set<String> ALLOWED_HOSTS = new HashSet<>();
-    static {
-        ALLOWED_HOSTS.add("api.scrolller.com");
-        ALLOWED_HOSTS.add("scrolller.com");
-        ALLOWED_HOSTS.add("www.scrolller.com");
-        ALLOWED_HOSTS.add("www.reddit.com");
-        ALLOWED_HOSTS.add("reddit.com");
-        ALLOWED_HOSTS.add("old.reddit.com");
-        ALLOWED_HOSTS.add("oauth.reddit.com");
-        ALLOWED_HOSTS.add("api.redgifs.com");
-        ALLOWED_HOSTS.add("v3.redgifs.com");
-    }
-
     private final Activity activity;
     private final WebView webView;
 
@@ -64,7 +45,7 @@ public final class MediaBridge {
                 URL target = new URL(url);
                 String host = target.getHost() == null ? "" : target.getHost().toLowerCase(Locale.US);
                 if (!"https".equalsIgnoreCase(target.getProtocol()) || !isAllowedHost(host)) {
-                    deliver(requestId, false, "Blocked provider URL", 0);
+                    deliver(requestId, false, "Blocked non-Scrolller URL", 0);
                     return;
                 }
 
@@ -73,33 +54,24 @@ public final class MediaBridge {
                 connection.setConnectTimeout(15000);
                 connection.setReadTimeout(25000);
                 connection.setInstanceFollowRedirects(true);
-                connection.setRequestProperty("User-Agent", "ScrolllerPro/2.0 Android (media browser)");
+                connection.setRequestProperty("User-Agent", "ScrolllerPro/2.1 Android");
                 connection.setRequestProperty("Accept", "application/json, text/plain, */*");
 
                 String cookies = CookieManager.getInstance().getCookie(url);
-                if (cookies != null && !cookies.isEmpty()) {
-                    connection.setRequestProperty("Cookie", cookies);
-                }
-
+                if (cookies != null && !cookies.isEmpty()) connection.setRequestProperty("Cookie", cookies);
                 applyHeaders(connection, headersJson);
 
                 if ("POST".equals(method)) {
                     connection.setDoOutput(true);
-                    if (connection.getRequestProperty("Content-Type") == null) {
-                        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                    }
+                    if (connection.getRequestProperty("Content-Type") == null) connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                     byte[] bytes = (body == null ? "" : body).getBytes(StandardCharsets.UTF_8);
                     connection.setFixedLengthStreamingMode(bytes.length);
-                    try (OutputStream out = connection.getOutputStream()) {
-                        out.write(bytes);
-                    }
+                    try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
                 }
 
                 status = connection.getResponseCode();
                 captureCookies(url, connection);
-                InputStream stream = status >= 200 && status < 400
-                        ? connection.getInputStream()
-                        : connection.getErrorStream();
+                InputStream stream = status >= 200 && status < 400 ? connection.getInputStream() : connection.getErrorStream();
                 String responseBody = readFully(stream);
                 deliver(requestId, status >= 200 && status < 300, responseBody, status);
             } catch (Exception e) {
@@ -107,12 +79,11 @@ public final class MediaBridge {
             } finally {
                 if (connection != null) connection.disconnect();
             }
-        }, "ScrolllerProviderRequest").start();
+        }, "ScrolllerRequest").start();
     }
 
     private boolean isAllowedHost(String host) {
-        if (ALLOWED_HOSTS.contains(host)) return true;
-        return host.endsWith(".scrolller.com") || host.endsWith(".reddit.com") || host.endsWith(".redgifs.com");
+        return host.equals("scrolller.com") || host.endsWith(".scrolller.com");
     }
 
     private void applyHeaders(HttpURLConnection connection, String headersJson) {
@@ -123,22 +94,16 @@ public final class MediaBridge {
             while (keys.hasNext()) {
                 String key = keys.next();
                 String value = headers.optString(key, null);
-                if (value != null && !key.equalsIgnoreCase("Cookie") && !key.equalsIgnoreCase("Host")) {
-                    connection.setRequestProperty(key, value);
-                }
+                if (value != null && !key.equalsIgnoreCase("Cookie") && !key.equalsIgnoreCase("Host")) connection.setRequestProperty(key, value);
             }
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) {}
     }
 
     private void captureCookies(String url, HttpURLConnection connection) {
         try {
-            for (String value : connection.getHeaderFields().getOrDefault("Set-Cookie", java.util.Collections.emptyList())) {
-                CookieManager.getInstance().setCookie(url, value);
-            }
+            for (String value : connection.getHeaderFields().getOrDefault("Set-Cookie", java.util.Collections.emptyList())) CookieManager.getInstance().setCookie(url, value);
             CookieManager.getInstance().flush();
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) {}
     }
 
     private String readFully(InputStream stream) throws Exception {
