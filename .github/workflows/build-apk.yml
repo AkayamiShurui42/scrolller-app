@@ -21,6 +21,11 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
       - name: Copy PWA Assets to Android Assets Folder
         run: |
           mkdir -p android/app/src/main/assets/www
@@ -59,21 +64,28 @@ jobs:
           grep -q 'setAllowUniversalAccessFromFileURLs(true)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
 
       - name: Generate Gradle Wrapper
-        run: gradle wrapper --gradle-version 8.5
+        run: gradle wrapper --gradle-version 8.11.1
         working-directory: android
 
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
         working-directory: android
 
-      - name: Compile and Build Assembler Debug APK
+      - name: Compile Android 16 Debug APK
         run: ./gradlew assembleDebug --no-daemon
         working-directory: android
+
+      - name: Verify APK package and signatures
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | head -20
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: scrolller-pro-debug-apk
+          name: scrolller-pro-android16-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
