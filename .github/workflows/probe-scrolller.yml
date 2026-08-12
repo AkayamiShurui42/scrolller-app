@@ -9,93 +9,26 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch website source and API metadata
+      - name: Inspect current website bundles
         shell: bash
         run: |
-          set -euo pipefail
           python3 - <<'PY'
-          import json, re, urllib.request, urllib.parse
-
+          import re, urllib.request, urllib.parse
           UA='Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36'
-          def get(url):
-              req=urllib.request.Request(url, headers={'User-Agent':UA,'Accept':'text/html,application/xhtml+xml,application/json,*/*'})
-              with urllib.request.urlopen(req, timeout=30) as r:
-                  return r.status, r.geturl(), r.read().decode('utf-8','replace')
-          def gql(query, variables=None):
-              data=json.dumps({'query':query,'variables':variables or {}}).encode()
-              req=urllib.request.Request('https://api.scrolller.com/admin',data=data,headers={'User-Agent':UA,'Content-Type':'application/json','Accept':'application/json'})
-              with urllib.request.urlopen(req, timeout=30) as r:
-                  return json.loads(r.read().decode('utf-8','replace'))
-
-          print('=== WEBSITE ===')
-          try:
-              status, final, html=get('https://scrolller.com/')
-              print('status',status,'final',final,'bytes',len(html))
-              print('title',re.findall(r'<title[^>]*>(.*?)</title>',html,re.I|re.S)[:1])
-              srcs=re.findall(r'<script[^>]+src=["\']([^"\']+)',html,re.I)
-              print('scripts',srcs[:30])
-              base='https://scrolller.com/'
-              for i,src in enumerate(srcs[:30]):
-                  url=urllib.parse.urljoin(base,src)
-                  try:
-                      st,fu,js=get(url)
-                      hits=[]
-                      for term in ['searchSubreddits','getSubreddit','getCategorySubreddits','categories(','SearchSubreddits','GetCategories','searchPosts','searchPost','getCategories']:
-                          if term in js: hits.append(term)
-                      if hits:
-                          print('bundle',i,fu,'bytes',len(js),'hits',hits)
-                          for term in hits:
-                              p=js.find(term)
-                              print('SNIP',term,js[max(0,p-350):p+900].replace('\n',' ')[:1250])
-                  except Exception as e:
-                      print('bundle_error',url,repr(e))
-          except Exception as e:
-              print('website_error',repr(e))
-
-          print('=== GRAPHQL QUERY FIELDS ===')
-          try:
-              q='query{__schema{queryType{fields{name args{name type{kind name ofType{kind name}}} type{kind name ofType{kind name}}}}}}'
-              data=gql(q)
-              fields=data.get('data',{}).get('__schema',{}).get('queryType',{}).get('fields',[])
-              for f in fields:
-                  n=f.get('name','')
-                  if any(k in n.lower() for k in ['search','subreddit','categor','collection','post','gallery','user']):
-                      print(json.dumps(f,separators=(',',':')))
-          except Exception as e:
-              print('introspection_error',repr(e))
-
-          print('=== CATEGORY LISTS ===')
-          catq='query GetCategories($is_nsfw:Boolean!){categories(data:{is_nsfw:$is_nsfw}){title}}'
-          for v in [False,True]:
-              try:
-                  d=gql(catq,{'is_nsfw':v})
-                  print('is_nsfw',v,json.dumps(d)[:6000])
-              except Exception as e: print('category_error',v,repr(e))
-
-          print('=== COLLECTION SEARCH PAGING ===')
-          sq='query SearchSubreddits($data:SearchSubredditsInput!){searchSubreddits(data:$data){id url title description item_count is_nsfw}}'
-          for page in [0,1,2]:
-              for term in ['walkthrough','art','funny']:
-                  try:
-                      d=gql(sq,{'data':{'query':term,'limit':20,'pageIndex':page,'isNsfw':True}})
-                      items=d.get('data',{}).get('searchSubreddits') or []
-                      print('term',term,'page',page,'count',len(items),'first',json.dumps(items[:5])[:2000])
-                  except Exception as e: print('search_error',term,page,repr(e))
-
-          print('=== CATEGORY SUBREDDIT FIELDS PROBE ===')
-          cq='query GetCategory($url:String!){getCategory(data:{url:$url}){id url title isNsfw}}'
-          try:
-              cats=(gql(catq,{'is_nsfw':False}).get('data',{}).get('categories') or [])
-              if cats:
-                  title=cats[0]['title']
-                  slug=re.sub(r'[^a-z0-9]+','-',title.lower().replace('&','and')).strip('-')
-                  c=gql(cq,{'url':slug})
-                  print('category',title,slug,json.dumps(c))
-                  cid=(c.get('data',{}).get('getCategory') or {}).get('id')
-                  if cid:
-                      for fields in ['subredditUrl','id subredditUrl','id title subredditUrl','id title description subredditUrl isNsfw']:
-                          q='query($categoryId:Int!){getCategorySubreddits(data:{categoryId:$categoryId}){subreddits{' + fields + '}}}'
-                          try: print('fields',fields,json.dumps(gql(q,{'categoryId':cid}))[:5000])
-                          except Exception as e: print('field_probe_error',fields,repr(e))
-          except Exception as e: print('category_subreddit_error',repr(e))
+          def get(u):
+              r=urllib.request.Request(u,headers={'User-Agent':UA})
+              with urllib.request.urlopen(r,timeout=30) as x:return x.read().decode('utf-8','replace')
+          html=get('https://scrolller.com/')
+          srcs=re.findall(r'<script[^>]+src=["\']([^"\']+)',html,re.I)
+          terms=['SearchCollectionsQuery','searchCollections','getCollection(data','query GetCollection','getCollection(','getCategorySubreddits','GetCategorySubreddits','signIn','login','Log in','Sign in']
+          for src in srcs:
+              url=urllib.parse.urljoin('https://scrolller.com/',src)
+              try: js=get(url)
+              except Exception: continue
+              found=[t for t in terms if t in js]
+              if not found: continue
+              print('\n===',url,'===')
+              for t in found:
+                  p=js.find(t)
+                  print('\nTERM',t,'\n',js[max(0,p-900):p+2600].replace('\n',' ')[:3500])
           PY
