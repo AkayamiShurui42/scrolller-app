@@ -9,7 +9,7 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect current Scrolller bundles for save and collection APIs
+      - name: Inspect current Scrolller login API
         run: |
           python3 - <<'PY'
           import re, urllib.request, urllib.parse
@@ -19,24 +19,20 @@ jobs:
               with urllib.request.urlopen(r,timeout=30) as x:return x.read().decode('utf-8','replace')
           html=get('https://scrolller.com/')
           srcs=re.findall(r'<script[^>]+src=["\']([^"\']+)',html,re.I)
-          needles=['userCollectionsState','showAddToCollectionPopup','getUserCollections','addFavorite','removeFavorite','getPostIsFavorite','addPosts','removePosts']
+          needles=['loginUser','logInUser','loginMutation','mutation Login','signIn','LogIn','login(data','password','username']
           for src in srcs:
               url=urllib.parse.urljoin('https://scrolller.com/',src)
               try: js=get(url)
               except Exception: continue
-              if not any(n in js for n in needles):
-                  continue
+              if not any(n in js for n in needles): continue
               print('\n===',url,'===')
               for n in needles:
-                  start=0
-                  count=0
+                  start=0; count=0
                   while True:
                       p=js.find(n,start)
-                      if p<0 or count>=4: break
-                      print('\nTERM',n,'\n',js[max(0,p-2200):p+5200].replace('\n',' ')[:7400])
-                      start=p+len(n)
-                      count+=1
-              for m in re.finditer(r'mutation[^"\\]{0,1600}(?:Collection|Favorite)[^"\\]{0,1600}',js,re.I):
-                  p=m.start()
-                  print('\nMUTATION CANDIDATE\n',js[max(0,p-500):p+3800].replace('\n',' ')[:4300])
+                      if p<0 or count>=6: break
+                      text=js[max(0,p-1800):p+4400].replace('\n',' ')
+                      if 'graphQLQuery' in text or 'mutation' in text.lower() or 'login' in text.lower():
+                          print('\nTERM',n,'\n',text[:6200])
+                      start=p+len(n); count+=1
           PY
