@@ -1,6 +1,8 @@
 package com.scrolller.adblock;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
@@ -21,10 +23,12 @@ import java.util.Locale;
 public final class MediaBridge {
     private final Activity activity;
     private final WebView webView;
+    private final SharedPreferences authPrefs;
 
     public MediaBridge(Activity activity, WebView webView) {
         this.activity = activity;
         this.webView = webView;
+        this.authPrefs = activity.getSharedPreferences(AuthBridge.PREFS_NAME, Context.MODE_PRIVATE);
     }
 
     @JavascriptInterface
@@ -52,21 +56,30 @@ public final class MediaBridge {
                 connection = (HttpURLConnection) target.openConnection();
                 connection.setRequestMethod(method);
                 connection.setConnectTimeout(15000);
-                connection.setReadTimeout(25000);
+                connection.setReadTimeout(30000);
                 connection.setInstanceFollowRedirects(true);
-                connection.setRequestProperty("User-Agent", "ScrolllerPro/2.1 Android");
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36");
                 connection.setRequestProperty("Accept", "application/json, text/plain, */*");
 
                 String cookies = CookieManager.getInstance().getCookie(url);
                 if (cookies != null && !cookies.isEmpty()) connection.setRequestProperty("Cookie", cookies);
                 applyHeaders(connection, headersJson);
 
+                String token = authPrefs.getString(AuthBridge.TOKEN_KEY, "");
+                if (!token.isEmpty() && connection.getRequestProperty("Authorization") == null) {
+                    connection.setRequestProperty("Authorization", "Bearer " + token);
+                }
+
                 if ("POST".equals(method)) {
                     connection.setDoOutput(true);
-                    if (connection.getRequestProperty("Content-Type") == null) connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                    if (connection.getRequestProperty("Content-Type") == null) {
+                        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                    }
                     byte[] bytes = (body == null ? "" : body).getBytes(StandardCharsets.UTF_8);
                     connection.setFixedLengthStreamingMode(bytes.length);
-                    try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
+                    try (OutputStream out = connection.getOutputStream()) {
+                        out.write(bytes);
+                    }
                 }
 
                 status = connection.getResponseCode();
@@ -94,16 +107,22 @@ public final class MediaBridge {
             while (keys.hasNext()) {
                 String key = keys.next();
                 String value = headers.optString(key, null);
-                if (value != null && !key.equalsIgnoreCase("Cookie") && !key.equalsIgnoreCase("Host")) connection.setRequestProperty(key, value);
+                if (value != null && !key.equalsIgnoreCase("Cookie") && !key.equalsIgnoreCase("Host")) {
+                    connection.setRequestProperty(key, value);
+                }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
     private void captureCookies(String url, HttpURLConnection connection) {
         try {
-            for (String value : connection.getHeaderFields().getOrDefault("Set-Cookie", java.util.Collections.emptyList())) CookieManager.getInstance().setCookie(url, value);
+            for (String value : connection.getHeaderFields().getOrDefault("Set-Cookie", java.util.Collections.emptyList())) {
+                CookieManager.getInstance().setCookie(url, value);
+            }
             CookieManager.getInstance().flush();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
     private String readFully(InputStream stream) throws Exception {
