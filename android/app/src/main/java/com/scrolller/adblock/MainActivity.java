@@ -39,7 +39,7 @@ public class MainActivity extends AppCompatActivity {
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setSupportMultipleWindows(false);
-        settings.setUseWideViewPort(false);
+        settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
@@ -52,9 +52,11 @@ public class MainActivity extends AppCompatActivity {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         }
 
-        CookieManager cookies = CookieManager.getInstance();
-        cookies.setAcceptCookie(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) cookies.setAcceptThirdPartyCookies(webView, true);
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            cookieManager.setAcceptThirdPartyCookies(webView, true);
+        }
 
         authBridge = new AuthBridge(this, webView);
         webView.addJavascriptInterface(authBridge, "NativeAuth");
@@ -81,22 +83,44 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // True edge-to-edge canvas. CSS safe-area insets keep controls clear of cutouts
-        // while media is allowed to use the full physical display.
-        getWindow().setStatusBarColor(Color.TRANSPARENT);
-        getWindow().setNavigationBarColor(Color.TRANSPARENT);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            getWindow().setStatusBarContrastEnforced(false);
-            getWindow().setNavigationBarContrastEnforced(false);
-        }
-        webView.setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-        );
+        enterAppMode();
 
-        if (savedInstanceState == null) webView.loadUrl(APP_URL);
-        else webView.restoreState(savedInstanceState);
+        if (savedInstanceState == null) {
+            webView.loadUrl(APP_URL);
+        } else {
+            webView.restoreState(savedInstanceState);
+        }
+    }
+
+    /** Edge-to-edge mode used only by the bundled media client. */
+    public void enterAppMode() {
+        runOnUiThread(() -> {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                getWindow().setDecorFitsSystemWindows(false);
+            }
+            getWindow().setStatusBarColor(Color.TRANSPARENT);
+            getWindow().setNavigationBarColor(Color.TRANSPARENT);
+            int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            webView.setSystemUiVisibility(flags);
+        });
+    }
+
+    /**
+     * Normal window mode for Scrolller's website login. The website gets the
+     * full usable rectangle below the status bar so popup controls are never
+     * hidden beneath Android system UI.
+     */
+    public void enterWebsiteMode() {
+        runOnUiThread(() -> {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                getWindow().setDecorFitsSystemWindows(true);
+            }
+            getWindow().setStatusBarColor(Color.BLACK);
+            getWindow().setNavigationBarColor(Color.BLACK);
+            webView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        });
     }
 
     @Override
@@ -116,8 +140,11 @@ public class MainActivity extends AppCompatActivity {
                 "(function(){try{return !!(window.ScrolllerNativeBack&&window.ScrolllerNativeBack());}catch(e){return false;}})();",
                 result -> {
                     if ("true".equals(result)) return;
-                    if (webView.canGoBack()) webView.goBack();
-                    else finish();
+                    if (webView.canGoBack()) {
+                        webView.goBack();
+                    } else {
+                        MainActivity.super.onBackPressed();
+                    }
                 }
         );
     }
