@@ -34,6 +34,12 @@ jobs:
           node --check public/app.js
           node --check public/enhancements.js
 
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
       - name: Copy PWA Assets to Android Assets Folder
         run: |
           mkdir -p android/app/src/main/assets/www
@@ -88,7 +94,8 @@ jobs:
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/apksigner.txt
+          grep -qi '191e5f6808941797362d844076f428cee94af60ae2929eecc70fc1c8e4da38b9' /tmp/apksigner.txt
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | head -20
 
       - name: Upload Debug APK Artifact
