@@ -35,18 +35,18 @@ jobs:
               srcs=re.findall(r'<script[^>]+src=["\']([^"\']+)',html,re.I)
               print('scripts',srcs[:30])
               base='https://scrolller.com/'
-              for i,src in enumerate(srcs[:20]):
+              for i,src in enumerate(srcs[:30]):
                   url=urllib.parse.urljoin(base,src)
                   try:
                       st,fu,js=get(url)
                       hits=[]
-                      for term in ['searchSubreddits','getSubreddit','getCategorySubreddits','categories(','SearchSubreddits','GetCategories','searchPosts','searchPost']:
+                      for term in ['searchSubreddits','getSubreddit','getCategorySubreddits','categories(','SearchSubreddits','GetCategories','searchPosts','searchPost','getCategories']:
                           if term in js: hits.append(term)
                       if hits:
                           print('bundle',i,fu,'bytes',len(js),'hits',hits)
                           for term in hits:
                               p=js.find(term)
-                              print('SNIP',term,js[max(0,p-300):p+700].replace('\n',' ')[:1000])
+                              print('SNIP',term,js[max(0,p-350):p+900].replace('\n',' ')[:1250])
                   except Exception as e:
                       print('bundle_error',url,repr(e))
           except Exception as e:
@@ -94,7 +94,7 @@ jobs:
                   cid=(c.get('data',{}).get('getCategory') or {}).get('id')
                   if cid:
                       for fields in ['subredditUrl','id subredditUrl','id title subredditUrl','id title description subredditUrl isNsfw']:
-                          q=f'query($categoryId:Int!){{getCategorySubreddits(data:{{categoryId:$categoryId}}){{subreddits{{{fields}}}}}}}}'
+                          q='query($categoryId:Int!){getCategorySubreddits(data:{categoryId:$categoryId}){subreddits{' + fields + '}}}'
                           try: print('fields',fields,json.dumps(gql(q,{'categoryId':cid}))[:5000])
                           except Exception as e: print('field_probe_error',fields,repr(e))
           except Exception as e: print('category_subreddit_error',repr(e))
