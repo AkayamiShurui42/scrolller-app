@@ -30,9 +30,11 @@ jobs:
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Validate bundled client JavaScript
-        run: node --check public/app.js
+        run: |
+          node --check public/app.js
+          node --check public/website-parity.js
 
-      - name: Verify preload and account action source
+      - name: Verify preload, website parity, account actions and safe insets
         run: |
           grep -q 'const PRELOAD_LIMIT = 5000' public/app.js
           grep -q 'iterator: null' public/app.js
@@ -45,12 +47,19 @@ jobs:
           grep -q 'saveCollectionResults' public/index.html
           grep -q 'savePostTitle' public/index.html
           grep -q 'favorite.active' public/style.css
+          grep -q 'Scrolller gallery' public/website-parity.js
+          grep -q 'server ordering intact' public/website-parity.js
+          grep -q "state.sort = 'RANDOM'" public/website-parity.js
+          grep -q 'native-safe.css' public/index.html
+          grep -q 'WindowInsets.Type.systemBars' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'lp.topMargin = top' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'lp.leftMargin = 0' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'MutationObserver' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
           grep -q '__scrolllerLoginGuard' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
           grep -q 'SCROLLLER_LOGIN_DEV' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
           grep -q 'returnToApp' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
           grep -q 'Bearer ' android/app/src/main/java/com/scrolller/adblock/MediaBridge.java
-          grep -q 'versionName "1.3.0"' android/app/build.gradle
+          grep -q 'versionName "1.4.0"' android/app/build.gradle
 
       - name: Smoke test live Scrolller APIs
         run: |
@@ -86,22 +95,18 @@ jobs:
 
           search='query SearchSubredditsQuery($query:String!,$limit:Int!,$isNsfw:Boolean!,$pageIndex:Int!){searchSubreddits(data:{query:$query,isNsfw:$isNsfw,limit:$limit,pageIndex:$pageIndex}){id title url description is_nsfw item_count}}'
           result=gql(search,{'query':'walkthrough','limit':20,'isNsfw':True,'pageIndex':0}).get('searchSubreddits') or []
-          assert len(result)>=2, f'walkthrough collection search returned only {len(result)} results'
-          assert any((x.get('url') or '').lower()=='walkthrough' for x in result), 'expected walkthrough collection missing from pageIndex 0'
+          assert len(result)>=2, f'walkthrough gallery search returned only {len(result)} results'
+          assert any((x.get('url') or '').lower()=='walkthrough' for x in result), 'expected walkthrough gallery missing from pageIndex 0'
 
           sub='query SubredditQuery($url:String!,$iterator:String,$sortBy:GallerySortBy,$filter:GalleryFilter,$limit:Int!){getSubreddit(data:{url:$url,iterator:$iterator,filter:$filter,limit:$limit,sortBy:$sortBy}){url title children{iterator items{id url title subredditTitle subredditUrl favoriteCount isFavorite mediaSources{url width height}}}}}'
-          loaded=False
-          for candidate in result:
-              if candidate.get('item_count')==0 or not candidate.get('url'):
-                  continue
-              d=gql(sub,{'url':candidate['url'],'iterator':None,'sortBy':'HOT','filter':None,'limit':100})
+          candidate=next((x for x in result if x.get('item_count')!=0 and x.get('url')),None)
+          assert candidate, 'no usable walkthrough gallery candidate'
+          for sort_by in ('RANDOM','HOT','NEW','TOP'):
+              d=gql(sub,{'url':candidate['url'],'iterator':None,'sortBy':sort_by,'filter':None,'limit':40})
               items=((d.get('getSubreddit') or {}).get('children') or {}).get('items') or []
-              if items:
-                  assert all('subredditUrl' in x for x in items[:3]), 'post collection provenance missing'
-                  assert all('isFavorite' in x and 'favoriteCount' in x for x in items[:3]), 'favorite fields unavailable'
-                  loaded=True
-                  break
-          assert loaded, 'matched collections returned no one-shot post payload'
+              assert items, f'{sort_by} one-shot gallery load returned no posts'
+              assert all('subredditUrl' in x for x in items[:3]), 'post gallery provenance missing'
+              assert all('isFavorite' in x and 'favoriteCount' in x for x in items[:3]), 'favorite fields unavailable'
 
           cats='query GetCategories($is_nsfw:Boolean!){categories(data:{is_nsfw:$is_nsfw}){title}}'
           categories=gql(cats,{'is_nsfw':False}).get('categories') or []
@@ -114,7 +119,7 @@ jobs:
           assert_schema(remove_fav,{'url':'__scrolller_schema_probe__'})
           assert_schema(add_collection,{'postId':0,'collectionId':0})
 
-          print('Live Scrolller smoke test passed:',len(result),'walkthrough matches,',len(categories),'SFW categories, one-shot post load and save schemas valid')
+          print('Live Scrolller smoke test passed:',len(result),'walkthrough gallery matches,',len(categories),'SFW categories, all website sort modes, one-shot loads and save schemas valid')
           PY
 
       - name: Prepare stable debug signing key
@@ -152,7 +157,7 @@ jobs:
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: scrolller-pro-preload-favorites-collections-android16-apk
+          name: scrolller-pro-website-parity-safe-insets-android16-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
