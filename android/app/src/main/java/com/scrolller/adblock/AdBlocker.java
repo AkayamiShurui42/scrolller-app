@@ -7,19 +7,38 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
-/** Lightweight network-level ad/tracker blocker for the embedded Scrolller website. */
+/** Network-level ad/tracker blocker for the embedded Scrolller website. */
 public final class AdBlocker {
     private static final String[] BLOCKED_HOST_SUFFIXES = new String[] {
             "doubleclick.net",
             "googlesyndication.com",
             "googleadservices.com",
+            "googletagservices.com",
             "adnxs.com",
             "adsrvr.org",
             "criteo.com",
             "criteo.net",
             "taboola.com",
             "outbrain.com",
-            "amazon-adsystem.com"
+            "amazon-adsystem.com",
+            "pubmatic.com",
+            "rubiconproject.com",
+            "openx.net",
+            "indexww.com",
+            "casalemedia.com",
+            "smartadserver.com",
+            "media.net",
+            "adsafeprotected.com",
+            "lijit.com",
+            "yieldmo.com",
+            "teads.tv",
+            "33across.com",
+            "sharethrough.com",
+            "contextweb.com",
+            "bidswitch.net",
+            "adform.net",
+            "serving-sys.com",
+            "yieldlab.net"
     };
 
     private static final String[] BLOCKED_URL_PARTS = new String[] {
@@ -27,7 +46,12 @@ public final class AdBlocker {
             "/pagead/",
             "/adservice/",
             "/adserver/",
-            "/advertisement/"
+            "/advertisement/",
+            "/prebid/",
+            "/prebid.js",
+            "/gpt.js",
+            "/pubads_",
+            "googleads.g.doubleclick.net"
     };
 
     private AdBlocker() {}
