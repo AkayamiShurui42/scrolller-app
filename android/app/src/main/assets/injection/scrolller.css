@@ -1,0 +1,37 @@
+html, body {
+    background: #000 !important;
+    overscroll-behavior-y: none !important;
+}
+
+/* Hide obvious advertising containers without touching Scrolller content cards. */
+ins.adsbygoogle,
+iframe[src*="doubleclick.net"],
+iframe[src*="googlesyndication.com"],
+iframe[src*="adnxs.com"],
+iframe[src*="taboola.com"],
+iframe[src*="outbrain.com"],
+[id^="google_ads_"],
+[id*="div-gpt-ad"],
+[class*="adsbygoogle"],
+[class*="advertisement"],
+[data-ad-slot],
+[data-ad-client] {
+    display: none !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    pointer-events: none !important;
+}
+
+/* Keep media constrained to the usable WebView width. */
+img, video {
+    max-width: 100% !important;
+}
+
+/* Native-shell marker so future UI modules can target only the app WebView. */
+html[data-scrolller-pro="1"] {
+    color-scheme: dark;
+}
