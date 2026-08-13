@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ master, main, hybrid-webview-injection ]
   workflow_dispatch:
 
 jobs:
@@ -33,6 +33,7 @@ jobs:
         run: |
           node --check public/app.js
           node --check public/website-parity.js
+          node --check android/app/src/main/assets/injection/scrolller.js
 
       - name: Verify preload, website parity, account actions and safe insets
         run: |
@@ -54,6 +55,12 @@ jobs:
           grep -q 'WindowInsets.Type.systemBars' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'lp.topMargin = top' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'lp.leftMargin = 0' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'https://scrolller.com/' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'shouldInterceptRequest' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'AdBlocker.maybeBlock' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'MutationObserver' android/app/src/main/assets/injection/scrolller.js
+          grep -q 'ad blocker' android/app/src/main/assets/injection/scrolller.js
+          grep -q 'doubleclick.net' android/app/src/main/java/com/scrolller/adblock/AdBlocker.java
           grep -q 'MutationObserver' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
           grep -q '__scrolllerLoginGuard' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
           grep -q 'SCROLLLER_LOGIN_DEV' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
@@ -157,7 +164,7 @@ jobs:
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: scrolller-pro-website-parity-safe-insets-android16-apk
+          name: scrolller-pro-hybrid-webview-adblock-android16-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
