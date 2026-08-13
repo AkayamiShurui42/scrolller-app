@@ -84,9 +84,6 @@ public class MainActivity extends AppCompatActivity {
             cookies.setAcceptThirdPartyCookies(webView, true);
         }
 
-        // Install the API preload hook before Scrolller's own JavaScript runs.
-        // This is what lets sort/filter changes request the large gallery payload
-        // on their first backend call instead of being constrained by page chunks.
         if (!earlyScript.isEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(
                     webView,
@@ -133,9 +130,6 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
-                // Fallback for WebView implementations that do not expose the
-                // document-start feature. It is best-effort and harmless because
-                // early.js is idempotent.
                 if (!earlyScript.isEmpty() && !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                     view.evaluateJavascript(earlyScript, null);
                 }
@@ -158,13 +152,14 @@ public class MainActivity extends AppCompatActivity {
     private String buildInjectionScript() {
         String css = readAsset("injection/scrolller.css");
         String js = readAsset("injection/scrolller.js");
+        String media = readAsset("injection/media-quality.js");
         return "(function(){" +
                 "try{" +
                 "var old=document.getElementById('scrolller-pro-style');" +
                 "if(!old){var s=document.createElement('style');s.id='scrolller-pro-style';" +
                 "s.textContent=" + JSONObject.quote(css) + ";(document.head||document.documentElement).appendChild(s);}" +
                 "}catch(e){console.error('Scrolller Pro CSS',e);}" +
-                "})();\n" + js;
+                "})();\n" + js + "\n" + media;
     }
 
     private String readAsset(String path) {
