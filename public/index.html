@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="native-safe">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
@@ -7,6 +7,7 @@
   <meta name="referrer" content="no-referrer">
   <title>Scrolller Pro</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="native-safe.css">
 </head>
 <body>
 <div id="app">
@@ -59,7 +60,7 @@
     <div class="sheet-handle"></div>
     <div class="sheet-head"><b>Feed options</b><button data-close>×</button></div>
     <div class="filter-grid">
-      <label>Sort<select id="sortSelect"><option value="HOT">Best</option><option value="NEW">Newest</option><option value="TOP">Top</option><option value="RANDOM">Random</option></select></label>
+      <label>Website sort<select id="sortSelect"><option value="RANDOM">Random</option><option value="HOT">Best</option><option value="NEW">Newest</option><option value="TOP">Top</option></select></label>
       <label>Media<select id="mediaSelect"><option value="ALL">All</option><option value="IMAGE">Images</option><option value="VIDEO">Videos</option><option value="GIF">GIFs</option><option value="ALBUM">Albums</option></select></label>
       <label>Category<select id="categorySelect"><option value="ALL">All categories</option></select></label>
       <label>Content<select id="nsfwSelect"><option value="ALL">All</option><option value="SFW">SFW</option><option value="NSFW">NSFW</option></select></label>
@@ -72,8 +73,8 @@
   <div class="sheet-card collections-card">
     <div class="sheet-handle"></div>
     <div class="sheet-head"><b>Collections</b><button data-close>×</button></div>
-    <div class="search-row"><input id="collectionQuery" placeholder="Search every Scrolller collection"><button id="collectionSearchBtn">Search</button></div>
-    <button id="myCollectionsBtn" class="secondary wide">My collections</button>
+    <div class="search-row"><input id="collectionQuery" placeholder="Search Scrolller galleries"><button id="collectionSearchBtn">Search</button></div>
+    <button id="myCollectionsBtn" class="secondary wide">My saved collections</button>
     <div class="section-label">Website categories</div>
     <div id="categoryResults" class="category-chips"><span class="muted">Loading categories…</span></div>
     <div id="collectionResults" class="results"></div>
@@ -102,5 +103,6 @@
 
 <div id="toast" class="toast hidden"></div>
 <script src="app.js"></script>
+<script src="website-parity.js"></script>
 </body>
 </html>
