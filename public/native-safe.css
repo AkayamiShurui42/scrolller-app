@@ -1,0 +1,7 @@
+/* Android reserves the actual system-bar insets around the WebView natively.
+   Keep all app controls inside that safe rectangle while media remains full
+   width from the left edge to the right edge of the usable screen. */
+html.native-safe {
+  --safe-top: 0px;
+  --safe-bottom: 0px;
+}
