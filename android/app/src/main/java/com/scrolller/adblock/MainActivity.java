@@ -19,18 +19,22 @@ import android.webkit.WebChromeClient;
 import android.widget.FrameLayout;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
 
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 
 public class MainActivity extends AppCompatActivity {
     private static final String APP_URL = "https://scrolller.com/";
 
     private FrameLayout root;
     private WebView webView;
+    private String earlyScript = "";
     private String injectedScript = "";
 
     @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
@@ -50,6 +54,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(root);
 
         installSystemBarInsets();
+        earlyScript = readAsset("injection/early.js");
         injectedScript = buildInjectionScript();
 
         WebSettings settings = webView.getSettings();
@@ -66,6 +71,8 @@ public class MainActivity extends AppCompatActivity {
         settings.setLoadWithOverviewMode(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
+        settings.setLoadsImagesAutomatically(true);
+        settings.setBlockNetworkImage(false);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
@@ -77,8 +84,17 @@ public class MainActivity extends AppCompatActivity {
             cookies.setAcceptThirdPartyCookies(webView, true);
         }
 
-        // Keep the existing native media bridge available for future injected UI
-        // controls while Scrolller itself owns authentication/search/session state.
+        // Install the API preload hook before Scrolller's own JavaScript runs.
+        // This is what lets sort/filter changes request the large gallery payload
+        // on their first backend call instead of being constrained by page chunks.
+        if (!earlyScript.isEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(
+                    webView,
+                    earlyScript,
+                    Collections.singleton("https://scrolller.com")
+            );
+        }
+
         webView.addJavascriptInterface(new MediaBridge(this, webView), "NativeMedia");
 
         webView.setWebChromeClient(new WebChromeClient() {
@@ -112,6 +128,17 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return false;
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                // Fallback for WebView implementations that do not expose the
+                // document-start feature. It is best-effort and harmless because
+                // early.js is idempotent.
+                if (!earlyScript.isEmpty() && !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    view.evaluateJavascript(earlyScript, null);
+                }
             }
 
             @Override
