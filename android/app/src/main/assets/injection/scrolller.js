@@ -31,8 +31,24 @@
             node.style.setProperty('pointer-events', 'none', 'important');
             node.setAttribute('aria-hidden', 'true');
         }
-        document.documentElement.style.setProperty('overflow', 'auto', 'important');
-        if (document.body) document.body.style.setProperty('overflow', 'auto', 'important');
+    }
+
+    function restoreTouchScrolling() {
+        // Do not force html/body overflow. Scrolller may own scrolling through a nested
+        // viewport; overriding its overflow model can make the page completely immobile.
+        const html = document.documentElement;
+        if (html) {
+            html.style.removeProperty('overflow');
+            html.style.removeProperty('overflow-y');
+            html.style.removeProperty('height');
+            html.style.setProperty('touch-action', 'pan-y pinch-zoom', 'important');
+        }
+        if (document.body) {
+            document.body.style.removeProperty('overflow');
+            document.body.style.removeProperty('overflow-y');
+            document.body.style.removeProperty('height');
+            document.body.style.setProperty('touch-action', 'pan-y pinch-zoom', 'important');
+        }
     }
 
     function removeResidualAds() {
@@ -53,6 +69,7 @@
         document.documentElement.setAttribute('data-scrolller-pro', '1');
         removeResidualAds();
         removeAdBlockWarnings();
+        restoreTouchScrolling();
     }
 
     const observer = new MutationObserver(() => requestAnimationFrame(apply));
