@@ -3,19 +3,26 @@ html, body {
     overscroll-behavior-y: none !important;
 }
 
-/* Hide obvious advertising containers without touching Scrolller content cards. */
+/* Hide advertising containers without touching Scrolller content cards. */
 ins.adsbygoogle,
 iframe[src*="doubleclick.net"],
 iframe[src*="googlesyndication.com"],
 iframe[src*="adnxs.com"],
 iframe[src*="taboola.com"],
 iframe[src*="outbrain.com"],
+iframe[src*="pubmatic.com"],
+iframe[src*="rubiconproject.com"],
+iframe[src*="openx.net"],
 [id^="google_ads_"],
 [id*="div-gpt-ad"],
 [class*="adsbygoogle"],
 [class*="advertisement"],
+[class~="ad"],
+[class~="ads"],
 [data-ad-slot],
-[data-ad-client] {
+[data-ad-client],
+[data-ad-unit],
+[data-google-query-id] {
     display: none !important;
     visibility: hidden !important;
     width: 0 !important;
@@ -31,7 +38,6 @@ img, video {
     max-width: 100% !important;
 }
 
-/* Native-shell marker so future UI modules can target only the app WebView. */
 html[data-scrolller-pro="1"] {
     color-scheme: dark;
 }
