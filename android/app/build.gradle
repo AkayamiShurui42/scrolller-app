@@ -10,8 +10,8 @@ android {
         applicationId "com.scrolller.adblock"
         minSdk 24
         targetSdk 36
-        versionCode 7
-        versionName "1.4.0"
+        versionCode 8
+        versionName "1.4.1"
     }
 
     signingConfigs {
@@ -45,5 +45,6 @@ android {
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.webkit:webkit:1.16.0'
     implementation 'com.google.android.material:material:1.11.0'
 }
