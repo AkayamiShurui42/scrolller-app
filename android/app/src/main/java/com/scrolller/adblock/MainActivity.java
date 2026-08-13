@@ -10,20 +10,28 @@ import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
-import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
 import android.widget.FrameLayout;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+
 public class MainActivity extends AppCompatActivity {
-    private static final String APP_URL = "file:///android_asset/www/index.html";
+    private static final String APP_URL = "https://scrolller.com/";
 
     private FrameLayout root;
     private WebView webView;
-    private AuthBridge authBridge;
+    private String injectedScript = "";
 
     @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
     @Override
@@ -35,25 +43,20 @@ public class MainActivity extends AppCompatActivity {
 
         webView = new WebView(this);
         webView.setBackgroundColor(Color.BLACK);
-        FrameLayout.LayoutParams webParams = new FrameLayout.LayoutParams(
+        root.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
-        );
-        root.addView(webView, webParams);
+        ));
         setContentView(root);
 
-        // Android 15/16 enforce edge-to-edge for modern targets. Keep the window
-        // edge-to-edge, then explicitly reserve only the real system-bar insets
-        // around the WebView. This preserves full left/right media width while
-        // guaranteeing the app header and website-login controls never sit
-        // underneath the status bar or gesture/navigation area.
         installSystemBarInsets();
+        injectedScript = buildInjectionScript();
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        settings.setAllowFileAccess(true);
+        settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
@@ -64,33 +67,48 @@ public class MainActivity extends AppCompatActivity {
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            settings.setAllowFileAccessFromFileURLs(true);
-            settings.setAllowUniversalAccessFromFileURLs(true);
-        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         }
 
-        CookieManager cookieManager = CookieManager.getInstance();
-        cookieManager.setAcceptCookie(true);
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            cookieManager.setAcceptThirdPartyCookies(webView, true);
+            cookies.setAcceptThirdPartyCookies(webView, true);
         }
 
-        authBridge = new AuthBridge(this, webView);
-        webView.addJavascriptInterface(authBridge, "NativeAuth");
+        // Keep the existing native media bridge available for future injected UI
+        // controls while Scrolller itself owns authentication/search/session state.
         webView.addJavascriptInterface(new MediaBridge(this, webView), "NativeMedia");
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-                android.util.Log.d("SCROLLLER_UI", consoleMessage.message());
+                android.util.Log.d("SCROLLLER_WEB", consoleMessage.message());
                 return true;
             }
         });
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                WebResourceResponse blocked = AdBlocker.maybeBlock(request.getUrl().toString());
+                return blocked != null ? blocked : super.shouldInterceptRequest(view, request);
+            }
+
+            @SuppressWarnings("deprecation")
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
+                WebResourceResponse blocked = AdBlocker.maybeBlock(url);
+                return blocked != null ? blocked : super.shouldInterceptRequest(view, url);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return false;
+            }
+
+            @SuppressWarnings("deprecation")
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return false;
@@ -99,17 +117,45 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                authBridge.onPageFinished(url);
+                injectUiLayer();
             }
         });
-
-        enterAppMode();
 
         if (savedInstanceState == null) {
             webView.loadUrl(APP_URL);
         } else {
             webView.restoreState(savedInstanceState);
         }
+    }
+
+    private String buildInjectionScript() {
+        String css = readAsset("injection/scrolller.css");
+        String js = readAsset("injection/scrolller.js");
+        return "(function(){" +
+                "try{" +
+                "var old=document.getElementById('scrolller-pro-style');" +
+                "if(!old){var s=document.createElement('style');s.id='scrolller-pro-style';" +
+                "s.textContent=" + JSONObject.quote(css) + ";(document.head||document.documentElement).appendChild(s);}" +
+                "}catch(e){console.error('Scrolller Pro CSS',e);}" +
+                "})();\n" + js;
+    }
+
+    private String readAsset(String path) {
+        try (InputStream in = getAssets().open(path);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            android.util.Log.e("SCROLLLER_WEB", "Unable to read asset " + path, e);
+            return "";
+        }
+    }
+
+    private void injectUiLayer() {
+        if (injectedScript == null || injectedScript.isEmpty()) return;
+        webView.evaluateJavascript(injectedScript, null);
     }
 
     private void installSystemBarInsets() {
@@ -144,39 +190,6 @@ public class MainActivity extends AppCompatActivity {
         root.requestApplyInsets();
     }
 
-    /**
-     * The bundled client uses the entire safe WebView rectangle. The media is
-     * still edge-to-edge left/right, while Android owns the reserved top/bottom
-     * system-bar strips.
-     */
-    public void enterAppMode() {
-        runOnUiThread(() -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                getWindow().setDecorFitsSystemWindows(false);
-            }
-            getWindow().setStatusBarColor(Color.BLACK);
-            getWindow().setNavigationBarColor(Color.BLACK);
-            webView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-            root.requestApplyInsets();
-        });
-    }
-
-    /**
-     * Scrolller login uses the same safe rectangle, so the website's own close,
-     * sign-in and popup controls cannot be covered by Android's status bar.
-     */
-    public void enterWebsiteMode() {
-        runOnUiThread(() -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                getWindow().setDecorFitsSystemWindows(false);
-            }
-            getWindow().setStatusBarColor(Color.BLACK);
-            getWindow().setNavigationBarColor(Color.BLACK);
-            webView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-            root.requestApplyInsets();
-        });
-    }
-
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         webView.saveState(outState);
@@ -185,20 +198,12 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
-        if (authBridge != null && authBridge.isLoginMode()) {
-            authBridge.returnToApp();
-            return;
-        }
-
         webView.evaluateJavascript(
                 "(function(){try{return !!(window.ScrolllerNativeBack&&window.ScrolllerNativeBack());}catch(e){return false;}})();",
                 result -> {
                     if ("true".equals(result)) return;
-                    if (webView.canGoBack()) {
-                        webView.goBack();
-                    } else {
-                        MainActivity.super.onBackPressed();
-                    }
+                    if (webView.canGoBack()) webView.goBack();
+                    else MainActivity.super.onBackPressed();
                 }
         );
     }
