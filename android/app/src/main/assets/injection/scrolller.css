@@ -1,9 +1,8 @@
 html, body {
     background: #000 !important;
-    overscroll-behavior-y: none !important;
 }
 
-/* Hide advertising containers without touching Scrolller content cards. */
+/* Keep the CSS layer conservative. The JS cleanup collapses whole ad cards. */
 ins.adsbygoogle,
 iframe[src*="doubleclick.net"],
 iframe[src*="googlesyndication.com"],
@@ -16,9 +15,8 @@ iframe[src*="openx.net"],
 [id^="google_ads_"],
 [id*="div-gpt-ad"],
 [class*="adsbygoogle"],
-[class*="advertisement"],
-[class~="ad"],
-[class~="ads"],
+[class*="adContainer"],
+[class*="AdContainer"],
 [data-ad-slot],
 [data-ad-client],
 [data-ad-unit],
@@ -33,7 +31,6 @@ iframe[src*="openx.net"],
     pointer-events: none !important;
 }
 
-/* Keep media constrained to the usable WebView width. */
 img, video {
     max-width: 100% !important;
 }
