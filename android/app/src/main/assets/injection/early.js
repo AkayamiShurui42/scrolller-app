@@ -9,8 +9,9 @@
     var BACKGROUND_LIMIT = 400;
     var MAX_PAGES = 100;
     var MAX_ITEMS = 20000;
-    var pageCache = new Map();
     var activePreloads = new Map();
+    var completedPreloads = new Set();
+    var corpusCache = new Map();
 
     function isTargetUrl(url) {
         return String(url || '').indexOf(API_MARKER) >= 0;
@@ -80,12 +81,6 @@
         }
     }
 
-    function requestedIterator(entry) {
-        var variables = entry && entry.variables;
-        if (!variables || typeof variables !== 'object') return null;
-        return variables.iterator == null ? null : String(variables.iterator);
-    }
-
     function extractPage(payload) {
         try {
             var data = payload && payload.data;
@@ -108,11 +103,36 @@
         return null;
     }
 
-    function responseFrom(payload) {
-        return new Response(JSON.stringify(payload), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' }
+    function itemKey(item) {
+        if (!item || typeof item !== 'object') return '';
+        if (item.id != null) return 'id:' + String(item.id);
+        if (item.url) return 'url:' + String(item.url);
+        try {
+            var sources = item.mediaSources;
+            if (Array.isArray(sources) && sources[0] && sources[0].url) return 'media:' + String(sources[0].url);
+        } catch (_) {}
+        return '';
+    }
+
+    function corpusFor(key) {
+        var state = corpusCache.get(key);
+        if (!state) {
+            state = { items: [], seen: new Set() };
+            corpusCache.set(key, state);
+        }
+        return state;
+    }
+
+    function appendUnique(state, items) {
+        var added = 0;
+        (items || []).forEach(function (item) {
+            var k = itemKey(item);
+            if (k && state.seen.has(k)) return;
+            if (k) state.seen.add(k);
+            state.items.push(item);
+            added += 1;
         });
+        return added;
     }
 
     function copyFetchOptions(input, init) {
@@ -140,16 +160,6 @@
         return out;
     }
 
-    function bodyPromise(input, init) {
-        if (init && typeof init.body === 'string') return Promise.resolve(init.body);
-        try {
-            if (typeof Request !== 'undefined' && input instanceof Request && String(input.method || '').toUpperCase() === 'POST') {
-                return input.clone().text().catch(function () { return ''; });
-            }
-        } catch (_) {}
-        return Promise.resolve('');
-    }
-
     function makeBackgroundBody(entry, iterator) {
         var copy;
         try { copy = JSON.parse(JSON.stringify(entry)); } catch (_) { return ''; }
@@ -160,53 +170,54 @@
         return JSON.stringify(copy);
     }
 
+    function publishStats(key, pages, state, iterator) {
+        window.__scrolllerProPreloadStats = {
+            key: key,
+            pages: pages,
+            items: state.items.length,
+            complete: !iterator
+        };
+    }
+
     function startBackgroundPreload(nativeFetch, url, input, init, entry, firstPage) {
         var key = stableKey(entry);
-        if (!key || !firstPage || !firstPage.iterator || activePreloads.has(key)) return;
+        if (!key || !firstPage) return;
+
+        var state = corpusFor(key);
+        appendUnique(state, firstPage.items);
+        publishStats(key, 0, state, firstPage.iterator);
+
+        if (!firstPage.iterator || activePreloads.has(key) || completedPreloads.has(key)) return;
 
         var options = copyFetchOptions(input, init);
-        var seen = new Set();
-        var firstCount = Array.isArray(firstPage.items) ? firstPage.items.length : 0;
+        var seenIterators = new Set();
 
         var task = (async function () {
             var iterator = firstPage.iterator;
             var pages = 0;
-            var items = firstCount;
 
-            while (iterator && !seen.has(iterator) && pages < MAX_PAGES && items < MAX_ITEMS) {
-                seen.add(iterator);
+            while (iterator && !seenIterators.has(iterator) && pages < MAX_PAGES && state.items.length < MAX_ITEMS) {
+                seenIterators.add(iterator);
                 var body = makeBackgroundBody(entry, iterator);
                 if (!body) break;
 
-                var requestOptions = Object.assign({}, options, { body: body });
-                var response = await nativeFetch.call(window, url, requestOptions);
+                var response = await nativeFetch.call(window, url, Object.assign({}, options, { body: body }));
                 if (!response || !response.ok) break;
 
                 var payload = await response.json();
                 var page = extractPage(payload);
                 if (!page) break;
 
-                pageCache.set(key + '|iterator=' + iterator, payload);
+                appendUnique(state, page.items);
                 pages += 1;
-                items += page.items.length;
                 iterator = page.iterator;
-
-                window.__scrolllerProPreloadStats = {
-                    key: key,
-                    pages: pages,
-                    items: items,
-                    complete: !iterator
-                };
+                publishStats(key, pages, state, iterator);
 
                 if (!page.items.length && iterator) break;
             }
 
-            window.__scrolllerProPreloadStats = {
-                key: key,
-                pages: pages,
-                items: items,
-                complete: !iterator
-            };
+            if (!iterator) completedPreloads.add(key);
+            publishStats(key, pages, state, iterator);
         })().catch(function () {}).finally(function () {
             activePreloads.delete(key);
         });
@@ -215,47 +226,51 @@
     }
 
     var nativeFetch = window.fetch;
+
+    function performFetch(input, init, rawBody) {
+        var url = typeof input === 'string' ? input : (input && input.url) || '';
+        var networkPromise = nativeFetch.call(window, input, init);
+
+        networkPromise.then(function (response) {
+            if (!response || !response.ok || !rawBody) return;
+            response.clone().json().then(function (payload) {
+                var entry = firstGalleryEntry(parseJson(rawBody));
+                if (!entry || !payload) return;
+                var page = extractPage(payload);
+                if (!page) return;
+                startBackgroundPreload(nativeFetch, url, input, init, entry, page);
+            }).catch(function () {});
+        }).catch(function () {});
+
+        return networkPromise;
+    }
+
     if (typeof nativeFetch === 'function') {
         window.fetch = function (input, init) {
             var url = typeof input === 'string' ? input : (input && input.url) || '';
             if (!isTargetUrl(url)) return nativeFetch.apply(this, arguments);
 
-            var rawPromise = bodyPromise(input, init);
-
             if (init && typeof init.body === 'string') {
-                var originalParsed = parseJson(init.body);
-                var entry = firstGalleryEntry(originalParsed);
-                if (entry) {
-                    var key = stableKey(entry);
-                    var iterator = requestedIterator(entry);
-                    if (key && iterator) {
-                        var cached = pageCache.get(key + '|iterator=' + iterator);
-                        if (cached) return Promise.resolve(responseFrom(cached));
-                    }
-
-                    var tunedInit = Object.assign({}, init, { body: tuneVisibleBody(init.body) });
-                    init = tunedInit;
-                }
+                var rawBody = init.body;
+                var tunedBody = tuneVisibleBody(rawBody);
+                var tunedInit = tunedBody === rawBody ? init : Object.assign({}, init, { body: tunedBody });
+                return performFetch(input, tunedInit, rawBody);
             }
 
-            var networkPromise = nativeFetch.call(this, input, init);
-            networkPromise.then(function (response) {
-                if (!response || !response.ok) return;
-                Promise.all([
-                    rawPromise,
-                    response.clone().json().catch(function () { return null; })
-                ]).then(function (parts) {
-                    var parsed = parseJson(parts[0]);
-                    var entry = firstGalleryEntry(parsed);
-                    var payload = parts[1];
-                    if (!entry || !payload) return;
-                    var page = extractPage(payload);
-                    if (!page) return;
-                    startBackgroundPreload(nativeFetch, url, input, init, entry, page);
-                }).catch(function () {});
-            }).catch(function () {});
+            try {
+                if (typeof Request !== 'undefined' && input instanceof Request && String(input.method || '').toUpperCase() === 'POST') {
+                    return input.clone().text().then(function (rawBody) {
+                        var tunedBody = tuneVisibleBody(rawBody);
+                        if (tunedBody === rawBody) return performFetch(input, init, rawBody);
+                        var replacement = new Request(input, { body: tunedBody });
+                        return performFetch(replacement, init, rawBody);
+                    }).catch(function () {
+                        return nativeFetch.call(window, input, init);
+                    });
+                }
+            } catch (_) {}
 
-            return networkPromise;
+            return nativeFetch.apply(this, arguments);
         };
     }
 
@@ -273,8 +288,7 @@
             var originalBody = typeof body === 'string' ? body : '';
             try {
                 if (this.__scrolllerProMethod === 'POST' && isTargetUrl(this.__scrolllerProUrl) && originalBody) {
-                    var parsed = parseJson(originalBody);
-                    var entry = firstGalleryEntry(parsed);
+                    var entry = firstGalleryEntry(parseJson(originalBody));
                     if (entry) body = tuneVisibleBody(originalBody);
 
                     var xhr = this;
@@ -304,5 +318,5 @@
 
     window.__scrolllerProPreloadLimit = BACKGROUND_LIMIT;
     window.__scrolllerProVisibleLimit = VISIBLE_LIMIT;
-    window.__scrolllerProPageCache = pageCache;
+    window.__scrolllerProCorpusCache = corpusCache;
 })();
