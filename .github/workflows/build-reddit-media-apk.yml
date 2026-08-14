@@ -29,16 +29,20 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate Scrolller-style Reddit media client
+      - name: Validate active filters and sorting
         run: |
           node --check android/app/src/main/assets/reddit-media.js
-          grep -q 'shreddit-post' android/app/src/main/assets/reddit-media.js
-          grep -q 'crm-shell-v13' android/app/src/main/assets/reddit-media.js
-          grep -q 'scroll-snap-type:y mandatory' android/app/src/main/assets/reddit-media.js
-          grep -q 'crm-nonmedia' android/app/src/main/assets/reddit-media.js
-          grep -q 'subreddits/mine/subscriber.json' android/app/src/main/assets/reddit-media.js
-          grep -q 'data-scope="global"' android/app/src/main/assets/reddit-media.js
-          grep -q 'data-scope="subscribed"' android/app/src/main/assets/reddit-media.js
+          grep -q 'crm-shell-v14' android/app/src/main/assets/reddit-media.js
+          grep -q 'id="crm-media-select"' android/app/src/main/assets/reddit-media.js
+          grep -q 'id="crm-sort-select"' android/app/src/main/assets/reddit-media.js
+          grep -q 'id="crm-top-select"' android/app/src/main/assets/reddit-media.js
+          grep -q 'setMedia(mediaSelect.value)' android/app/src/main/assets/reddit-media.js
+          grep -q 'setSort(sortSelect.value)' android/app/src/main/assets/reddit-media.js
+          grep -q 'requestAnimationFrame(ensureVisiblePost)' android/app/src/main/assets/reddit-media.js
+          grep -q 'mutation.target instanceof Element' android/app/src/main/assets/reddit-media.js
+          grep -q 'attributeFilter:' android/app/src/main/assets/reddit-media.js
+          grep -q "params.set('sort', state.sort)" android/app/src/main/assets/reddit-media.js
+          grep -q 'state.sort === '\''best'\'' ? base' android/app/src/main/assets/reddit-media.js
           grep -q 'data-media="image"' android/app/src/main/assets/reddit-media.js
           grep -q 'data-media="video"' android/app/src/main/assets/reddit-media.js
           grep -q 'data-sort="best"' android/app/src/main/assets/reddit-media.js
@@ -46,12 +50,12 @@ jobs:
           grep -q 'data-sort="new"' android/app/src/main/assets/reddit-media.js
           grep -q 'data-sort="top"' android/app/src/main/assets/reddit-media.js
           grep -q 'data-sort="rising"' android/app/src/main/assets/reddit-media.js
+          grep -q 'subreddits/mine/subscriber.json' android/app/src/main/assets/reddit-media.js
           grep -q '/user/me/saved/' android/app/src/main/assets/reddit-media.js
-          grep -q '/settings/account/' android/app/src/main/assets/reddit-media.js
           grep -q 'shreddit-ad-post' android/app/src/main/assets/reddit-media.js
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 4' android/app/build.gradle
-          grep -q 'versionName "1.3.0"' android/app/build.gradle
+          grep -q 'versionCode 5' android/app/build.gradle
+          grep -q 'versionName "1.4.0"' android/app/build.gradle
           grep -q 'https://www.reddit.com/' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
 
       - name: Prepare stable debug signing key
@@ -79,13 +83,13 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='4'" /tmp/badging.txt
-          grep -q "versionName='1.3.0'" /tmp/badging.txt
+          grep -q "versionCode='5'" /tmp/badging.txt
+          grep -q "versionName='1.4.0'" /tmp/badging.txt
 
       - name: Upload Reddit Media APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v1.3.0-scrolller-layout-android16-debug-apk
+          name: reddit-media-v1.4.0-active-filters-sort-android16-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
