@@ -1,0 +1,75 @@
+name: Build Reddit Media APK
+
+on:
+  push:
+    branches: [ reddit-media-client ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Reddit Media Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Validate injected Reddit client
+        run: |
+          node --check android/app/src/main/assets/reddit-media.js
+          grep -q 'subreddits/mine/subscriber.json' android/app/src/main/assets/reddit-media.js
+          grep -q 'data-scope="global"' android/app/src/main/assets/reddit-media.js
+          grep -q 'data-scope="subscribed"' android/app/src/main/assets/reddit-media.js
+          grep -q 'post.promoted' android/app/src/main/assets/reddit-media.js
+          grep -q 'shreddit-ad-post' android/app/src/main/assets/reddit-media.js
+          grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
+          grep -q 'https://www.reddit.com/' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.11.1
+        working-directory: android
+
+      - name: Grant Gradle execute permission
+        run: chmod +x gradlew
+        working-directory: android
+
+      - name: Compile debug APK
+        run: ./gradlew assembleDebug --no-daemon
+        working-directory: android
+
+      - name: Verify APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
+
+      - name: Upload Reddit Media APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-media-android16-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
