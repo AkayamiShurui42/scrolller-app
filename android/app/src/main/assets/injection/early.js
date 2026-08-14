@@ -5,6 +5,7 @@
     window.__scrolllerProEarlyInstalled = true;
 
     var API_MARKER = 'api.scrolller.com/admin';
+    var VISIBLE_LIMIT = 96;
     var BACKGROUND_LIMIT = 400;
     var MAX_PAGES = 100;
     var MAX_ITEMS = 20000;
@@ -22,14 +23,48 @@
         return /getSubreddit|getUserCollectionContent|SubredditQuery|UserCollectionContent|Gallery/i.test(q + ' ' + op);
     }
 
-    function parseBody(body) {
+    function parseJson(body) {
         if (typeof body !== 'string' || !body) return null;
-        try {
-            var parsed = JSON.parse(body);
-            return Array.isArray(parsed) ? null : parsed;
-        } catch (_) {
-            return null;
+        try { return JSON.parse(body); } catch (_) { return null; }
+    }
+
+    function galleryEntries(parsed) {
+        if (!parsed) return [];
+        if (Array.isArray(parsed)) return parsed.filter(isGalleryOperation);
+        return isGalleryOperation(parsed) ? [parsed] : [];
+    }
+
+    function firstGalleryEntry(parsed) {
+        var entries = galleryEntries(parsed);
+        return entries.length ? entries[0] : null;
+    }
+
+    function raiseVisibleLimits(value, depth) {
+        if (!value || typeof value !== 'object' || depth > 8) return;
+        if (Array.isArray(value)) {
+            for (var i = 0; i < value.length; i++) raiseVisibleLimits(value[i], depth + 1);
+            return;
         }
+
+        Object.keys(value).forEach(function (key) {
+            var child = value[key];
+            if ((key === 'limit' || key === 'first') && typeof child === 'number' && child > 0 && child < VISIBLE_LIMIT) {
+                value[key] = VISIBLE_LIMIT;
+                return;
+            }
+            if (child && typeof child === 'object') raiseVisibleLimits(child, depth + 1);
+        });
+    }
+
+    function tuneVisibleBody(body) {
+        var parsed = parseJson(body);
+        if (!parsed) return body;
+        var entries = galleryEntries(parsed);
+        if (!entries.length) return body;
+        entries.forEach(function (entry) {
+            if (entry.variables && typeof entry.variables === 'object') raiseVisibleLimits(entry.variables, 0);
+        });
+        try { return JSON.stringify(parsed); } catch (_) { return body; }
     }
 
     function stableKey(entry) {
@@ -69,8 +104,7 @@
                     items: Array.isArray(collection.items) ? collection.items : []
                 };
             }
-        } catch (_) {
-        }
+        } catch (_) {}
         return null;
     }
 
@@ -95,8 +129,7 @@
                 out.integrity = input.integrity;
                 out.keepalive = input.keepalive;
             }
-        } catch (_) {
-        }
+        } catch (_) {}
         if (init && typeof init === 'object') {
             Object.keys(init).forEach(function (key) {
                 if (key !== 'body' && key !== 'signal') out[key] = init[key];
@@ -113,18 +146,13 @@
             if (typeof Request !== 'undefined' && input instanceof Request && String(input.method || '').toUpperCase() === 'POST') {
                 return input.clone().text().catch(function () { return ''; });
             }
-        } catch (_) {
-        }
+        } catch (_) {}
         return Promise.resolve('');
     }
 
     function makeBackgroundBody(entry, iterator) {
         var copy;
-        try {
-            copy = JSON.parse(JSON.stringify(entry));
-        } catch (_) {
-            return '';
-        }
+        try { copy = JSON.parse(JSON.stringify(entry)); } catch (_) { return ''; }
         if (!copy.variables || typeof copy.variables !== 'object') copy.variables = {};
         copy.variables.iterator = iterator;
         if (Object.prototype.hasOwnProperty.call(copy.variables, 'limit')) copy.variables.limit = BACKGROUND_LIMIT;
@@ -179,8 +207,7 @@
                 items: items,
                 complete: !iterator
             };
-        })().catch(function () {
-        }).finally(function () {
+        })().catch(function () {}).finally(function () {
             activePreloads.delete(key);
         });
 
@@ -196,41 +223,86 @@
             var rawPromise = bodyPromise(input, init);
 
             if (init && typeof init.body === 'string') {
-                var immediateEntry = parseBody(init.body);
-                if (isGalleryOperation(immediateEntry)) {
-                    var key = stableKey(immediateEntry);
-                    var iterator = requestedIterator(immediateEntry);
+                var originalParsed = parseJson(init.body);
+                var entry = firstGalleryEntry(originalParsed);
+                if (entry) {
+                    var key = stableKey(entry);
+                    var iterator = requestedIterator(entry);
                     if (key && iterator) {
                         var cached = pageCache.get(key + '|iterator=' + iterator);
                         if (cached) return Promise.resolve(responseFrom(cached));
                     }
+
+                    var tunedInit = Object.assign({}, init, { body: tuneVisibleBody(init.body) });
+                    init = tunedInit;
                 }
             }
 
-            var networkPromise = nativeFetch.apply(this, arguments);
+            var networkPromise = nativeFetch.call(this, input, init);
             networkPromise.then(function (response) {
                 if (!response || !response.ok) return;
                 Promise.all([
                     rawPromise,
                     response.clone().json().catch(function () { return null; })
                 ]).then(function (parts) {
-                    var entry = parseBody(parts[0]);
+                    var parsed = parseJson(parts[0]);
+                    var entry = firstGalleryEntry(parsed);
                     var payload = parts[1];
-                    if (!isGalleryOperation(entry) || !payload) return;
+                    if (!entry || !payload) return;
                     var page = extractPage(payload);
                     if (!page) return;
                     startBackgroundPreload(nativeFetch, url, input, init, entry, page);
-                }).catch(function () {
-                });
-            }).catch(function () {
-            });
+                }).catch(function () {});
+            }).catch(function () {});
 
             return networkPromise;
         };
     }
 
-    // Do not rewrite XHR limits anymore. A giant first XHR causes the same blank
-    // startup problem. Let Scrolller paint its native first page immediately.
+    if (typeof XMLHttpRequest !== 'undefined') {
+        var nativeOpen = XMLHttpRequest.prototype.open;
+        var nativeSend = XMLHttpRequest.prototype.send;
+
+        XMLHttpRequest.prototype.open = function (method, url) {
+            this.__scrolllerProMethod = String(method || '').toUpperCase();
+            this.__scrolllerProUrl = String(url || '');
+            return nativeOpen.apply(this, arguments);
+        };
+
+        XMLHttpRequest.prototype.send = function (body) {
+            var originalBody = typeof body === 'string' ? body : '';
+            try {
+                if (this.__scrolllerProMethod === 'POST' && isTargetUrl(this.__scrolllerProUrl) && originalBody) {
+                    var parsed = parseJson(originalBody);
+                    var entry = firstGalleryEntry(parsed);
+                    if (entry) body = tuneVisibleBody(originalBody);
+
+                    var xhr = this;
+                    this.addEventListener('load', function () {
+                        try {
+                            if (xhr.status < 200 || xhr.status >= 300) return;
+                            var originalEntry = firstGalleryEntry(parseJson(originalBody));
+                            if (!originalEntry) return;
+                            var payload = JSON.parse(xhr.responseText || '{}');
+                            var page = extractPage(payload);
+                            if (!page) return;
+                            startBackgroundPreload(
+                                nativeFetch,
+                                xhr.__scrolllerProUrl,
+                                xhr.__scrolllerProUrl,
+                                { headers: { 'Content-Type': 'application/json' }, credentials: 'include' },
+                                originalEntry,
+                                page
+                            );
+                        } catch (_) {}
+                    }, { once: true });
+                }
+            } catch (_) {}
+            return nativeSend.call(this, body);
+        };
+    }
+
     window.__scrolllerProPreloadLimit = BACKGROUND_LIMIT;
+    window.__scrolllerProVisibleLimit = VISIBLE_LIMIT;
     window.__scrolllerProPageCache = pageCache;
 })();
