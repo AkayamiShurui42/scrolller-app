@@ -7,14 +7,7 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
-/**
- * Strong network filter based on the older working Scrolller build.
- *
- * Rather than trying to enumerate every ad network, normal page/media resources
- * are allowlisted. Common ad/analytics hosts receive a harmless successful JS
- * response so Scrolller's anti-adblock checks do not interpret a hard failure as
- * a blocker signal.
- */
+/** Strong network filter based on the older working Scrolller build. */
 public final class AdBlocker {
     private static final String[] ALLOWED_HOST_SUFFIXES = new String[] {
             "scrolller.com",
@@ -24,9 +17,7 @@ public final class AdBlocker {
             "imgur.com",
             "gfycat.com",
             "googleapis.com",
-            "gstatic.com",
-            "google.com",
-            "googleusercontent.com"
+            "gstatic.com"
     };
 
     private static final String[] MOCK_SCRIPT_HOST_SUFFIXES = new String[] {
@@ -53,7 +44,9 @@ public final class AdBlocker {
             "popads",
             "trafficjunky",
             "onclickads",
-            "cant3am"
+            "cant3am",
+            "chaturbate",
+            "stripchat"
     };
 
     private AdBlocker() {}
@@ -67,7 +60,6 @@ public final class AdBlocker {
             String host = uri.getHost();
             String lowerUrl = url.toLowerCase(Locale.US);
 
-            // Local/blob/data resources are not network ads and must remain usable.
             if (scheme != null && !"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
                 return null;
             }
@@ -75,19 +67,14 @@ public final class AdBlocker {
 
             String lowerHost = host.toLowerCase(Locale.US);
 
-            // Older working behavior: satisfy common anti-adblock probes with a
-            // successful, empty JavaScript resource instead of a network error.
             if (matchesSuffix(lowerHost, MOCK_SCRIPT_HOST_SUFFIXES)) {
                 return mockScriptResponse();
             }
 
-            // Catch first-party or unusual-path ad resources before the allowlist.
             for (String part : BLOCKED_URL_PARTS) {
                 if (lowerUrl.contains(part)) return emptyResponse();
             }
 
-            // The older build's important difference: everything outside known
-            // Scrolller/content/login domains is blocked by default.
             if (!matchesSuffix(lowerHost, ALLOWED_HOST_SUFFIXES)) {
                 return emptyResponse();
             }
