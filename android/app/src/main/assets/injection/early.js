@@ -47,13 +47,19 @@
         return String(value || '').toLowerCase();
     }
 
+    /*
+     * This intentionally mirrors the older working response filter. These are
+     * feed objects that Scrolller returned through its own API and rendered as
+     * ordinary posts, so host/iframe blocking cannot remove them reliably.
+     */
     function isAdItem(item) {
         if (!item || typeof item !== 'object') return false;
 
         if (item.isAd === true || item.is_ad === true ||
             item.isSponsor === true || item.is_sponsor === true || item.sponsored === true ||
             item.isPromoted === true || item.is_promoted === true || item.promoted === true ||
-            item.promotion === true || item.isPromotion === true || item.is_promotion === true) {
+            item.promotion === true || item.isPromotion === true || item.is_promotion === true ||
+            item.isPaid === true || item.is_paid === true) {
             return true;
         }
 
@@ -64,17 +70,33 @@
             return true;
         }
 
-        var author = lower(item.reddit_posted_by || item.username || item.author || item.postedBy);
-        if (author === 'admin' || author === 'official' || author === 'sponsor' ||
-            author === 'scrolller' || author.indexOf('scrolllerofficial') >= 0) {
+        var redditAuthor = lower(item.reddit_posted_by);
+        if (redditAuthor && (redditAuthor.indexOf('scrolller') >= 0 || redditAuthor === 'admin' ||
+            redditAuthor === 'official' || redditAuthor === 'sponsor')) {
             return true;
         }
 
-        var text = lower((item.title || '') + ' ' + (item.description || '') + ' ' + (item.label || ''));
-        if (text.indexOf('sponsored') >= 0 || text.indexOf('promoted') >= 0 ||
-            text.indexOf('advertisement') >= 0 || text.indexOf('stripchat') >= 0 ||
-            text.indexOf('chaturbate') >= 0 || text.indexOf('onlyfans') >= 0 ||
-            text.indexOf('link in bio') >= 0 || text.indexOf('bio link') >= 0) {
+        var username = lower(item.username);
+        if (username && (username.indexOf('scrolller') >= 0 || username === 'admin' ||
+            username === 'official' || username === 'sponsor')) {
+            return true;
+        }
+
+        var genericAuthor = lower(item.author || item.postedBy);
+        if (genericAuthor && (genericAuthor === 'scrolller' || genericAuthor === 'admin' ||
+            genericAuthor === 'official' || genericAuthor === 'sponsor')) {
+            return true;
+        }
+
+        var title = lower(item.title);
+        var description = lower(item.description);
+        var promoPattern = /(^|\W)pro(\W|$)|cam|sponsor|promot|premium|unlock|wank|wish me luck|link in bio|onlyfans|snapchat|bio link/;
+        if ((title && promoPattern.test(title)) || (description && promoPattern.test(description))) {
+            return true;
+        }
+
+        var label = lower(item.label || item.type || item.kind);
+        if (label === 'sponsored' || label === 'promoted' || label === 'advertisement' || label === 'ad') {
             return true;
         }
 
@@ -83,9 +105,7 @@
 
     function sourceArea(source) {
         if (!source || typeof source !== 'object') return 0;
-        var w = Number(source.width || 0);
-        var h = Number(source.height || 0);
-        return w * h;
+        return Number(source.width || 0) * Number(source.height || 0);
     }
 
     function bestSource(sources) {
@@ -102,7 +122,7 @@
     function forceBestMedia(obj) {
         if (!obj || typeof obj !== 'object') return;
 
-        if (Array.isArray(obj.mediaSources) && obj.mediaSources.length > 1) {
+        if (Array.isArray(obj.mediaSources) && obj.mediaSources.length > 0) {
             var best = bestSource(obj.mediaSources);
             if (best) obj.mediaSources = [best];
         }
@@ -110,7 +130,7 @@
         if (Array.isArray(obj.albumContent)) {
             obj.albumContent.forEach(function (slide) {
                 if (!slide || typeof slide !== 'object') return;
-                if (Array.isArray(slide.mediaSources) && slide.mediaSources.length > 1) {
+                if (Array.isArray(slide.mediaSources) && slide.mediaSources.length > 0) {
                     var best = bestSource(slide.mediaSources);
                     if (best) slide.mediaSources = [best];
                 }
@@ -126,8 +146,7 @@
             for (var i = 0; i < obj.length; i++) {
                 var item = obj[i];
                 if (isAdItem(item)) continue;
-                var cleaned = cleanApiObject(item);
-                if (cleaned !== undefined) filtered.push(cleaned);
+                filtered.push(cleanApiObject(item));
             }
             return filtered;
         }
@@ -178,8 +197,7 @@
             if (!response || !response.ok) return response;
 
             try {
-                var payload = await response.clone().json();
-                payload = cleanPayload(payload);
+                var payload = cleanPayload(await response.clone().json());
                 return cleanedResponse(response, payload);
             } catch (_) {
                 return response;
@@ -190,23 +208,99 @@
     if (typeof XMLHttpRequest !== 'undefined') {
         var nativeOpen = XMLHttpRequest.prototype.open;
         var nativeSend = XMLHttpRequest.prototype.send;
+        var responseTextDescriptor = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText');
+        var responseDescriptor = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response');
+
+        function cleanedXhrText(xhr) {
+            if (!xhr.__scrolllerProTarget || !responseTextDescriptor || !responseTextDescriptor.get) return null;
+            try {
+                var raw = responseTextDescriptor.get.call(xhr);
+                if (!raw) return raw;
+                if (xhr.__scrolllerProCleanRaw === raw && typeof xhr.__scrolllerProCleanText === 'string') {
+                    return xhr.__scrolllerProCleanText;
+                }
+                var parsed = JSON.parse(raw);
+                var cleaned = JSON.stringify(cleanPayload(parsed));
+                xhr.__scrolllerProCleanRaw = raw;
+                xhr.__scrolllerProCleanText = cleaned;
+                try { xhr.__scrolllerProCleanJson = JSON.parse(cleaned); } catch (_) {}
+                return cleaned;
+            } catch (_) {
+                return null;
+            }
+        }
 
         XMLHttpRequest.prototype.open = function (method, url) {
             this.__scrolllerProMethod = String(method || '').toUpperCase();
             this.__scrolllerProUrl = String(url || '');
+            this.__scrolllerProTarget = isTargetUrl(this.__scrolllerProUrl);
+            this.__scrolllerProCleanRaw = null;
+            this.__scrolllerProCleanText = null;
+            this.__scrolllerProCleanJson = null;
             return nativeOpen.apply(this, arguments);
         };
 
         XMLHttpRequest.prototype.send = function (body) {
             try {
-                if (this.__scrolllerProMethod === 'POST' && isTargetUrl(this.__scrolllerProUrl) && typeof body === 'string') {
+                if (this.__scrolllerProMethod === 'POST' && this.__scrolllerProTarget && typeof body === 'string') {
                     body = tuneRequestBody(body);
                 }
             } catch (_) {}
             return nativeSend.call(this, body);
         };
+
+        /*
+         * XHR properties are native read-only getters. Overriding the prototype
+         * getters lets Apollo/Scrolller receive the cleaned API JSON without
+         * changing XHR timing, events, status codes, or cursor semantics.
+         */
+        if (responseTextDescriptor && responseTextDescriptor.get && responseTextDescriptor.configurable) {
+            try {
+                Object.defineProperty(XMLHttpRequest.prototype, 'responseText', {
+                    configurable: true,
+                    enumerable: responseTextDescriptor.enumerable,
+                    get: function () {
+                        if (this.__scrolllerProTarget && (!this.responseType || this.responseType === 'text')) {
+                            var cleaned = cleanedXhrText(this);
+                            if (cleaned !== null) return cleaned;
+                        }
+                        return responseTextDescriptor.get.call(this);
+                    }
+                });
+            } catch (_) {}
+        }
+
+        if (responseDescriptor && responseDescriptor.get && responseDescriptor.configurable) {
+            try {
+                Object.defineProperty(XMLHttpRequest.prototype, 'response', {
+                    configurable: true,
+                    enumerable: responseDescriptor.enumerable,
+                    get: function () {
+                        if (this.__scrolllerProTarget) {
+                            try {
+                                if (this.responseType === 'json') {
+                                    if (this.__scrolllerProCleanJson) return this.__scrolllerProCleanJson;
+                                    var originalJson = responseDescriptor.get.call(this);
+                                    if (originalJson && typeof originalJson === 'object') {
+                                        var cloned = JSON.parse(JSON.stringify(originalJson));
+                                        this.__scrolllerProCleanJson = cleanPayload(cloned);
+                                        return this.__scrolllerProCleanJson;
+                                    }
+                                }
+                                if (!this.responseType || this.responseType === 'text') {
+                                    var cleaned = cleanedXhrText(this);
+                                    if (cleaned !== null) return cleaned;
+                                }
+                            } catch (_) {}
+                        }
+                        return responseDescriptor.get.call(this);
+                    }
+                });
+            } catch (_) {}
+        }
     }
 
     window.__scrolllerProPreloadLimit = PRELOAD_LIMIT;
     window.__scrolllerProPreloadMode = 'legacy-one-shot';
+    window.__scrolllerProApiAdFilter = 'legacy-fetch-xhr';
 })();
