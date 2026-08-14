@@ -35,9 +35,18 @@ jobs:
           grep -q 'subreddits/mine/subscriber.json' android/app/src/main/assets/reddit-media.js
           grep -q 'data-scope="global"' android/app/src/main/assets/reddit-media.js
           grep -q 'data-scope="subscribed"' android/app/src/main/assets/reddit-media.js
+          grep -q "'/api/save'" android/app/src/main/assets/reddit-media.js
+          grep -q "'/api/unsave'" android/app/src/main/assets/reddit-media.js
+          grep -q '/saved.json' android/app/src/main/assets/reddit-media.js
+          grep -q '/hot.json' android/app/src/main/assets/reddit-media.js
+          grep -q 'openSubreddit' android/app/src/main/assets/reddit-media.js
+          grep -q 'crm-sub-list' android/app/src/main/assets/reddit-media.js
+          grep -q '__crimsonRedditLoginGuardV2' android/app/src/main/assets/reddit-media.js
+          grep -q 'location.replace(HOME_URL)' android/app/src/main/assets/reddit-media.js
           grep -q 'post.promoted' android/app/src/main/assets/reddit-media.js
           grep -q 'shreddit-ad-post' android/app/src/main/assets/reddit-media.js
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
+          grep -q 'versionName "1.1.0"' android/app/build.gradle
           grep -q 'https://www.reddit.com/' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
 
       - name: Prepare stable debug signing key
@@ -65,11 +74,13 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
+          grep -q "versionCode='2'" /tmp/badging.txt
+          grep -q "versionName='1.1.0'" /tmp/badging.txt
 
       - name: Upload Reddit Media APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-android16-debug-apk
+          name: reddit-media-v1.1.0-android16-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
