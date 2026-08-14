@@ -71,26 +71,104 @@
     function largeEnough(img) {
         try {
             var r = img.getBoundingClientRect();
-            return (r.width >= 180 && r.height >= 140) || (img.naturalWidth || 0) >= 500 || (img.naturalHeight || 0) >= 500;
-        } catch (_) { return false; }
+            return r.width >= 180 && r.height >= 140;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function snapshotImageState(img) {
+        var picture = img.closest && img.closest('picture');
+        var sources = [];
+        if (picture) {
+            picture.querySelectorAll('source').forEach(function (source) {
+                sources.push({
+                    node: source,
+                    srcset: source.getAttribute('srcset'),
+                    sizes: source.getAttribute('sizes')
+                });
+            });
+        }
+        return {
+            src: img.getAttribute('src'),
+            srcset: img.getAttribute('srcset'),
+            sizes: img.getAttribute('sizes'),
+            sources: sources
+        };
+    }
+
+    function restoreImageState(img, state) {
+        try {
+            if (state.src == null) img.removeAttribute('src');
+            else img.setAttribute('src', state.src);
+            if (state.srcset == null) img.removeAttribute('srcset');
+            else img.setAttribute('srcset', state.srcset);
+            if (state.sizes == null) img.removeAttribute('sizes');
+            else img.setAttribute('sizes', state.sizes);
+            state.sources.forEach(function (entry) {
+                if (!entry.node || !entry.node.isConnected) return;
+                if (entry.srcset == null) entry.node.removeAttribute('srcset');
+                else entry.node.setAttribute('srcset', entry.srcset);
+                if (entry.sizes == null) entry.node.removeAttribute('sizes');
+                else entry.node.setAttribute('sizes', entry.sizes);
+            });
+        } catch (_) {}
     }
 
     function upgradeImage(img) {
-        if (!img || !largeEnough(img)) return;
+        if (!img || !img.isConnected || !largeEnough(img)) return;
+        if (img.getAttribute('data-scrolller-pro-hq-loading') === '1') return;
+
         var best = bestImage(img);
         if (!best || !best.url) return;
+
         var current = cleanUrl(img.currentSrc || img.src);
         var currentScore = Math.max(scoreUrl(current), (img.naturalWidth || 0) * (img.naturalHeight || 0));
         if (best.url === current || best.score <= currentScore) return;
-        try {
-            img.setAttribute('data-scrolller-pro-hq', '1');
-            img.removeAttribute('srcset');
-            img.removeAttribute('sizes');
-            var picture = img.closest && img.closest('picture');
-            if (picture) picture.querySelectorAll('source').forEach(function (s) { s.removeAttribute('srcset'); s.removeAttribute('sizes'); });
-            img.src = best.url;
-            img.decoding = 'async';
-        } catch (_) {}
+        if (img.getAttribute('data-scrolller-pro-hq-failed-url') === best.url) return;
+        if (img.getAttribute('data-scrolller-pro-hq-applied-url') === best.url) return;
+
+        var state = snapshotImageState(img);
+        img.setAttribute('data-scrolller-pro-hq-loading', '1');
+
+        /* Preflight the candidate before touching the visible image. */
+        var probe = new Image();
+        probe.decoding = 'async';
+        probe.onload = function () {
+            img.removeAttribute('data-scrolller-pro-hq-loading');
+            if (!img.isConnected || !(probe.naturalWidth > 0 && probe.naturalHeight > 0)) return;
+
+            var rolledBack = false;
+            function rollback() {
+                if (rolledBack) return;
+                rolledBack = true;
+                img.setAttribute('data-scrolller-pro-hq-failed-url', best.url);
+                img.removeAttribute('data-scrolller-pro-hq-applied-url');
+                restoreImageState(img, state);
+            }
+
+            try {
+                img.addEventListener('error', rollback, { once: true });
+                img.removeAttribute('srcset');
+                img.removeAttribute('sizes');
+                state.sources.forEach(function (entry) {
+                    if (!entry.node || !entry.node.isConnected) return;
+                    entry.node.removeAttribute('srcset');
+                    entry.node.removeAttribute('sizes');
+                });
+                img.setAttribute('data-scrolller-pro-hq', '1');
+                img.setAttribute('data-scrolller-pro-hq-applied-url', best.url);
+                img.src = best.url;
+                img.decoding = 'async';
+            } catch (_) {
+                rollback();
+            }
+        };
+        probe.onerror = function () {
+            img.removeAttribute('data-scrolller-pro-hq-loading');
+            img.setAttribute('data-scrolller-pro-hq-failed-url', best.url);
+        };
+        probe.src = best.url;
     }
 
     function qualityOfSource(source) {
@@ -140,12 +218,21 @@
     function queue() {
         if (queued) return;
         queued = true;
-        requestAnimationFrame(function () { queued = false; upgradeAll(); });
+        requestAnimationFrame(function () {
+            queued = false;
+            upgradeAll();
+        });
     }
 
-    new MutationObserver(queue).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src','srcset','data-src','data-srcset'] });
+    new MutationObserver(queue).observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['src','srcset','data-src','data-srcset']
+    });
     addEventListener('load', queue, true);
     addEventListener('scroll', queue, { passive: true, capture: true });
+
     window.ScrolllerProUpgradeMedia = upgradeAll;
     upgradeAll();
 })();
