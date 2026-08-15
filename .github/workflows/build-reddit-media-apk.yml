@@ -32,6 +32,7 @@ jobs:
       - name: Validate fullscreen RedView-style Reddit client
         run: |
           node --check android/app/src/main/assets/reddit-media.js
+          node --check android/app/src/main/assets/reddit-bootstrap.js
           grep -q "rv21-host" android/app/src/main/assets/reddit-media.js
           grep -q "height:100dvh" android/app/src/main/assets/reddit-media.js
           grep -q ".media{position:absolute;inset:0" android/app/src/main/assets/reddit-media.js
@@ -53,10 +54,13 @@ jobs:
           grep -q "/search.json" android/app/src/main/assets/reddit-media.js
           grep -q "saved.json" android/app/src/main/assets/reddit-media.js
           grep -q "IntersectionObserver" android/app/src/main/assets/reddit-media.js
+          grep -q "rv21-startup-guard" android/app/src/main/assets/reddit-bootstrap.js
+          grep -q "AbortController" android/app/src/main/assets/reddit-bootstrap.js
+          grep -q "redditBootstrapScript" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "Intent.ACTION_VIEW" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 7' android/app/build.gradle
-          grep -q 'versionName "2.1.0"' android/app/build.gradle
+          grep -q 'versionCode 8' android/app/build.gradle
+          grep -q 'versionName "2.1.1"' android/app/build.gradle
 
       - name: Prepare stable debug signing key
         run: |
@@ -83,13 +87,13 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='7'" /tmp/badging.txt
-          grep -q "versionName='2.1.0'" /tmp/badging.txt
+          grep -q "versionCode='8'" /tmp/badging.txt
+          grep -q "versionName='2.1.1'" /tmp/badging.txt
 
       - name: Upload Reddit RedView-style APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v2.1.0-redview-fullscreen-android16-debug-apk
+          name: reddit-media-v2.1.1-redview-startup-fix-android16-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
