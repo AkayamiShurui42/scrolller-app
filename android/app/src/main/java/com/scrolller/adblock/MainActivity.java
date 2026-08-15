@@ -29,6 +29,7 @@ public class MainActivity extends AppCompatActivity {
 
     private FrameLayout root;
     private WebView webView;
+    private String redditBootstrapScript = "";
     private String redditMediaScript = "";
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -48,6 +49,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(root);
         installSystemBarInsets();
 
+        redditBootstrapScript = readAsset("reddit-bootstrap.js");
         redditMediaScript = readAsset("reddit-media.js");
 
         WebSettings settings = webView.getSettings();
@@ -88,8 +90,13 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                if (isAllowedRedditUrl(url) && !redditMediaScript.isEmpty()) {
+                if (!isAllowedRedditUrl(url) || redditMediaScript.isEmpty()) return;
+
+                if (redditBootstrapScript.isEmpty()) {
                     view.evaluateJavascript(redditMediaScript, null);
+                } else {
+                    view.evaluateJavascript(redditBootstrapScript, ignored ->
+                            view.evaluateJavascript(redditMediaScript, null));
                 }
             }
         });
