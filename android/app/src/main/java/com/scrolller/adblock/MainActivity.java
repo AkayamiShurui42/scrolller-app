@@ -1,15 +1,17 @@
 package com.scrolller.adblock;
 
 import android.annotation.SuppressLint;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -74,8 +76,13 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return handleNavigation(request.getUrl() != null ? request.getUrl().toString() : null);
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return !isAllowedRedditUrl(url);
+                return handleNavigation(url);
             }
 
             @Override
@@ -94,14 +101,33 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private boolean handleNavigation(String url) {
+        if (url == null) return true;
+        if (isAllowedRedditUrl(url)) return false;
+
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(intent);
+        } catch (Exception ignored) {
+        }
+        return true;
+    }
+
     private boolean isAllowedRedditUrl(String url) {
         if (url == null) return false;
-        return url.startsWith("https://www.reddit.com/")
-                || url.startsWith("https://reddit.com/")
-                || url.startsWith("https://old.reddit.com/")
-                || url.startsWith("https://www.reddit.com")
-                || url.startsWith("https://reddit.com")
-                || url.startsWith("https://old.reddit.com");
+        try {
+            Uri uri = Uri.parse(url);
+            if (!"https".equalsIgnoreCase(uri.getScheme())) return false;
+            String host = uri.getHost();
+            if (host == null) return false;
+            host = host.toLowerCase();
+            return host.equals("reddit.com")
+                    || host.equals("www.reddit.com")
+                    || host.equals("old.reddit.com")
+                    || host.endsWith(".reddit.com");
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private String readAsset(String fileName) {
