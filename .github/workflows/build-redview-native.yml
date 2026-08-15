@@ -69,6 +69,13 @@ jobs:
           chmod 600 android/app/scrolller-debug.keystore
           keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
 
+      - name: Normalize Kotlin controller setters
+        run: |
+          FILE="android/app/src/main/java/com/scrolller/adblock/MainActivity.kt"
+          sed -i 's/fun setAutoplay(/fun updateAutoplay(/g; s/controller\.setAutoplay(/controller.updateAutoplay(/g; s/fun setMuted(/fun updateMuted(/g; s/controller\.setMuted(/controller.updateMuted(/g' "$FILE"
+          grep -q 'fun updateAutoplay' "$FILE"
+          grep -q 'fun updateMuted' "$FILE"
+
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 8.11.1
         working-directory: android
