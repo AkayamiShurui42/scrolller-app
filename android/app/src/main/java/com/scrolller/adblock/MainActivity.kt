@@ -8,15 +8,15 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.LruCache
-import android.widget.MediaController
 import android.widget.VideoView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,21 +24,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -128,12 +129,12 @@ private class AppController(context: Context) {
         prefs.themeMode = value
     }
 
-    fun setAutoplay(value: Boolean) {
+    fun updateAutoplay(value: Boolean) {
         autoplay = value
         prefs.autoplay = value
     }
 
-    fun setMuted(value: Boolean) {
+    fun updateMuted(value: Boolean) {
         muted = value
         prefs.muted = value
     }
@@ -156,8 +157,9 @@ private class AppController(context: Context) {
         routes.add(Route.Gallery(url, title))
     }
 
-    fun openMedia(post: Post) {
-        routes.add(Route.Media(post))
+    fun openMedia(post: Post, posts: List<Post>) {
+        val initialIndex = posts.indexOfFirst { it.key == post.key }.coerceAtLeast(0)
+        routes.add(Route.Media(posts, initialIndex))
     }
 
     fun back(): Boolean {
@@ -188,7 +190,7 @@ private fun NativeScrolllerApp() {
         BackHandler(enabled = route != null) { controller.back() }
 
         if (route is Route.Media) {
-            MediaScreen(controller, route.post)
+            MediaPagerScreen(controller, route)
         } else {
             Scaffold(bottomBar = { BottomBar(controller) }) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding)) {
@@ -280,18 +282,7 @@ private fun GalleryScreen(
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = {
-                Column {
-                    Text(activeTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    gallery?.let {
-                        Text(
-                            "${controller.filtered(it.posts).size} posts",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            },
+            title = { Text(activeTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             navigationIcon = {
                 if (!quickFeeds) TextButton(onClick = { controller.back() }) { Text("←") }
             },
@@ -349,6 +340,7 @@ private fun QuickFeeds(activeUrl: String, onSelect: (String, String) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PostFeed(controller: AppController, posts: List<Post>) {
     if (posts.isEmpty()) {
@@ -359,84 +351,73 @@ private fun PostFeed(controller: AppController, posts: List<Post>) {
     if (controller.layoutType == LayoutType.GRID) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
-            contentPadding = PaddingValues(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(0.dp),
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             items(posts, key = { it.key }) { post ->
-                PostCard(controller, post, compact = true)
+                MediaPreview(
+                    controller = controller,
+                    post = post,
+                    posts = posts,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                    crop = true
+                )
             }
         }
     } else {
         LazyColumn(
-            contentPadding = PaddingValues(8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            contentPadding = PaddingValues(0.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             items(posts, key = { it.key }) { post ->
-                PostCard(controller, post, compact = false)
+                MediaPreview(
+                    controller = controller,
+                    post = post,
+                    posts = posts,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(previewAspectRatio(post)),
+                    crop = true
+                )
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PostCard(controller: AppController, post: Post, compact: Boolean) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { controller.openMedia(post) },
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        shape = RoundedCornerShape(14.dp)
-    ) {
-        Column {
-            MediaThumb(
-                post = post,
-                modifier = Modifier.fillMaxWidth().height(if (compact) 190.dp else 330.dp)
+private fun MediaPreview(
+    controller: AppController,
+    post: Post,
+    posts: List<Post>,
+    modifier: Modifier,
+    crop: Boolean
+) {
+    val images = post.thumbnailCandidates()
+    val videos = if (images.isEmpty()) post.videoCandidates() else emptyList()
+
+    Box(
+        modifier = modifier
+            .background(Color.Black)
+            .combinedClickable(
+                onClick = { controller.openMedia(post, posts) },
+                onLongClick = { controller.toggleFavorite(post) }
             )
-            Column(Modifier.padding(10.dp)) {
-                Text(
-                    post.title,
-                    style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
-                    maxLines = if (compact) 2 else 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    post.subredditTitle.ifBlank { post.subredditUrl },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (post.isNsfw) {
-                        Text(
-                            "NSFW",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    } else {
-                        Text(if (post.isVideo) "VIDEO" else "IMAGE", style = MaterialTheme.typography.labelSmall)
-                    }
-                    TextButton(onClick = { controller.toggleFavorite(post) }) {
-                        Text(if (controller.isFavorite(post)) "♥ Saved" else "♡ Save")
-                    }
-                }
-            }
-        }
+    ) {
+        RemoteBitmap(
+            imageCandidates = images,
+            videoCandidates = videos,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = if (crop) ContentScale.Crop else ContentScale.Fit
+        )
     }
 }
 
-@Composable
-private fun MediaThumb(post: Post, modifier: Modifier) {
-    RemoteBitmap(
-        imageCandidates = post.thumbnailCandidates(),
-        videoCandidates = if (post.thumbnailCandidates().isEmpty()) post.videoCandidates() else emptyList(),
-        modifier = modifier,
-        contentScale = ContentScale.Crop
-    )
+private fun previewAspectRatio(post: Post): Float {
+    val source = post.allSources()
+        .filter { it.width > 0 && it.height > 0 }
+        .maxByOrNull { it.area }
+        ?: return 1f
+    return (source.width.toFloat() / source.height.toFloat()).coerceIn(0.55f, 1.8f)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -502,7 +483,7 @@ private fun SearchScreen(controller: AppController) {
 @Composable
 private fun SearchResultCard(result: SearchResult, onOpen: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onOpen, onLongClick = {}),
         shape = RoundedCornerShape(14.dp)
     ) {
         Column(Modifier.padding(14.dp)) {
@@ -606,12 +587,12 @@ private fun SettingsScreen(controller: AppController) {
             }
             item {
                 SettingsSwitch("Autoplay videos", controller.autoplay) {
-                    controller.setAutoplay(it)
+                    controller.updateAutoplay(it)
                 }
             }
             item {
                 SettingsSwitch("Mute videos by default", controller.muted) {
-                    controller.setMuted(it)
+                    controller.updateMuted(it)
                 }
             }
             item {
@@ -632,7 +613,7 @@ private fun SettingsScreen(controller: AppController) {
 
 @Composable
 private fun SettingsChoice(title: String, value: String, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    Card(Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = {})) {
         Column(Modifier.padding(16.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(2.dp))
@@ -655,63 +636,71 @@ private fun SettingsSwitch(title: String, checked: Boolean, onChange: (Boolean) 
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaScreen(controller: AppController, post: Post) {
-    val video = post.videoCandidates().firstOrNull()
-    val images = post.fullCandidates().filterNot { it.contains(".mp4", true) || it.contains(".webm", true) }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(post.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                },
-                navigationIcon = {
-                    TextButton(onClick = { controller.back() }) { Text("←") }
-                },
-                actions = {
-                    TextButton(onClick = { controller.toggleFavorite(post) }) {
-                        Text(if (controller.isFavorite(post)) "♥" else "♡")
-                    }
-                }
-            )
+private fun MediaPagerScreen(controller: AppController, route: Route.Media) {
+    if (route.posts.isEmpty()) {
+        Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            Text("No media", color = Color.White)
         }
-    ) { padding ->
-        Box(
-            Modifier.fillMaxSize().padding(padding).background(Color.Black),
-            contentAlignment = Alignment.Center
-        ) {
-            if (video != null) {
-                NativeVideo(video, controller.autoplay, controller.muted)
-            } else if (images.isNotEmpty()) {
-                RemoteBitmap(
-                    imageCandidates = images,
-                    videoCandidates = emptyList(),
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
-                )
-            } else {
-                Text("No playable media", color = Color.White)
-            }
+        return
+    }
+
+    val start = route.initialIndex.coerceIn(0, route.posts.lastIndex)
+    val pagerState = rememberPagerState(initialPage = start, pageCount = { route.posts.size })
+
+    VerticalPager(
+        state = pagerState,
+        modifier = Modifier.fillMaxSize().background(Color.Black),
+        beyondViewportPageCount = 1,
+        pageSpacing = 0.dp,
+        key = { index -> route.posts[index].key }
+    ) { page ->
+        FullscreenMediaPage(
+            post = route.posts[page],
+            active = pagerState.currentPage == page,
+            autoplay = controller.autoplay,
+            muted = controller.muted
+        )
+    }
+}
+
+@Composable
+private fun FullscreenMediaPage(post: Post, active: Boolean, autoplay: Boolean, muted: Boolean) {
+    val video = post.videoCandidates().firstOrNull()
+    val images = post.fullCandidates().filterNot {
+        it.contains(".mp4", true) || it.contains(".webm", true)
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color.Black),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            video != null -> NativeVideo(video, autoplay, muted, active)
+            images.isNotEmpty() -> RemoteBitmap(
+                imageCandidates = images,
+                videoCandidates = emptyList(),
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+            else -> MediaPlaceholder(Modifier.fillMaxSize(), "No media")
         }
     }
 }
 
 @Composable
-private fun NativeVideo(url: String, autoplay: Boolean, muted: Boolean) {
+private fun NativeVideo(url: String, autoplay: Boolean, muted: Boolean, active: Boolean) {
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { context ->
             VideoView(context).apply {
-                val controls = MediaController(context)
-                controls.setAnchorView(this)
-                setMediaController(controls)
+                tag = url
                 setVideoURI(Uri.parse(url))
                 setOnPreparedListener { player ->
                     player.isLooping = true
-                    if (muted) player.setVolume(0f, 0f)
-                    if (autoplay) start()
+                    player.setVolume(if (muted) 0f else 1f, if (muted) 0f else 1f)
+                    if (autoplay && active) start()
                 }
             }
         },
@@ -719,6 +708,11 @@ private fun NativeVideo(url: String, autoplay: Boolean, muted: Boolean) {
             if (view.tag != url) {
                 view.tag = url
                 view.setVideoURI(Uri.parse(url))
+            }
+            if (active && autoplay) {
+                if (!view.isPlaying) runCatching { view.start() }
+            } else if (view.isPlaying) {
+                view.pause()
             }
         }
     )
@@ -756,7 +750,7 @@ private fun RemoteBitmap(
         )
         failed -> MediaPlaceholder(modifier, if (videoCandidates.isNotEmpty()) "VIDEO" else "No preview")
         else -> Box(
-            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+            modifier = modifier.background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
             CircularProgressIndicator()
@@ -811,10 +805,10 @@ private fun loadFirstVideoFrame(urls: List<String>): Bitmap? {
 @Composable
 private fun MediaPlaceholder(modifier: Modifier, label: String) {
     Box(
-        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+        modifier = modifier.background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, color = Color.White)
     }
 }
 
@@ -869,7 +863,10 @@ private fun <T> ChoiceDialog(
             Column {
                 values.forEach { value ->
                     Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { onSelect(value) },
+                        modifier = Modifier.fillMaxWidth().combinedClickable(
+                            onClick = { onSelect(value) },
+                            onLongClick = {}
+                        ),
                         color = if (value == selected) {
                             MaterialTheme.colorScheme.secondaryContainer
                         } else {
