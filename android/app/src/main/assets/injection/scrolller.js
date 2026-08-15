@@ -80,6 +80,12 @@
         collapse(feedCard(node) || node);
     }
 
+    function collapseFeedCardOnly(node) {
+        if (!node || isAuthContext(node)) return;
+        var card = feedCard(node);
+        if (card) collapse(card);
+    }
+
     function removeKnownAds() {
         var selectors = [
             'iframe',
@@ -92,15 +98,22 @@
             '[class*="Promoted"]',
             '[class*="promotion"]',
             '[class*="Promotion"]',
+            '[class*="advert"]',
+            '[class*="Advert"]',
             '[class*="adContainer"]',
             '[class*="AdContainer"]',
             '[class*="adsbygoogle"]',
             '[class*="exoclick"]',
             '[class*="juicyads"]',
+            '[data-ad]',
+            '[data-ad-id]',
             '[data-ad-slot]',
             '[data-ad-client]',
             '[data-ad-unit]',
             '[data-google-query-id]',
+            '[aria-label*="advertisement" i]',
+            '[aria-label*="sponsored" i]',
+            '[aria-label*="promoted" i]',
             'a[href*="chaturbate"]',
             'a[href*="stripchat"]',
             'a[href*="cant3am"]',
@@ -113,6 +126,24 @@
         });
     }
 
+    /*
+     * Restored from the July website-wrapper ad blocker. The old build also
+     * matched Scrolller's own premium/upgrade/paywall feed cards. Restrict the
+     * rule to a real feed card so header/account controls are never removed.
+     */
+    function removeLegacyScrolllerPromoCards() {
+        var selectors = [
+            '[class*="Premium"]', '[class*="premium"]',
+            '[class*="Upgrade"]', '[class*="upgrade"]',
+            '[class*="paywall"]', '[class*="Paywall"]',
+            '[class*="Billing"]', '[class*="billing"]',
+            '[class*="fallbackContainer"]',
+            '[class*="paidFallbackContainer"]',
+            '[class*="exclusiveBadge"]'
+        ];
+        document.querySelectorAll(selectors.join(',')).forEach(collapseFeedCardOnly);
+    }
+
     function removeLabeledPostAds() {
         var nodes = document.querySelectorAll('span,p,div,section,aside,article');
         for (var i = 0; i < nodes.length; i++) {
@@ -120,7 +151,7 @@
             if (node.getAttribute('data-scrolller-pro-ad-hidden') === '1' || isAuthContext(node)) continue;
 
             var value = text(node);
-            if (!value || value.length > 220) continue;
+            if (!value || value.length > 260) continue;
 
             var exact = value === 'sponsored' || value === 'promoted' || value === 'advertisement' ||
                         value === 'sponsored post' || value === 'promoted post' || value === 'ad';
@@ -133,6 +164,9 @@
                         value.indexOf('ad-free') >= 0 ||
                         value.indexOf('ad free') >= 0 ||
                         value.indexOf('get premium') >= 0 ||
+                        value.indexOf('go premium') >= 0 ||
+                        value.indexOf('upgrade to premium') >= 0 ||
+                        value.indexOf('premium removes ads') >= 0 ||
                         value.indexOf('support us') >= 0;
 
             if (!exact && !promo) continue;
@@ -168,6 +202,7 @@
     function apply() {
         document.documentElement.setAttribute('data-scrolller-pro', '1');
         removeKnownAds();
+        removeLegacyScrolllerPromoCards();
         removeLabeledPostAds();
         removeAdBlockWarnings();
         restoreTouchScrolling();
@@ -184,7 +219,13 @@
     }
 
     var observer = new MutationObserver(queueApply);
-    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['class','id','href','aria-label','data-ad','data-ad-id','data-ad-slot']
+    });
 
     addEventListener('popstate', function () { setTimeout(queueApply, 0); });
 
@@ -192,5 +233,5 @@
     window.ScrolllerProCleanAds = apply;
 
     apply();
-    setInterval(apply, 900);
+    setInterval(apply, 350);
 })();
