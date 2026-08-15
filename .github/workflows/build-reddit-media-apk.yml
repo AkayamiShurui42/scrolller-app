@@ -1,13 +1,13 @@
-name: Build Reddit Media APK
+name: Build Reddit RedView-style APK
 
 on:
   push:
-    branches: [ reddit-media-client ]
+    branches: [ reddit-redview-client ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Reddit Media Android APK
+    name: Build Reddit RedView-style Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -29,34 +29,30 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate active filters and sorting
+      - name: Validate RedView-style Reddit client
         run: |
           node --check android/app/src/main/assets/reddit-media.js
-          grep -q 'crm-shell-v14' android/app/src/main/assets/reddit-media.js
-          grep -q 'id="crm-media-select"' android/app/src/main/assets/reddit-media.js
-          grep -q 'id="crm-sort-select"' android/app/src/main/assets/reddit-media.js
-          grep -q 'id="crm-top-select"' android/app/src/main/assets/reddit-media.js
-          grep -q 'setMedia(mediaSelect.value)' android/app/src/main/assets/reddit-media.js
-          grep -q 'setSort(sortSelect.value)' android/app/src/main/assets/reddit-media.js
-          grep -q 'requestAnimationFrame(ensureVisiblePost)' android/app/src/main/assets/reddit-media.js
-          grep -q 'mutation.target instanceof Element' android/app/src/main/assets/reddit-media.js
-          grep -q 'attributeFilter:' android/app/src/main/assets/reddit-media.js
-          grep -q "params.set('sort', state.sort)" android/app/src/main/assets/reddit-media.js
-          grep -q 'state.sort === '\''best'\'' ? base' android/app/src/main/assets/reddit-media.js
-          grep -q 'data-media="image"' android/app/src/main/assets/reddit-media.js
-          grep -q 'data-media="video"' android/app/src/main/assets/reddit-media.js
-          grep -q 'data-sort="best"' android/app/src/main/assets/reddit-media.js
-          grep -q 'data-sort="hot"' android/app/src/main/assets/reddit-media.js
-          grep -q 'data-sort="new"' android/app/src/main/assets/reddit-media.js
-          grep -q 'data-sort="top"' android/app/src/main/assets/reddit-media.js
-          grep -q 'data-sort="rising"' android/app/src/main/assets/reddit-media.js
-          grep -q 'subreddits/mine/subscriber.json' android/app/src/main/assets/reddit-media.js
-          grep -q '/user/me/saved/' android/app/src/main/assets/reddit-media.js
-          grep -q 'shreddit-ad-post' android/app/src/main/assets/reddit-media.js
+          grep -q "rv2-host" android/app/src/main/assets/reddit-media.js
+          grep -q "Choose sorting option" android/app/src/main/assets/reddit-media.js
+          grep -q "data-route=\"home\"" android/app/src/main/assets/reddit-media.js
+          grep -q "data-route=\"search\"" android/app/src/main/assets/reddit-media.js
+          grep -q "data-route=\"favorites\"" android/app/src/main/assets/reddit-media.js
+          grep -q "data-route=\"account\"" android/app/src/main/assets/reddit-media.js
+          grep -q "All media" android/app/src/main/assets/reddit-media.js
+          grep -q "Images" android/app/src/main/assets/reddit-media.js
+          grep -q "Video" android/app/src/main/assets/reddit-media.js
+          grep -q "Subscribed only" android/app/src/main/assets/reddit-media.js
+          grep -q "subreddits/mine/subscriber.json" android/app/src/main/assets/reddit-media.js
+          grep -q "/api/me.json" android/app/src/main/assets/reddit-media.js
+          grep -q "/api/save" android/app/src/main/assets/reddit-media.js
+          grep -q "/api/unsave" android/app/src/main/assets/reddit-media.js
+          grep -q "/search.json" android/app/src/main/assets/reddit-media.js
+          grep -q "saved.json" android/app/src/main/assets/reddit-media.js
+          grep -q "IntersectionObserver" android/app/src/main/assets/reddit-media.js
+          grep -q "Intent.ACTION_VIEW" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 5' android/app/build.gradle
-          grep -q 'versionName "1.4.0"' android/app/build.gradle
-          grep -q 'https://www.reddit.com/' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'versionCode 6' android/app/build.gradle
+          grep -q 'versionName "2.0.0"' android/app/build.gradle
 
       - name: Prepare stable debug signing key
         run: |
@@ -83,13 +79,13 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='5'" /tmp/badging.txt
-          grep -q "versionName='1.4.0'" /tmp/badging.txt
+          grep -q "versionCode='6'" /tmp/badging.txt
+          grep -q "versionName='2.0.0'" /tmp/badging.txt
 
-      - name: Upload Reddit Media APK
+      - name: Upload Reddit RedView-style APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v1.4.0-active-filters-sort-android16-debug-apk
+          name: reddit-media-v2.0.0-redview-style-android16-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
