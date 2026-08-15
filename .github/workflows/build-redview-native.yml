@@ -1,0 +1,98 @@
+name: Build RedView Native APK
+
+on:
+  push:
+    branches: [ redview-native-remake ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Native Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Verify native client architecture
+        run: |
+          test -f android/app/src/main/java/com/scrolller/adblock/MainActivity.kt
+          test -f android/app/src/main/java/com/scrolller/adblock/network/ScrolllerApi.kt
+          test -f android/app/src/main/java/com/scrolller/adblock/model/Models.kt
+          test -f android/app/src/main/java/com/scrolller/adblock/storage/AppPreferences.kt
+          grep -q 'PRELOAD_LIMIT = 5000' android/app/src/main/java/com/scrolller/adblock/network/ScrolllerApi.kt
+          grep -q 'MainTab.HOME' android/app/src/main/java/com/scrolller/adblock/MainActivity.kt
+          grep -q 'MainTab.FAVORITES' android/app/src/main/java/com/scrolller/adblock/MainActivity.kt
+          grep -q 'MainTab.SEARCH' android/app/src/main/java/com/scrolller/adblock/MainActivity.kt
+          grep -q 'MainTab.SETTINGS' android/app/src/main/java/com/scrolller/adblock/MainActivity.kt
+          grep -q 'LayoutType.GRID' android/app/src/main/java/com/scrolller/adblock/MainActivity.kt
+          grep -q 'SortMode.RANDOM' android/app/src/main/java/com/scrolller/adblock/MainActivity.kt
+          ! grep -q 'WebView' android/app/src/main/java/com/scrolller/adblock/MainActivity.kt
+
+      - name: Smoke test Scrolller GraphQL
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request, urllib.error
+          endpoint='https://api.scrolller.com/admin'
+          query='query SubredditQuery($url:String!,$iterator:String,$sortBy:GallerySortBy,$filter:GalleryFilter,$limit:Int!){getSubreddit(data:{url:$url,iterator:$iterator,filter:$filter,limit:$limit,sortBy:$sortBy}){title children{items{id url title isNsfw mediaSources{url width height isOptimized}}}}}'
+          body=json.dumps({'query':query,'variables':{'url':'funny','iterator':None,'sortBy':'RANDOM','filter':None,'limit':40}}).encode()
+          req=urllib.request.Request(endpoint,data=body,headers={'Content-Type':'application/json','Accept':'application/json','User-Agent':'Mozilla/5.0 (Linux; Android 16)'})
+          try:
+              with urllib.request.urlopen(req,timeout=30) as r: raw=r.read().decode()
+          except urllib.error.HTTPError as e:
+              raw=e.read().decode()
+          data=json.loads(raw or '{}')
+          assert not data.get('errors'), data.get('errors')
+          items=((((data.get('data') or {}).get('getSubreddit') or {}).get('children') or {}).get('items') or [])
+          assert items, 'Scrolller gallery returned no items'
+          print('Native API smoke test passed:',len(items),'items')
+          PY
+
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Generate Gradle Wrapper
+        run: gradle wrapper --gradle-version 8.11.1
+        working-directory: android
+
+      - name: Grant Gradle execute permission
+        run: chmod +x gradlew
+        working-directory: android
+
+      - name: Compile Native Android 16 Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        working-directory: android
+
+      - name: Verify APK package and signatures
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/apksigner.txt
+          grep -qi '191e5f6808941797362d844076f428cee94af60ae2929eecc70fc1c8e4da38b9' /tmp/apksigner.txt
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | head -20
+
+      - name: Upload Native Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrolller-pro-redview-native-android16-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
