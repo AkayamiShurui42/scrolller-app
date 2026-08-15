@@ -75,5 +75,5 @@ data class SearchResult(
 
 sealed interface Route {
     data class Gallery(val url: String, val title: String) : Route
-    data class Media(val post: Post) : Route
+    data class Media(val posts: List<Post>, val initialIndex: Int) : Route
 }
