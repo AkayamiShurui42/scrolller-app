@@ -6,6 +6,9 @@ import com.scrolller.adblock.model.Post
 import com.scrolller.adblock.model.SearchResult
 import com.scrolller.adblock.model.SortMode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -13,6 +16,7 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.max
 
 object ScrolllerApi {
     private const val ENDPOINT = "https://api.scrolller.com/admin"
@@ -96,6 +100,120 @@ object ScrolllerApi {
                 )
             }
         }
+    }
+
+    suspend fun searchGalleriesFuzzy(query: String, includeNsfw: Boolean = true): List<SearchResult> = coroutineScope {
+        val clean = query.trim().replace(Regex("\\s+"), " ")
+        if (clean.isBlank()) return@coroutineScope emptyList()
+
+        val variants = fuzzyQueryVariants(clean)
+        val batches = variants.map { variant ->
+            async(Dispatchers.IO) {
+                runCatching { searchGalleries(variant, includeNsfw) }.getOrDefault(emptyList())
+            }
+        }.awaitAll()
+
+        val merged = LinkedHashMap<String, SearchResult>()
+        batches.flatten().forEach { result ->
+            val key = result.url.trim().lowercase().ifBlank { result.id }
+            val previous = merged[key]
+            if (previous == null || result.itemCount > previous.itemCount) merged[key] = result
+        }
+
+        merged.values
+            .map { it to fuzzyGalleryScore(it, clean) }
+            .sortedWith(
+                compareByDescending<Pair<SearchResult, Int>> { it.second }
+                    .thenByDescending { it.first.itemCount }
+                    .thenBy { it.first.title.lowercase() }
+            )
+            .map { it.first }
+    }
+
+    private fun fuzzyQueryVariants(query: String): List<String> {
+        val words = query.split(' ').filter { it.isNotBlank() }
+        val meaningful = words.filter { it.length >= 2 }
+        val out = LinkedHashSet<String>()
+
+        fun add(value: String) {
+            val clean = value.trim().replace(Regex("\\s+"), " ")
+            if (clean.isNotBlank()) out.add(clean)
+        }
+
+        add(query)
+        add(query.lowercase())
+        add(query.uppercase())
+        add(query.split(' ').joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } })
+
+        meaningful.forEach { word ->
+            add(word)
+            add(word.lowercase())
+            add(word.replaceFirstChar { c -> c.uppercase() })
+            if (word.length > 3) {
+                if (word.endsWith("s", ignoreCase = true)) add(word.dropLast(1)) else add("${word}s")
+            }
+        }
+
+        for (i in 0 until max(0, meaningful.size - 1)) {
+            add("${meaningful[i]} ${meaningful[i + 1]}")
+        }
+
+        return out.take(14)
+    }
+
+    private fun fuzzyGalleryScore(result: SearchResult, query: String): Int {
+        val q = normalizeForFuzzy(query)
+        val title = normalizeForFuzzy(result.title)
+        val url = normalizeForFuzzy(result.url.replace('-', ' ').replace('_', ' '))
+        val description = normalizeForFuzzy(result.description)
+        val haystack = "$title $url $description".trim()
+        if (q.isBlank()) return 0
+
+        var score = 0
+        if (title == q) score += 1000
+        if (url == q) score += 900
+        if (title.startsWith(q)) score += 600
+        if (url.startsWith(q)) score += 500
+        if (title.contains(q)) score += 450
+        if (url.contains(q)) score += 400
+        if (haystack.contains(q)) score += 250
+
+        val qTokens = fuzzyTokens(q)
+        val hTokens = fuzzyTokens(haystack)
+        qTokens.forEach { token ->
+            if (token in hTokens) {
+                score += 120
+            } else {
+                val best = hTokens.maxOfOrNull { fuzzyWordSimilarity(token, it) } ?: 0.0
+                score += (best * 85.0).toInt()
+            }
+        }
+        return score
+    }
+
+    private fun normalizeForFuzzy(value: String): String = value
+        .lowercase()
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .trim()
+        .replace(Regex("\\s+"), " ")
+
+    private fun fuzzyTokens(value: String): Set<String> = normalizeForFuzzy(value)
+        .split(' ')
+        .filter { it.length >= 2 }
+        .toSet()
+
+    private fun fuzzyWordSimilarity(a: String, b: String): Double {
+        if (a == b) return 1.0
+        if (a.isBlank() || b.isBlank()) return 0.0
+        if (a.startsWith(b) || b.startsWith(a)) return 0.9
+        if (a.contains(b) || b.contains(a)) return 0.82
+        if (a.length == 1 || b.length == 1) return 0.0
+
+        val aPairs = a.windowed(2).toSet()
+        val bPairs = b.windowed(2).toSet()
+        if (aPairs.isEmpty() || bPairs.isEmpty()) return 0.0
+        val overlap = aPairs.intersect(bPairs).size.toDouble()
+        return (2.0 * overlap) / (aPairs.size + bPairs.size).toDouble()
     }
 
     private fun normalizeGalleryUrl(value: String): String = value
