@@ -53,7 +53,6 @@ object ScrolllerApi {
             .put("sortBy", sort.name)
             .put("filter", JSONObject.NULL)
             .put("limit", limit)
-
         val data = postGraphQl(galleryQuery, vars)
         val root = data.optJSONObject("getSubreddit") ?: JSONObject()
         val children = root.optJSONObject("children") ?: JSONObject()
@@ -61,11 +60,9 @@ object ScrolllerApi {
         val posts = ArrayList<Post>(raw.length())
         val seen = HashSet<String>()
         for (i in 0 until raw.length()) {
-            val item = raw.optJSONObject(i) ?: continue
-            val post = parsePost(item) ?: continue
+            val post = parsePost(raw.optJSONObject(i) ?: continue) ?: continue
             if (seen.add(post.key)) posts.add(post)
         }
-
         GalleryInfo(
             title = root.optString("title").ifBlank { normalizeGalleryUrl(url) },
             url = root.optString("url").ifBlank { normalizeGalleryUrl(url) },
@@ -74,7 +71,10 @@ object ScrolllerApi {
         )
     }
 
-    suspend fun searchGalleries(query: String, includeNsfw: Boolean = true): List<SearchResult> = withContext(Dispatchers.IO) {
+    suspend fun searchGalleries(query: String, includeNsfw: Boolean = true): List<SearchResult> =
+        searchGalleriesFuzzy(query, includeNsfw)
+
+    private suspend fun searchGalleriesExact(query: String, includeNsfw: Boolean): List<SearchResult> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
         val vars = JSONObject()
             .put("query", query.trim())
@@ -105,21 +105,17 @@ object ScrolllerApi {
     suspend fun searchGalleriesFuzzy(query: String, includeNsfw: Boolean = true): List<SearchResult> = coroutineScope {
         val clean = query.trim().replace(Regex("\\s+"), " ")
         if (clean.isBlank()) return@coroutineScope emptyList()
-
-        val variants = fuzzyQueryVariants(clean)
-        val batches = variants.map { variant ->
+        val batches = fuzzyQueryVariants(clean).map { variant ->
             async(Dispatchers.IO) {
-                runCatching { searchGalleries(variant, includeNsfw) }.getOrDefault(emptyList())
+                runCatching { searchGalleriesExact(variant, includeNsfw) }.getOrDefault(emptyList())
             }
         }.awaitAll()
-
         val merged = LinkedHashMap<String, SearchResult>()
         batches.flatten().forEach { result ->
             val key = result.url.trim().lowercase().ifBlank { result.id }
             val previous = merged[key]
             if (previous == null || result.itemCount > previous.itemCount) merged[key] = result
         }
-
         merged.values
             .map { it to fuzzyGalleryScore(it, clean) }
             .sortedWith(
@@ -134,30 +130,23 @@ object ScrolllerApi {
         val words = query.split(' ').filter { it.isNotBlank() }
         val meaningful = words.filter { it.length >= 2 }
         val out = LinkedHashSet<String>()
-
         fun add(value: String) {
             val clean = value.trim().replace(Regex("\\s+"), " ")
             if (clean.isNotBlank()) out.add(clean)
         }
-
         add(query)
         add(query.lowercase())
         add(query.uppercase())
-        add(query.split(' ').joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } })
-
+        add(words.joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } })
         meaningful.forEach { word ->
             add(word)
             add(word.lowercase())
             add(word.replaceFirstChar { c -> c.uppercase() })
             if (word.length > 3) {
-                if (word.endsWith("s", ignoreCase = true)) add(word.dropLast(1)) else add("${word}s")
+                if (word.endsWith("s", true)) add(word.dropLast(1)) else add("${word}s")
             }
         }
-
-        for (i in 0 until max(0, meaningful.size - 1)) {
-            add("${meaningful[i]} ${meaningful[i + 1]}")
-        }
-
+        for (i in 0 until max(0, meaningful.size - 1)) add("${meaningful[i]} ${meaningful[i + 1]}")
         return out.take(14)
     }
 
@@ -168,7 +157,6 @@ object ScrolllerApi {
         val description = normalizeForFuzzy(result.description)
         val haystack = "$title $url $description".trim()
         if (q.isBlank()) return 0
-
         var score = 0
         if (title == q) score += 1000
         if (url == q) score += 900
@@ -177,16 +165,11 @@ object ScrolllerApi {
         if (title.contains(q)) score += 450
         if (url.contains(q)) score += 400
         if (haystack.contains(q)) score += 250
-
         val qTokens = fuzzyTokens(q)
         val hTokens = fuzzyTokens(haystack)
         qTokens.forEach { token ->
-            if (token in hTokens) {
-                score += 120
-            } else {
-                val best = hTokens.maxOfOrNull { fuzzyWordSimilarity(token, it) } ?: 0.0
-                score += (best * 85.0).toInt()
-            }
+            if (token in hTokens) score += 120
+            else score += ((hTokens.maxOfOrNull { fuzzyWordSimilarity(token, it) } ?: 0.0) * 85.0).toInt()
         }
         return score
     }
@@ -208,12 +191,10 @@ object ScrolllerApi {
         if (a.startsWith(b) || b.startsWith(a)) return 0.9
         if (a.contains(b) || b.contains(a)) return 0.82
         if (a.length == 1 || b.length == 1) return 0.0
-
-        val aPairs = a.windowed(2).toSet()
-        val bPairs = b.windowed(2).toSet()
-        if (aPairs.isEmpty() || bPairs.isEmpty()) return 0.0
-        val overlap = aPairs.intersect(bPairs).size.toDouble()
-        return (2.0 * overlap) / (aPairs.size + bPairs.size).toDouble()
+        val aa = a.windowed(2).toSet()
+        val bb = b.windowed(2).toSet()
+        if (aa.isEmpty() || bb.isEmpty()) return 0.0
+        return (2.0 * aa.intersect(bb).size.toDouble()) / (aa.size + bb.size).toDouble()
     }
 
     private fun normalizeGalleryUrl(value: String): String = value
@@ -229,13 +210,11 @@ object ScrolllerApi {
         val albumArray = item.optJSONArray("albumContent")
         if (albumArray != null) {
             for (i in 0 until albumArray.length()) {
-                val slide = albumArray.optJSONObject(i) ?: continue
-                val sources = parseSources(slide.optJSONArray("mediaSources"))
+                val sources = parseSources(albumArray.optJSONObject(i)?.optJSONArray("mediaSources"))
                 if (sources.isNotEmpty()) albums.add(sources)
             }
         }
         if (direct.isEmpty() && albums.isEmpty()) return null
-
         return Post(
             id = item.optString("id"),
             postUrl = item.optString("url"),
@@ -280,20 +259,15 @@ object ScrolllerApi {
             setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", USER_AGENT)
         }
-
         try {
             connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-            val text = BufferedReader(InputStreamReader(stream ?: throw IllegalStateException("Scrolller returned ${connection.responseCode}"))).use { reader ->
-                reader.readText()
-            }
+            val text = BufferedReader(InputStreamReader(stream ?: throw IllegalStateException("Scrolller returned ${connection.responseCode}"))).use { it.readText() }
             val json = JSONObject(text.ifBlank { "{}" })
             val errors = json.optJSONArray("errors")
             if (errors != null && errors.length() > 0) {
                 val messages = buildList {
-                    for (i in 0 until errors.length()) {
-                        add(errors.optJSONObject(i)?.optString("message") ?: "Scrolller API error")
-                    }
+                    for (i in 0 until errors.length()) add(errors.optJSONObject(i)?.optString("message") ?: "Scrolller API error")
                 }
                 throw IllegalStateException(messages.joinToString(" · "))
             }
