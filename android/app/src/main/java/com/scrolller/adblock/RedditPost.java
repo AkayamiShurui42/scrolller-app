@@ -94,14 +94,14 @@ public final class RedditPost {
         if (d == null) return null;
 
         if (d.optBoolean("is_gallery")) {
-            JSONArray items = d.optJSONObject("gallery_data") != null
-                    ? d.optJSONObject("gallery_data").optJSONArray("items") : null;
+            JSONObject galleryData = d.optJSONObject("gallery_data");
+            JSONArray items = galleryData != null ? galleryData.optJSONArray("items") : null;
             JSONObject metadata = d.optJSONObject("media_metadata");
             ArrayList<String> urls = new ArrayList<>();
             if (items != null && metadata != null) {
                 for (int i = 0; i < items.length(); i++) {
-                    String mediaId = items.optJSONObject(i) != null
-                            ? items.optJSONObject(i).optString("media_id", "") : "";
+                    JSONObject item = items.optJSONObject(i);
+                    String mediaId = item != null ? item.optString("media_id", "") : "";
                     JSONObject m = metadata.optJSONObject(mediaId);
                     JSONObject s = m != null ? m.optJSONObject("s") : null;
                     if (s == null) continue;
@@ -164,5 +164,17 @@ public final class RedditPost {
         return Html.fromHtml(text, Html.FROM_HTML_MODE_LEGACY).toString();
     }
 
-    private record ParsedMedia(MediaKind kind, List<String> images, String video, String poster) {}
+    private static final class ParsedMedia {
+        final MediaKind kind;
+        final List<String> images;
+        final String video;
+        final String poster;
+
+        ParsedMedia(MediaKind kind, List<String> images, String video, String poster) {
+            this.kind = kind;
+            this.images = images;
+            this.video = video;
+            this.poster = poster;
+        }
+    }
 }
