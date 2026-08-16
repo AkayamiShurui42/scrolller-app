@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build native Reddit fullscreen Android APK
+    name: Build native Reddit RedView Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -29,12 +29,26 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate native architecture
+      - name: Validate RedView interaction architecture
         run: |
           grep -q "class RedditSessionEngine" android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           grep -q "NativeRedditBridge" android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           grep -q "class PostPagerAdapter" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          grep -q "class GridPostAdapter" android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
           grep -q "ViewPager2.ORIENTATION_VERTICAL" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "GridLayoutManager(this, 2)" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "setOnApplyWindowInsetsListener" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "setDecorFitsSystemWindows(false)" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "showFeedSheet" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "showSortSheet" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "showMediaSheet" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "showLayoutSheet" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'topPill("Feed")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'topPill("Best")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'topPill("All media")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'topPill("Fullscreen")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "openFullscreenAt" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "setSystemInsets" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
           grep -q "new ExoPlayer.Builder" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
           grep -q "Glide.with" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
           grep -q "Choose sorting option" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
@@ -46,8 +60,8 @@ jobs:
           grep -q "/search.json" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "saved.json" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 9' android/app/build.gradle
-          grep -q 'versionName "3.0.0"' android/app/build.gradle
+          grep -q 'versionCode 10' android/app/build.gradle
+          grep -q 'versionName "3.1.0"' android/app/build.gradle
 
       - name: Prepare stable debug signing key
         run: |
@@ -74,13 +88,13 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='9'" /tmp/badging.txt
-          grep -q "versionName='3.0.0'" /tmp/badging.txt
+          grep -q "versionCode='10'" /tmp/badging.txt
+          grep -q "versionName='3.1.0'" /tmp/badging.txt
 
       - name: Upload native Reddit APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.0.0-native-redview-android16-debug-apk
+          name: reddit-media-v3.1.0-native-redview-controls-insets-android16-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
