@@ -14,7 +14,7 @@
         android:usesCleartextTraffic="false">
 
         <activity
-            android:name=".RedViewActivity"
+            android:name=".RedViewV2Activity"
             android:exported="true"
             android:theme="@android:style/Theme.Material.NoActionBar">
             <intent-filter>
