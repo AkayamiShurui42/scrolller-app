@@ -4,7 +4,6 @@ import android.content.Context;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
-import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -43,6 +42,8 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     private final Map<Integer, ExoPlayer> players = new HashMap<>();
     private int activePosition = 0;
     private boolean muted = true;
+    private int topInsetPx = 0;
+    private int bottomInsetPx = 0;
 
     public PostPagerAdapter(Context context, Listener listener) {
         this.context = context;
@@ -85,6 +86,13 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
     public boolean isMuted() {
         return muted;
+    }
+
+    public void setSystemInsets(int topPx, int bottomPx) {
+        if (topInsetPx == topPx && bottomInsetPx == bottomPx) return;
+        topInsetPx = Math.max(0, topPx);
+        bottomInsetPx = Math.max(0, bottomPx);
+        notifyDataSetChanged();
     }
 
     public void setActivePosition(int position) {
@@ -176,7 +184,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
                 Button mute = pillButton(muted ? "Muted" : "Sound");
                 FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(74), dp(36), Gravity.TOP | Gravity.END);
-                mp.topMargin = dp(58);
+                mp.topMargin = topInsetPx + dp(102);
                 mp.rightMargin = dp(10);
                 root.addView(mute, mp);
                 mute.setOnClickListener(v -> {
@@ -197,7 +205,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
                 TextView badge = smallBadge(post.imageUrls.size() + " images");
                 FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT, dp(32), Gravity.TOP | Gravity.END);
-                bp.topMargin = dp(58);
+                bp.topMargin = topInsetPx + dp(102);
                 bp.rightMargin = dp(10);
                 root.addView(badge, bp);
                 return;
@@ -213,8 +221,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             if (post.mediaKind == RedditPost.MediaKind.EXTERNAL) {
                 Button open = pillButton("Open media");
                 open.setTextColor(Color.BLACK);
-                GradientDrawable white = rounded(Color.WHITE, 999);
-                open.setBackground(white);
+                open.setBackground(rounded(Color.WHITE, 999));
                 FrameLayout.LayoutParams op = new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT, dp(44), Gravity.CENTER);
                 root.addView(open, op);
@@ -226,11 +233,10 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             LinearLayout meta = new LinearLayout(context);
             meta.setOrientation(LinearLayout.HORIZONTAL);
             meta.setGravity(Gravity.CENTER_VERTICAL);
-            meta.setPadding(dp(10), dp(54), dp(10), dp(8));
-            GradientDrawable gradient = new GradientDrawable(
+            meta.setPadding(dp(10), topInsetPx + dp(98), dp(10), dp(8));
+            meta.setBackground(new GradientDrawable(
                     GradientDrawable.Orientation.TOP_BOTTOM,
-                    new int[]{0xD9000000, 0x8A000000, 0x00000000});
-            meta.setBackground(gradient);
+                    new int[]{0xD9000000, 0x78000000, 0x00000000}));
 
             Button sub = pillButton("r/" + post.subreddit);
             sub.setTextSize(12);
@@ -254,7 +260,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             }
 
             FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(104), Gravity.TOP);
+                    ViewGroup.LayoutParams.MATCH_PARENT, topInsetPx + dp(150), Gravity.TOP);
             root.addView(meta, p);
         }
 
@@ -262,11 +268,10 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             LinearLayout bottom = new LinearLayout(context);
             bottom.setOrientation(LinearLayout.VERTICAL);
             bottom.setGravity(Gravity.BOTTOM);
-            bottom.setPadding(dp(11), dp(70), dp(11), dp(70));
-            GradientDrawable gradient = new GradientDrawable(
+            bottom.setPadding(dp(11), dp(70), dp(11), bottomInsetPx + dp(70));
+            bottom.setBackground(new GradientDrawable(
                     GradientDrawable.Orientation.TOP_BOTTOM,
-                    new int[]{0x00000000, 0x66000000, 0xD9000000, 0xFF000000});
-            bottom.setBackground(gradient);
+                    new int[]{0x00000000, 0x66000000, 0xD9000000, 0xFF000000}));
 
             TextView title = new TextView(context);
             title.setText(post.title);
