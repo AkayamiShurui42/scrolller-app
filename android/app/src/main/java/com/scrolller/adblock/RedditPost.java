@@ -120,7 +120,11 @@ public final class RedditPost {
         JSONObject redditVideoPreview = preview != null ? preview.optJSONObject("reddit_video_preview") : null;
         if (redditVideo == null) redditVideo = redditVideoPreview;
         if (redditVideo != null) {
-            String video = decode(redditVideo.optString("fallback_url", ""));
+            String video = decode(firstNonEmpty(
+                    redditVideo.optString("dash_url", ""),
+                    redditVideo.optString("hls_url", ""),
+                    redditVideo.optString("fallback_url", "")
+            ));
             if (!video.isEmpty()) {
                 return new ParsedMedia(MediaKind.VIDEO, new ArrayList<>(), video, previewImage(d));
             }
