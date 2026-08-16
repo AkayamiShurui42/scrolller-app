@@ -1,13 +1,13 @@
-name: Build Reddit RedView-style APK
+name: Build Native Reddit RedView APK
 
 on:
   push:
-    branches: [ reddit-redview-client ]
+    branches: [ reddit-native-redview ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Reddit RedView-style Android APK
+    name: Build native Reddit fullscreen Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -29,38 +29,25 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate fullscreen RedView-style Reddit client
+      - name: Validate native architecture
         run: |
-          node --check android/app/src/main/assets/reddit-media.js
-          node --check android/app/src/main/assets/reddit-bootstrap.js
-          grep -q "rv21-host" android/app/src/main/assets/reddit-media.js
-          grep -q "height:100dvh" android/app/src/main/assets/reddit-media.js
-          grep -q ".media{position:absolute;inset:0" android/app/src/main/assets/reddit-media.js
-          grep -q ".top{position:absolute" android/app/src/main/assets/reddit-media.js
-          grep -q ".bottom{position:absolute" android/app/src/main/assets/reddit-media.js
-          grep -q "Choose sorting option" android/app/src/main/assets/reddit-media.js
-          grep -q "data-route=\"home\"" android/app/src/main/assets/reddit-media.js
-          grep -q "data-route=\"search\"" android/app/src/main/assets/reddit-media.js
-          grep -q "data-route=\"favorites\"" android/app/src/main/assets/reddit-media.js
-          grep -q "data-route=\"account\"" android/app/src/main/assets/reddit-media.js
-          grep -q "All media" android/app/src/main/assets/reddit-media.js
-          grep -q "Images" android/app/src/main/assets/reddit-media.js
-          grep -q "Video" android/app/src/main/assets/reddit-media.js
-          grep -q "Subscribed only" android/app/src/main/assets/reddit-media.js
-          grep -q "subreddits/mine/subscriber.json" android/app/src/main/assets/reddit-media.js
-          grep -q "/api/me.json" android/app/src/main/assets/reddit-media.js
-          grep -q "/api/save" android/app/src/main/assets/reddit-media.js
-          grep -q "/api/unsave" android/app/src/main/assets/reddit-media.js
-          grep -q "/search.json" android/app/src/main/assets/reddit-media.js
-          grep -q "saved.json" android/app/src/main/assets/reddit-media.js
-          grep -q "IntersectionObserver" android/app/src/main/assets/reddit-media.js
-          grep -q "rv21-startup-guard" android/app/src/main/assets/reddit-bootstrap.js
-          grep -q "AbortController" android/app/src/main/assets/reddit-bootstrap.js
-          grep -q "redditBootstrapScript" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q "Intent.ACTION_VIEW" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "class RedditSessionEngine" android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
+          grep -q "NativeRedditBridge" android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
+          grep -q "class PostPagerAdapter" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          grep -q "ViewPager2.ORIENTATION_VERTICAL" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "new ExoPlayer.Builder" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          grep -q "Glide.with" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          grep -q "Choose sorting option" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "All media" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "Subscribed" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "/api/me.json" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "/api/save" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "/api/unsave" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "/search.json" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "saved.json" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 8' android/app/build.gradle
-          grep -q 'versionName "2.1.1"' android/app/build.gradle
+          grep -q 'versionCode 9' android/app/build.gradle
+          grep -q 'versionName "3.0.0"' android/app/build.gradle
 
       - name: Prepare stable debug signing key
         run: |
@@ -77,7 +64,7 @@ jobs:
         working-directory: android
 
       - name: Compile debug APK
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
         working-directory: android
 
       - name: Verify APK
@@ -87,13 +74,13 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='8'" /tmp/badging.txt
-          grep -q "versionName='2.1.1'" /tmp/badging.txt
+          grep -q "versionCode='9'" /tmp/badging.txt
+          grep -q "versionName='3.0.0'" /tmp/badging.txt
 
-      - name: Upload Reddit RedView-style APK
+      - name: Upload native Reddit APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v2.1.1-redview-startup-fix-android16-debug-apk
+          name: reddit-media-v3.0.0-native-redview-android16-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
