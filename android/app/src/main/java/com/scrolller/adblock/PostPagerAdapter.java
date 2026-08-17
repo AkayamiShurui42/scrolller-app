@@ -29,6 +29,7 @@ import java.util.Map;
 public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapter.PostHolder> {
     public interface Listener {
         void onOpenSubreddit(String subreddit);
+        void onOpenUser(String username);
         void onSave(RedditPost post);
         void onComments(RedditPost post);
         void onShare(RedditPost post);
@@ -66,9 +67,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         notifyItemRangeInserted(start, items.size());
     }
 
-    public List<RedditPost> getPosts() {
-        return posts;
-    }
+    public List<RedditPost> getPosts() { return posts; }
 
     public RedditPost getPost(int position) {
         return position >= 0 && position < posts.size() ? posts.get(position) : null;
@@ -84,9 +83,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         for (ExoPlayer player : players.values()) player.setVolume(muted ? 0f : 1f);
     }
 
-    public boolean isMuted() {
-        return muted;
-    }
+    public boolean isMuted() { return muted; }
 
     public void setSystemInsets(int topPx, int bottomPx) {
         if (topInsetPx == topPx && bottomInsetPx == bottomPx) return;
@@ -124,8 +121,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         root.setBackgroundColor(Color.BLACK);
         root.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-        ));
+                ViewGroup.LayoutParams.MATCH_PARENT));
         return new PostHolder(root);
     }
 
@@ -140,10 +136,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         super.onViewRecycled(holder);
     }
 
-    @Override
-    public int getItemCount() {
-        return posts.size();
-    }
+    @Override public int getItemCount() { return posts.size(); }
 
     final class PostHolder extends RecyclerView.ViewHolder {
         final FrameLayout root;
@@ -160,7 +153,6 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             boundPosition = position;
             root.removeAllViews();
             root.setBackgroundColor(Color.BLACK);
-
             addMedia(post, position);
             addTopMeta(post);
             addBottomInfo(post);
@@ -244,13 +236,14 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
                     ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
             sub.setOnClickListener(v -> listener.onOpenSubreddit(post.subreddit));
 
-            TextView author = new TextView(context);
-            author.setText("  u/" + post.author);
-            author.setTextColor(0xFFD0D0D0);
+            Button author = pillButton("u/" + post.author);
             author.setTextSize(11);
-            author.setSingleLine(true);
+            author.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            author.setBackgroundColor(Color.TRANSPARENT);
             LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(0, dp(36), 1f);
+            ap.leftMargin = dp(3);
             meta.addView(author, ap);
+            author.setOnClickListener(v -> listener.onOpenUser(post.author));
 
             if (post.nsfw) {
                 TextView nsfw = smallBadge("NSFW");
@@ -334,7 +327,6 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
     private final class GalleryAdapter extends RecyclerView.Adapter<GalleryHolder> {
         private final List<String> urls;
-
         GalleryAdapter(List<String> urls) { this.urls = urls; }
 
         @NonNull
