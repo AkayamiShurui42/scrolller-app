@@ -137,6 +137,12 @@ public final class RedditPost {
         String direct = decode(firstNonEmpty(d.optString("url_overridden_by_dest", ""), d.optString("url", "")));
         String hint = d.optString("post_hint", "");
         String domain = d.optString("domain", "");
+
+        // Keep direct video files inline. Preview-only rich-video links are deliberately excluded.
+        if (direct.matches("(?i).*\\.(mp4|webm|m3u8)(\\?.*)?$")) {
+            return new ParsedMedia(MediaKind.VIDEO, new ArrayList<>(), direct, previewImage(d));
+        }
+
         if ("image".equals(hint) || direct.matches("(?i).*\\.(jpe?g|png|webp|gif)(\\?.*)?$") || "i.redd.it".equalsIgnoreCase(domain)) {
             String image = !direct.isEmpty() ? direct : previewImage(d);
             if (!image.isEmpty()) {
@@ -146,11 +152,8 @@ public final class RedditPost {
             }
         }
 
-        String poster = previewImage(d);
-        if (!poster.isEmpty() && ("rich:video".equals(hint) || domain.matches("(?i).*(redgifs|imgur|gfycat|streamable).*"))) {
-            return new ParsedMedia(MediaKind.EXTERNAL, new ArrayList<>(), "", poster);
-        }
-
+        // RedGIFs/Imgur/Streamable/etc. without a direct playable URL used to become
+        // EXTERNAL cards with an "Open media" button. Those are now omitted entirely.
         return null;
     }
 
