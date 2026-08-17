@@ -9,11 +9,11 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.inputmethod.EditorInfo;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -24,8 +24,6 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.RadioButton;
-import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -36,14 +34,15 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
 
 import com.google.android.material.bottomsheet.BottomSheetDialog;
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -52,13 +51,56 @@ import java.util.Set;
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
 
-    private enum Screen { HOME, SEARCH, FAVORITES, ACCOUNT }
+    private enum Screen { HOME, SEARCH, FAVORITES, ACCOUNT, USER }
     private enum BrowserPurpose { NONE, LOGIN, COMMENTS, SETTINGS }
 
     private static final class Subscription {
         final String name;
         final String title;
-        Subscription(String name, String title) { this.name = name; this.title = title; }
+        Subscription(String name, String title) {
+            this.name = name;
+            this.title = title;
+        }
+    }
+
+    private static final class NavState {
+        final Screen screen;
+        final String context;
+        final String subreddit;
+        final String query;
+        final String profileUser;
+        final String sort;
+        final String topTime;
+        final String media;
+        final String layoutMode;
+        final String searchScope;
+        final int pagerPosition;
+
+        NavState(
+                Screen screen,
+                String context,
+                String subreddit,
+                String query,
+                String profileUser,
+                String sort,
+                String topTime,
+                String media,
+                String layoutMode,
+                String searchScope,
+                int pagerPosition
+        ) {
+            this.screen = screen;
+            this.context = context;
+            this.subreddit = subreddit;
+            this.query = query;
+            this.profileUser = profileUser;
+            this.sort = sort;
+            this.topTime = topTime;
+            this.media = media;
+            this.layoutMode = layoutMode;
+            this.searchScope = searchScope;
+            this.pagerPosition = pagerPosition;
+        }
     }
 
     private FrameLayout root;
@@ -73,6 +115,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private LinearLayout controlRow;
     private LinearLayout bottomBar;
     private TextView topTitle;
+    private EditText searchInput;
+    private Button searchGoButton;
     private Button feedButton;
     private Button sortButton;
     private Button filterButton;
@@ -96,6 +140,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private String layoutMode = "fullscreen";
     private String searchScope = "global";
     private String query = "";
+    private String profileUser = "";
     private String username = "";
     private String modhash = "";
     private String after = "";
@@ -104,9 +149,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private boolean muted = true;
     private int systemTopPx;
     private int systemBottomPx;
+    private int pendingRestorePosition = -1;
 
     private final ArrayList<Subscription> subscriptions = new ArrayList<>();
     private final Set<String> subscriptionNames = new HashSet<>();
+    private final Deque<NavState> history = new ArrayDeque<>();
 
     @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
     @Override
@@ -125,6 +172,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         layoutMode = prefs.getString("layout", "fullscreen");
         if (!layoutMode.equals("grid")) layoutMode = "fullscreen";
         searchScope = prefs.getString("searchScope", "global");
+        query = prefs.getString("lastSearch", "");
         muted = prefs.getBoolean("muted", true);
 
         root = new FrameLayout(this);
@@ -188,7 +236,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                         if (!username.isEmpty()) {
                             closeBrowser();
                             loadSubscriptions(null);
-                            if (screen == Screen.FAVORITES) loadFavorites();
+                            if (screen == Screen.FAVORITES) loadFavoritesInternal();
                         }
                     });
                 }
@@ -214,9 +262,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         postAdapter.setMuted(muted);
         pager.setAdapter(postAdapter);
         pager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
-            @Override public void onPageSelected(int position) {
+            @Override
+            public void onPageSelected(int position) {
                 postAdapter.setActivePosition(layoutMode.equals("fullscreen") ? position : -1);
-                if (screen == Screen.HOME && !loading && !after.isEmpty() && position >= postAdapter.getItemCount() - 5) {
+                if (screen == Screen.HOME && !loading && !after.isEmpty()
+                        && position >= postAdapter.getItemCount() - 5) {
                     loadFeed(false);
                 }
             }
@@ -230,11 +280,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         gridView.setAdapter(gridAdapter);
         gridView.setVisibility(View.GONE);
         gridView.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
+            @Override
+            public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
                 RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
                 if (!(lm instanceof GridLayoutManager)) return;
                 int last = ((GridLayoutManager) lm).findLastVisibleItemPosition();
-                if (screen == Screen.HOME && !loading && !after.isEmpty() && last >= gridAdapter.getItemCount() - 8) {
+                if (screen == Screen.HOME && !loading && !after.isEmpty()
+                        && last >= gridAdapter.getItemCount() - 8) {
                     loadFeed(false);
                 }
             }
@@ -260,7 +312,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         topHeader.setOrientation(LinearLayout.HORIZONTAL);
         topHeader.setGravity(Gravity.CENTER_VERTICAL);
         topBar.addView(topHeader, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
 
         topTitle = new TextView(this);
         topTitle.setText("Home");
@@ -272,8 +324,36 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         topHeader.addView(topTitle, new LinearLayout.LayoutParams(0, dp(42), 1f));
         topTitle.setOnClickListener(v -> {
             if (screen == Screen.HOME) showFeedSheet();
-            else if (screen == Screen.SEARCH) showSearchDialog();
+            else if (screen == Screen.USER && !profileUser.isEmpty()) {
+                openBrowser(REDDIT + "/user/" + enc(profileUser) + "/", BrowserPurpose.SETTINGS);
+            }
         });
+
+        searchInput = new EditText(this);
+        searchInput.setHint("Search Reddit media");
+        searchInput.setTextColor(Color.WHITE);
+        searchInput.setHintTextColor(0xFF8E8E8E);
+        searchInput.setTextSize(14);
+        searchInput.setSingleLine(true);
+        searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        searchInput.setPadding(dp(12), 0, dp(12), 0);
+        searchInput.setBackground(rounded(0xE51A1A1A, 14));
+        searchInput.setVisibility(View.GONE);
+        topHeader.addView(searchInput, new LinearLayout.LayoutParams(0, dp(40), 1f));
+        searchInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                beginSearch();
+                return true;
+            }
+            return false;
+        });
+
+        searchGoButton = topPill("Search");
+        searchGoButton.setVisibility(View.GONE);
+        LinearLayout.LayoutParams searchButtonParams = new LinearLayout.LayoutParams(dp(76), dp(38));
+        searchButtonParams.leftMargin = dp(5);
+        topHeader.addView(searchGoButton, searchButtonParams);
+        searchGoButton.setOnClickListener(v -> beginSearch());
 
         controlRow = new LinearLayout(this);
         controlRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -307,8 +387,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         appLayer.addView(bottomBar, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(64), Gravity.BOTTOM));
 
-        addNavButton("⌂\nHome", () -> openHome("home"));
-        addNavButton("⌕\nSearch", this::showSearchDialog);
+        addNavButton("⌂\nHome", () -> navigateHome("home", true));
+        addNavButton("⌕\nSearch", this::openSearchScreen);
         addNavButton("★\nFavorites", this::loadFavorites);
         addNavButton("●\nAccount", this::showAccount);
 
@@ -400,7 +480,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void refreshIdentity(@Nullable Runnable done) {
-        if (!engine.isReady()) { if (done != null) done.run(); return; }
+        if (!engine.isReady()) {
+            if (done != null) done.run();
+            return;
+        }
         engine.get("/api/me.json?raw_json=1", result -> {
             username = "";
             modhash = "";
@@ -439,11 +522,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             JSONArray children = data != null ? data.optJSONArray("children") : null;
             if (children != null) {
                 for (int i = 0; i < children.length(); i++) {
-                    JSONObject d = children.optJSONObject(i) != null ? children.optJSONObject(i).optJSONObject("data") : null;
+                    JSONObject d = children.optJSONObject(i) != null
+                            ? children.optJSONObject(i).optJSONObject("data") : null;
                     if (d == null) continue;
                     String name = d.optString("display_name", "");
                     if (name.isEmpty()) continue;
-                    subscriptions.add(new Subscription(name, RedditPost.decode(d.optString("title", ""))));
+                    subscriptions.add(new Subscription(
+                            name,
+                            RedditPost.decode(d.optString("title", ""))));
                     subscriptionNames.add(name.toLowerCase(Locale.US));
                 }
             }
@@ -459,24 +545,158 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (screen == Screen.ACCOUNT) renderAccount();
     }
 
-    private void openHome(String which) {
+    private NavState captureState() {
+        int position = pager != null ? pager.getCurrentItem() : 0;
+        return new NavState(
+                screen,
+                context,
+                subreddit,
+                query,
+                profileUser,
+                sort,
+                topTime,
+                media,
+                layoutMode,
+                searchScope,
+                position);
+    }
+
+    private void pushCurrentState() {
+        NavState current = captureState();
+        if (!history.isEmpty() && sameState(history.peek(), current)) return;
+        history.push(current);
+        while (history.size() > 30) history.removeLast();
+    }
+
+    private boolean sameState(NavState a, NavState b) {
+        return a.screen == b.screen
+                && a.context.equals(b.context)
+                && a.subreddit.equals(b.subreddit)
+                && a.query.equals(b.query)
+                && a.profileUser.equals(b.profileUser)
+                && a.layoutMode.equals(b.layoutMode)
+                && a.searchScope.equals(b.searchScope);
+    }
+
+    private void restoreState(NavState state) {
+        screen = state.screen;
+        context = state.context;
+        subreddit = state.subreddit;
+        query = state.query;
+        profileUser = state.profileUser;
+        sort = state.sort;
+        topTime = state.topTime;
+        media = state.media;
+        layoutMode = state.layoutMode;
+        searchScope = state.searchScope;
+        pendingRestorePosition = Math.max(0, state.pagerPosition);
+
+        accountView.setVisibility(View.GONE);
+        updateChrome();
+
+        if (screen == Screen.ACCOUNT) {
+            showAccountInternal();
+        } else if (screen == Screen.SEARCH) {
+            applyLayoutVisibility();
+            if (query.isEmpty()) {
+                replacePosts(new ArrayList<>());
+                setStatus("Search Reddit media by title, community, or creator.", false);
+            } else {
+                loadSearchInternal();
+            }
+        } else if (screen == Screen.FAVORITES) {
+            loadFavoritesInternal();
+        } else if (screen == Screen.USER) {
+            loadUserProfileInternal();
+        } else {
+            applyLayoutVisibility();
+            loadFeed(true);
+        }
+    }
+
+    private void restorePendingPosition() {
+        if (pendingRestorePosition < 0 || postAdapter.getItemCount() == 0) return;
+        int target = Math.min(pendingRestorePosition, postAdapter.getItemCount() - 1);
+        pendingRestorePosition = -1;
+        pager.setCurrentItem(target, false);
+        if (layoutMode.equals("grid")) gridView.scrollToPosition(target);
+    }
+
+    private void navigateHome(String which, boolean pushHistory) {
+        if (pushHistory && !(screen == Screen.HOME && context.equals(which) && subreddit.isEmpty())) {
+            pushCurrentState();
+        }
         screen = Screen.HOME;
         context = which;
         subreddit = "";
+        profileUser = "";
         after = "";
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
+        updateChrome();
         loadFeed(true);
     }
 
     private void openSubredditFeed(String name) {
+        if (name == null || name.isEmpty()) return;
+        pushCurrentState();
         screen = Screen.HOME;
         context = "subreddit";
         subreddit = name;
+        profileUser = "";
         after = "";
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
+        updateChrome();
         loadFeed(true);
+    }
+
+    private void openSearchScreen() {
+        if (screen != Screen.SEARCH) pushCurrentState();
+        screen = Screen.SEARCH;
+        context = "search";
+        profileUser = "";
+        accountView.setVisibility(View.GONE);
+        applyLayoutVisibility();
+        updateChrome();
+        searchInput.setText(query);
+        searchInput.setSelection(searchInput.length());
+        if (query.isEmpty()) {
+            replacePosts(new ArrayList<>());
+            setStatus("Search Reddit media by title, community, or creator.", false);
+            searchInput.requestFocus();
+        } else {
+            loadSearchInternal();
+        }
+    }
+
+    private void beginSearch() {
+        String next = searchInput.getText().toString().trim();
+        if (next.isEmpty()) {
+            query = "";
+            prefs.edit().putString("lastSearch", "").apply();
+            replacePosts(new ArrayList<>());
+            setStatus("Enter a search term.", false);
+            updateChrome();
+            return;
+        }
+        query = next;
+        prefs.edit().putString("lastSearch", query).apply();
+        screen = Screen.SEARCH;
+        loadSearchInternal();
+    }
+
+    private void openUserProfile(String name) {
+        if (name == null || name.isEmpty()) return;
+        pushCurrentState();
+        screen = Screen.USER;
+        profileUser = name;
+        context = "user";
+        subreddit = "";
+        accountView.setVisibility(View.GONE);
+        applyLayoutVisibility();
+        updateChrome();
+        loadUserProfileInternal();
     }
 
     private void loadFeed(boolean reset) {
@@ -496,7 +716,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         engine.get(path, result -> {
             if (!result.ok) {
                 loading = false;
-                if (postAdapter.getItemCount() == 0) setStatus("Reddit feed failed: " + friendlyError(result), false);
+                if (postAdapter.getItemCount() == 0) {
+                    setStatus("Reddit feed failed: " + friendlyError(result), false);
+                }
                 return;
             }
             JSONObject root = result.jsonObject();
@@ -515,9 +737,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             }
             loading = false;
             if (reset) replacePosts(collected); else appendUnique(collected);
-            if (postAdapter.getItemCount() == 0) setStatus("No media posts match this feed/filter.", false);
-            else hideStatus();
+            if (postAdapter.getItemCount() == 0) {
+                setStatus("No media posts match this feed/filter.", false);
+            } else {
+                hideStatus();
+            }
             updateChrome();
+            restorePendingPosition();
         });
     }
 
@@ -540,8 +766,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private boolean matchesMedia(RedditPost post) {
         if (media.equals("all")) return true;
-        if (media.equals("image")) return post.mediaKind == RedditPost.MediaKind.IMAGE || post.mediaKind == RedditPost.MediaKind.GALLERY;
-        return post.mediaKind == RedditPost.MediaKind.VIDEO || post.mediaKind == RedditPost.MediaKind.EXTERNAL;
+        if (media.equals("image")) {
+            return post.mediaKind == RedditPost.MediaKind.IMAGE
+                    || post.mediaKind == RedditPost.MediaKind.GALLERY;
+        }
+        return post.mediaKind == RedditPost.MediaKind.VIDEO
+                || post.mediaKind == RedditPost.MediaKind.EXTERNAL;
     }
 
     private void replacePosts(List<RedditPost> items) {
@@ -582,70 +812,27 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         postAdapter.setActivePosition(grid ? -1 : pager.getCurrentItem());
     }
 
-    private void showSearchDialog() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(8), dp(20), 0);
-
-        EditText input = new EditText(this);
-        input.setHint("Search Reddit media");
-        input.setText(query);
-        input.setTextColor(Color.WHITE);
-        input.setHintTextColor(0xFF858585);
-        input.setInputType(InputType.TYPE_CLASS_TEXT);
-        input.setSingleLine(true);
-        input.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF777777));
-        box.addView(input, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-
-        RadioGroup scopes = new RadioGroup(this);
-        scopes.setOrientation(RadioGroup.HORIZONTAL);
-        RadioButton global = radio("Global", 1);
-        RadioButton subs = radio("Subscribed", 2);
-        scopes.addView(global);
-        scopes.addView(subs);
-        scopes.check(searchScope.equals("subscribed") ? 2 : 1);
-        box.addView(scopes);
-
-        new MaterialAlertDialogBuilder(this)
-                .setTitle("Search")
-                .setView(box)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Search", (d, w) -> {
-                    query = input.getText().toString().trim();
-                    searchScope = scopes.getCheckedRadioButtonId() == 2 ? "subscribed" : "global";
-                    prefs.edit().putString("searchScope", searchScope).apply();
-                    if (!query.isEmpty()) loadSearch();
-                })
-                .show();
-    }
-
-    private RadioButton radio(String text, int id) {
-        RadioButton b = new RadioButton(this);
-        b.setId(id);
-        b.setText(text);
-        b.setTextColor(Color.WHITE);
-        return b;
-    }
-
-    private void loadSearch() {
-        if (loading || !engine.isReady()) return;
+    private void loadSearchInternal() {
+        if (loading || !engine.isReady() || query.isEmpty()) return;
         screen = Screen.SEARCH;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
         replacePosts(new ArrayList<>());
         pager.setCurrentItem(0, false);
-        setStatus("Searching…", true);
+        setStatus("Searching “" + query + "”…", true);
         loading = true;
         fetchSearchPage("", new ArrayList<>(), 0);
         updateChrome();
     }
 
     private void fetchSearchPage(String cursor, ArrayList<RedditPost> collected, int page) {
-        String searchSort = sort.equals("best") ? "relevance" : (sort.equals("rising") ? "new" : sort);
-        String path = "/search.json?q=" + enc(query) + "&type=link&limit=100&raw_json=1&sort=" + enc(searchSort);
+        String searchSort = sort.equals("best") ? "relevance"
+                : (sort.equals("rising") ? "new" : sort);
+        String path = "/search.json?q=" + enc(query)
+                + "&type=link&limit=100&raw_json=1&sort=" + enc(searchSort);
         if (sort.equals("top")) path += "&t=" + enc(topTime);
         if (!cursor.isEmpty()) path += "&after=" + enc(cursor);
+
         engine.get(path, result -> {
             if (!result.ok) {
                 loading = false;
@@ -659,32 +846,95 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 for (int i = 0; i < children.length(); i++) {
                     RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
                     if (post == null || !matchesMedia(post)) continue;
-                    if (searchScope.equals("subscribed") && !subscriptionNames.contains(post.subreddit.toLowerCase(Locale.US))) continue;
+                    if (searchScope.equals("subscribed")
+                            && !subscriptionNames.contains(post.subreddit.toLowerCase(Locale.US))) {
+                        continue;
+                    }
                     collected.add(post);
                 }
             }
             String next = data != null ? data.optString("after", "") : "";
-            int maxPages = searchScope.equals("subscribed") ? 6 : 1;
-            if (collected.size() < 20 && !next.isEmpty() && page + 1 < maxPages) {
+            int maxPages = searchScope.equals("subscribed") ? 8 : 5;
+            if (collected.size() < 30 && !next.isEmpty() && page + 1 < maxPages) {
                 fetchSearchPage(next, collected, page + 1);
                 return;
             }
             loading = false;
             replacePosts(collected);
-            if (collected.isEmpty()) setStatus("No matching media found.", false); else hideStatus();
+            if (collected.isEmpty()) {
+                setStatus("No matching media found for “" + query + "”.", false);
+            } else {
+                hideStatus();
+            }
             updateChrome();
+            restorePendingPosition();
+        });
+    }
+
+    private void loadUserProfileInternal() {
+        if (loading || !engine.isReady() || profileUser.isEmpty()) return;
+        replacePosts(new ArrayList<>());
+        pager.setCurrentItem(0, false);
+        setStatus("Loading u/" + profileUser + "…", true);
+        loading = true;
+        fetchUserPage("", new ArrayList<>(), 0);
+    }
+
+    private void fetchUserPage(String cursor, ArrayList<RedditPost> collected, int page) {
+        String userSort = sort.equals("top") ? "top"
+                : sort.equals("hot") ? "hot" : "new";
+        String path = "/user/" + enc(profileUser)
+                + "/submitted.json?limit=100&raw_json=1&sort=" + enc(userSort);
+        if (sort.equals("top")) path += "&t=" + enc(topTime);
+        if (!cursor.isEmpty()) path += "&after=" + enc(cursor);
+
+        engine.get(path, result -> {
+            if (!result.ok) {
+                loading = false;
+                setStatus("Could not load u/" + profileUser + ": " + friendlyError(result), false);
+                return;
+            }
+            JSONObject root = result.jsonObject();
+            JSONObject data = root != null ? root.optJSONObject("data") : null;
+            JSONArray children = data != null ? data.optJSONArray("children") : null;
+            if (children != null) {
+                for (int i = 0; i < children.length(); i++) {
+                    RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
+                    if (post != null && matchesMedia(post)) collected.add(post);
+                }
+            }
+            String next = data != null ? data.optString("after", "") : "";
+            if (collected.size() < 24 && !next.isEmpty() && page < 4) {
+                fetchUserPage(next, collected, page + 1);
+                return;
+            }
+            loading = false;
+            replacePosts(collected);
+            if (collected.isEmpty()) {
+                setStatus("u/" + profileUser + " has no matching media posts.", false);
+            } else {
+                hideStatus();
+            }
+            updateChrome();
+            restorePendingPosition();
         });
     }
 
     private void loadFavorites() {
+        if (screen != Screen.FAVORITES) pushCurrentState();
+        screen = Screen.FAVORITES;
+        profileUser = "";
+        updateChrome();
+        loadFavoritesInternal();
+    }
+
+    private void loadFavoritesInternal() {
         if (username.isEmpty()) {
-            screen = Screen.FAVORITES;
             updateChrome();
             openBrowser(REDDIT + "/login/?dest=" + enc(REDDIT + "/"), BrowserPurpose.LOGIN);
             return;
         }
         if (loading) return;
-        screen = Screen.FAVORITES;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
         replacePosts(new ArrayList<>());
@@ -699,8 +949,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             }
             ArrayList<RedditPost> items = parseListing(result.jsonObject(), true);
             replacePosts(items);
-            if (items.isEmpty()) setStatus("No saved media posts yet.", false); else hideStatus();
+            if (items.isEmpty()) setStatus("No saved media posts yet.", false);
+            else hideStatus();
             updateChrome();
+            restorePendingPosition();
         });
     }
 
@@ -717,7 +969,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void showAccount() {
+        if (screen != Screen.ACCOUNT) pushCurrentState();
         screen = Screen.ACCOUNT;
+        profileUser = "";
+        showAccountInternal();
+    }
+
+    private void showAccountInternal() {
         pager.setVisibility(View.GONE);
         gridView.setVisibility(View.GONE);
         accountView.setVisibility(View.VISIBLE);
@@ -732,7 +990,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         body.setPadding(dp(14), dp(14), dp(14), dp(24));
         accountView.removeAllViews();
         accountView.addView(body, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         body.addView(sectionTitle(username.isEmpty() ? "Reddit account" : "u/" + username));
 
@@ -740,20 +999,30 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             body.addView(bodyText("Sign in to use Favorites and browse your subscribed communities."));
             Button login = sheetButton("Sign in to Reddit");
             body.addView(login, sectionButtonParams());
-            login.setOnClickListener(v -> openBrowser(REDDIT + "/login/?dest=" + enc(REDDIT + "/"), BrowserPurpose.LOGIN));
+            login.setOnClickListener(v -> openBrowser(
+                    REDDIT + "/login/?dest=" + enc(REDDIT + "/"),
+                    BrowserPurpose.LOGIN));
         } else {
+            Button myProfile = sheetButton("View my profile · u/" + username);
+            body.addView(myProfile, sectionButtonParams());
+            myProfile.setOnClickListener(v -> openUserProfile(username));
+
             Button settings = sheetButton("Open Reddit account settings");
             body.addView(settings, sectionButtonParams());
-            settings.setOnClickListener(v -> openBrowser(REDDIT + "/settings/account/", BrowserPurpose.SETTINGS));
+            settings.setOnClickListener(v -> openBrowser(
+                    REDDIT + "/settings/account/",
+                    BrowserPurpose.SETTINGS));
 
             TextView subsTitle = sectionTitle("Subscriptions · " + subscriptions.size());
             LinearLayout.LayoutParams stp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
             stp.topMargin = dp(22);
             body.addView(subsTitle, stp);
             if (subscriptions.isEmpty()) body.addView(bodyText("No subscriptions returned yet."));
             for (Subscription sub : subscriptions) {
-                Button b = sheetButton("r/" + sub.name + (sub.title.isEmpty() ? "" : "\n" + sub.title));
+                Button b = sheetButton("r/" + sub.name
+                        + (sub.title.isEmpty() ? "" : "\n" + sub.title));
                 b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
                 b.setMaxLines(2);
                 body.addView(b, sectionButtonParams());
@@ -771,24 +1040,41 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         Button popular = sheetButton("Popular" + (context.equals("popular") ? "  ✓" : ""));
         body.addView(home, sectionButtonParams());
         body.addView(popular, sectionButtonParams());
-        home.setOnClickListener(v -> { dialog.dismiss(); openHome("home"); });
-        popular.setOnClickListener(v -> { dialog.dismiss(); openHome("popular"); });
+        home.setOnClickListener(v -> {
+            dialog.dismiss();
+            navigateHome("home", true);
+        });
+        popular.setOnClickListener(v -> {
+            dialog.dismiss();
+            navigateHome("popular", true);
+        });
 
         if (!subscriptions.isEmpty()) {
             TextView t = sectionTitle("Subscriptions");
             LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
             tp.topMargin = dp(16);
             body.addView(t, tp);
             for (Subscription sub : subscriptions) {
-                Button b = sheetButton("r/" + sub.name + (context.equals("subreddit") && subreddit.equalsIgnoreCase(sub.name) ? "  ✓" : ""));
+                Button b = sheetButton("r/" + sub.name
+                        + (context.equals("subreddit")
+                        && subreddit.equalsIgnoreCase(sub.name) ? "  ✓" : ""));
                 body.addView(b, sectionButtonParams());
-                b.setOnClickListener(v -> { dialog.dismiss(); openSubredditFeed(sub.name); });
+                b.setOnClickListener(v -> {
+                    dialog.dismiss();
+                    openSubredditFeed(sub.name);
+                });
             }
         } else if (username.isEmpty()) {
             Button login = sheetButton("Sign in for subscriptions");
             body.addView(login, sectionButtonParams());
-            login.setOnClickListener(v -> { dialog.dismiss(); openBrowser(REDDIT + "/login/?dest=" + enc(REDDIT + "/"), BrowserPurpose.LOGIN); });
+            login.setOnClickListener(v -> {
+                dialog.dismiss();
+                openBrowser(
+                        REDDIT + "/login/?dest=" + enc(REDDIT + "/"),
+                        BrowserPurpose.LOGIN);
+            });
         }
         dialog.setContentView(scroll);
         dialog.show();
@@ -797,9 +1083,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private void showSortSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Choose sorting option");
-        String[] values = screen == Screen.SEARCH
-                ? new String[]{"best", "hot", "new", "top"}
-                : new String[]{"best", "hot", "new", "top", "rising"};
+        String[] values;
+        if (screen == Screen.SEARCH) {
+            values = new String[]{"best", "hot", "new", "top"};
+        } else if (screen == Screen.USER) {
+            values = new String[]{"best", "new", "hot", "top"};
+        } else {
+            values = new String[]{"best", "hot", "new", "top", "rising"};
+        }
         for (String value : values) {
             Button b = sheetButton(label(value) + (sort.equals(value) ? "  ✓" : ""));
             body.addView(b, sectionButtonParams());
@@ -807,7 +1098,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 sort = value;
                 prefs.edit().putString("sort", sort).apply();
                 dialog.dismiss();
-                if (sort.equals("top")) showTopTimeSheet(); else reloadCurrent();
+                if (sort.equals("top")) showTopTimeSheet();
+                else reloadCurrent();
             });
         }
         dialog.setContentView(body);
@@ -819,7 +1111,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         LinearLayout body = sheetBody("Top timeframe");
         String[] values = {"hour", "day", "week", "month", "year", "all"};
         for (String value : values) {
-            Button b = sheetButton((value.equals("all") ? "All time" : label(value)) + (topTime.equals(value) ? "  ✓" : ""));
+            Button b = sheetButton((value.equals("all") ? "All time" : label(value))
+                    + (topTime.equals(value) ? "  ✓" : ""));
             body.addView(b, sectionButtonParams());
             b.setOnClickListener(v -> {
                 topTime = value;
@@ -835,7 +1128,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private void showMediaSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Media type");
-        String[][] values = {{"all", "All media"}, {"image", "Images"}, {"video", "Video"}};
+        String[][] values = {
+                {"all", "All media"},
+                {"image", "Images"},
+                {"video", "Video"}
+        };
         for (String[] pair : values) {
             Button b = sheetButton(pair[1] + (media.equals(pair[0]) ? "  ✓" : ""));
             body.addView(b, sectionButtonParams());
@@ -853,7 +1150,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private void showLayoutSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Layout");
-        String[][] values = {{"fullscreen", "Fullscreen"}, {"grid", "Grid"}};
+        String[][] values = {
+                {"fullscreen", "Fullscreen"},
+                {"grid", "Grid"}
+        };
         for (String[] pair : values) {
             Button b = sheetButton(pair[1] + (layoutMode.equals(pair[0]) ? "  ✓" : ""));
             body.addView(b, sectionButtonParams());
@@ -864,7 +1164,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 dialog.dismiss();
                 updateChrome();
                 applyLayoutVisibility();
-                if (layoutMode.equals("grid")) gridView.scrollToPosition(Math.max(0, current));
+                if (layoutMode.equals("grid")) {
+                    gridView.scrollToPosition(Math.max(0, current));
+                }
             });
         }
         dialog.setContentView(body);
@@ -874,7 +1176,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private void showScopeSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Search scope");
-        String[][] values = {{"global", "Global"}, {"subscribed", "Subscribed only"}};
+        String[][] values = {
+                {"global", "Global"},
+                {"subscribed", "Subscribed only"}
+        };
         for (String[] pair : values) {
             Button b = sheetButton(pair[1] + (searchScope.equals(pair[0]) ? "  ✓" : ""));
             body.addView(b, sectionButtonParams());
@@ -882,7 +1187,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 searchScope = pair[0];
                 prefs.edit().putString("searchScope", searchScope).apply();
                 dialog.dismiss();
-                if (!query.isEmpty()) loadSearch();
+                if (!query.isEmpty()) loadSearchInternal();
                 updateChrome();
             });
         }
@@ -892,17 +1197,28 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void reloadCurrent() {
         updateChrome();
-        if (screen == Screen.SEARCH) loadSearch();
-        else if (screen == Screen.FAVORITES) loadFavorites();
+        if (screen == Screen.SEARCH) loadSearchInternal();
+        else if (screen == Screen.FAVORITES) loadFavoritesInternal();
+        else if (screen == Screen.USER) loadUserProfileInternal();
         else if (screen == Screen.HOME) loadFeed(true);
     }
 
     private void updateChrome() {
         if (topTitle == null) return;
+
+        boolean searchMode = screen == Screen.SEARCH;
+        topTitle.setVisibility(searchMode ? View.GONE : View.VISIBLE);
+        searchInput.setVisibility(searchMode ? View.VISIBLE : View.GONE);
+        searchGoButton.setVisibility(searchMode ? View.VISIBLE : View.GONE);
+        if (searchMode && !searchInput.getText().toString().equals(query)) {
+            searchInput.setText(query);
+            searchInput.setSelection(searchInput.length());
+        }
+
         String title;
-        if (screen == Screen.SEARCH) title = query.isEmpty() ? "Search" : "Search · " + query;
-        else if (screen == Screen.FAVORITES) title = "Favorites";
+        if (screen == Screen.FAVORITES) title = "Favorites";
         else if (screen == Screen.ACCOUNT) title = "Account";
+        else if (screen == Screen.USER) title = "u/" + profileUser;
         else if (context.equals("subreddit")) title = "r/" + subreddit;
         else title = context.equals("popular") ? "Popular" : "Home";
         topTitle.setText(title);
@@ -911,12 +1227,15 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 ? (searchScope.equals("global") ? "Global" : "Subs")
                 : "Feed");
         sortButton.setText(label(sort));
-        filterButton.setText(media.equals("all") ? "All media" : media.equals("image") ? "Images" : "Video");
+        filterButton.setText(media.equals("all") ? "All media"
+                : media.equals("image") ? "Images" : "Video");
         layoutButton.setText(layoutMode.equals("grid") ? "Grid" : "Fullscreen");
 
         controlRow.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
-        feedButton.setVisibility(screen == Screen.FAVORITES ? View.GONE : View.VISIBLE);
-        sortButton.setVisibility(screen == Screen.FAVORITES ? View.GONE : View.VISIBLE);
+        feedButton.setVisibility(
+                screen == Screen.HOME || screen == Screen.SEARCH ? View.VISIBLE : View.GONE);
+        sortButton.setVisibility(
+                screen == Screen.FAVORITES ? View.GONE : View.VISIBLE);
         filterButton.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
         layoutButton.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
         applySystemInsets(systemTopPx, systemBottomPx);
@@ -937,12 +1256,22 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         sessionView.loadUrl(REDDIT + "/");
     }
 
-    @Override public void onOpenSubreddit(String subreddit) { openSubredditFeed(subreddit); }
+    @Override
+    public void onOpenSubreddit(String subreddit) {
+        openSubredditFeed(subreddit);
+    }
+
+    @Override
+    public void onOpenUser(String username) {
+        openUserProfile(username);
+    }
 
     @Override
     public void onSave(RedditPost post) {
         if (username.isEmpty()) {
-            openBrowser(REDDIT + "/login/?dest=" + enc(REDDIT + "/"), BrowserPurpose.LOGIN);
+            openBrowser(
+                    REDDIT + "/login/?dest=" + enc(REDDIT + "/"),
+                    BrowserPurpose.LOGIN);
             return;
         }
         String body = "id=" + enc(post.id) + "&uh=" + enc(modhash);
@@ -956,7 +1285,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         });
     }
 
-    @Override public void onComments(RedditPost post) { openBrowser(REDDIT + post.permalink, BrowserPurpose.COMMENTS); }
+    @Override
+    public void onComments(RedditPost post) {
+        openBrowser(REDDIT + post.permalink, BrowserPurpose.COMMENTS);
+    }
 
     @Override
     public void onShare(RedditPost post) {
@@ -968,7 +1300,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     @Override
     public void onOpenExternal(RedditPost post) {
-        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(post.sourceUrl))); } catch (Exception ignored) {}
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(post.sourceUrl)));
+        } catch (Exception ignored) {}
     }
 
     @Override
@@ -983,7 +1317,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         progress.setVisibility(spinning ? View.VISIBLE : View.GONE);
     }
 
-    private void hideStatus() { statusPanel.setVisibility(View.GONE); }
+    private void hideStatus() {
+        statusPanel.setVisibility(View.GONE);
+    }
 
     private String friendlyError(RedditSessionEngine.ApiResult result) {
         if (!result.error.isEmpty()) return result.error;
@@ -1002,7 +1338,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         button.setMinWidth(0);
         button.setMinHeight(0);
         button.setBackgroundColor(Color.TRANSPARENT);
-        bottomBar.addView(button, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        bottomBar.addView(button, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
         button.setOnClickListener(v -> action.run());
     }
 
@@ -1084,7 +1421,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private FrameLayout.LayoutParams match() {
         return new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
     }
 
     private int dp(int value) {
@@ -1092,8 +1430,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private static String enc(String value) {
-        try { return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8.toString()); }
-        catch (Exception ignored) { return value == null ? "" : value; }
+        try {
+            return URLEncoder.encode(
+                    value == null ? "" : value,
+                    StandardCharsets.UTF_8.toString());
+        } catch (Exception ignored) {
+            return value == null ? "" : value;
+        }
     }
 
     private static String label(String value) {
@@ -1128,10 +1471,20 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             closeBrowser();
             return;
         }
-        if (screen == Screen.ACCOUNT || screen == Screen.SEARCH || screen == Screen.FAVORITES || context.equals("subreddit") || context.equals("popular")) {
-            openHome("home");
+
+        if (!history.isEmpty()) {
+            restoreState(history.pop());
             return;
         }
-        super.onBackPressed();
+
+        boolean rootHome = screen == Screen.HOME
+                && context.equals("home")
+                && subreddit.isEmpty();
+        if (!rootHome) {
+            navigateHome("home", false);
+            return;
+        }
+
+        moveTaskToBack(true);
     }
 }
