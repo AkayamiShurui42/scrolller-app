@@ -94,6 +94,12 @@ jobs:
           grep -q 'if (!controller.back()) confirmExit = true' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
           ! grep -q 'filter { it.second > 0 }' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
 
+      - name: Preserve root tab state
+        run: |
+          python3 tools/patch_redview_v4.py
+          grep -q 'Keep every root tab composed' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
+          grep -q 'fillMaxSize(if (controller.selectedTab == MainTab.SEARCH) 1f else 0f)' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
+
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 8.11.1
         working-directory: android
