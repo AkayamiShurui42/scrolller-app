@@ -100,6 +100,15 @@ jobs:
           grep -q 'Keep every root tab composed' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
           grep -q 'fillMaxSize(if (controller.selectedTab == MainTab.SEARCH) 1f else 0f)' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
 
+      - name: Apply global sort and random defaults
+        run: |
+          python3 tools/patch_redview_v5_sorting.py
+          grep -q 'SortMode.OLDEST' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
+          grep -q 'Newest → Oldest' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
+          grep -q 'Oldest → Newest' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
+          grep -q 'FavoriteSort.RANDOM' android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt
+          grep -q 'sort == SortMode.OLDEST' android/app/src/main/java/com/scrolller/adblock/network/ScrolllerApi.kt
+
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 8.11.1
         working-directory: android
