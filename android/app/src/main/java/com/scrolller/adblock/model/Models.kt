@@ -1,7 +1,7 @@
 package com.scrolller.adblock.model
 
 enum class LayoutType { GRID, LIST }
-enum class SortMode { RANDOM, HOT, NEW, TOP }
+enum class SortMode { RANDOM, HOT, NEW, OLDEST, TOP }
 enum class NsfwMode { ALL, SFW, NSFW }
 enum class ThemeMode { SYSTEM, DARK, LIGHT }
 enum class MainTab { HOME, FAVORITES, SEARCH, SETTINGS }
