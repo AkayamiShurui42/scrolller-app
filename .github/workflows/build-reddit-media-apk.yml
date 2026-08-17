@@ -117,3 +117,21 @@ jobs:
               --prerelease \
               --notes "Native fullscreen Reddit media client. v3.3 adds random-by-default Home/Popular/subreddit/Favorites feeds, expanded Favorites ordering, and excludes preview-only external media that cannot play inline."
           fi
+
+      - name: Record build result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.3.0-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.3.txt
+          CONTENT=$(base64 -w0 /tmp/build-status-v3.3.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.3.txt"
+          CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api --method PUT "$API" -f message='ci: record v3.3 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+          else
+            gh api --method PUT "$API" -f message='ci: record v3.3 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+          fi
