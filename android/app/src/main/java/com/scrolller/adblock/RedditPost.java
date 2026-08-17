@@ -19,6 +19,7 @@ public final class RedditPost {
     public final String sourceUrl;
     public final int score;
     public final int comments;
+    public final long createdUtc;
     public boolean saved;
     public final boolean nsfw;
     public final MediaKind mediaKind;
@@ -35,6 +36,7 @@ public final class RedditPost {
             String sourceUrl,
             int score,
             int comments,
+            long createdUtc,
             boolean saved,
             boolean nsfw,
             MediaKind mediaKind,
@@ -50,6 +52,7 @@ public final class RedditPost {
         this.sourceUrl = sourceUrl;
         this.score = score;
         this.comments = comments;
+        this.createdUtc = createdUtc;
         this.saved = saved;
         this.nsfw = nsfw;
         this.mediaKind = mediaKind;
@@ -81,6 +84,7 @@ public final class RedditPost {
                 decode(data.optString("url_overridden_by_dest", data.optString("url", ""))),
                 data.optInt("score", 0),
                 data.optInt("num_comments", 0),
+                (long) data.optDouble("created_utc", 0d),
                 data.optBoolean("saved", false),
                 data.optBoolean("over_18", false),
                 media.kind,
