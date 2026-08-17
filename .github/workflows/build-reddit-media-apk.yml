@@ -29,7 +29,7 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate RedView interaction architecture
+      - name: Validate RedView 3.2 interaction architecture
         run: |
           grep -q "class RedditSessionEngine" android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           grep -q "NativeRedditBridge" android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
@@ -39,29 +39,32 @@ jobs:
           grep -q "GridLayoutManager(this, 2)" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "setOnApplyWindowInsetsListener" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "setDecorFitsSystemWindows(false)" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "openSearchScreen" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "Search Reddit media" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "IME_ACTION_SEARCH" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "openUserProfile" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "submitted.json" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "onOpenUser" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          grep -q "listener.onOpenUser" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          grep -q "Deque<NavState> history" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "restoreState(history.pop())" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "moveTaskToBack(true)" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "showFeedSheet" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "showSortSheet" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "showMediaSheet" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "showLayoutSheet" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'topPill("Feed")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'topPill("Best")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'topPill("All media")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'topPill("Fullscreen")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "openFullscreenAt" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "setSystemInsets" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
           grep -q "new ExoPlayer.Builder" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
           grep -q "Glide.with" android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q "Choose sorting option" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q "All media" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q "Subscribed" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "/api/me.json" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "/api/save" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "/api/unsave" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "/search.json" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "saved.json" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 10' android/app/build.gradle
-          grep -q 'versionName "3.1.0"' android/app/build.gradle
+          grep -q 'versionCode 11' android/app/build.gradle
+          grep -q 'versionName "3.2.0"' android/app/build.gradle
 
       - name: Prepare stable debug signing key
         run: |
@@ -88,13 +91,13 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='10'" /tmp/badging.txt
-          grep -q "versionName='3.1.0'" /tmp/badging.txt
+          grep -q "versionCode='11'" /tmp/badging.txt
+          grep -q "versionName='3.2.0'" /tmp/badging.txt
 
       - name: Upload native Reddit APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.1.0-native-redview-controls-insets-android16-debug-apk
+          name: reddit-media-v3.2.0-native-search-profiles-history-android16-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
