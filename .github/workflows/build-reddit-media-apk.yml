@@ -12,8 +12,6 @@ concurrency:
   group: reddit-native-redview-${{ github.ref }}
   cancel-in-progress: true
 
-# Clean v3.5.1 trigger after stale v3.5 jobs completed.
-
 jobs:
   build:
     name: Build native Reddit RedView Android APK
@@ -22,6 +20,22 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Record active v3.5.1 run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          printf 'run_id=%s\nstatus=running\nhead_sha=%s\n' "$RUN_ID" "$HEAD_SHA" > /tmp/active-build-v3.5.1.txt
+          CONTENT=$(base64 -w0 /tmp/active-build-v3.5.1.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/active-build-v3.5.1.txt"
+          CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api --method PUT "$API" -f message='ci: record active v3.5.1 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+          else
+            gh api --method PUT "$API" -f message='ci: record active v3.5.1 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+          fi
 
       - name: Apply v3.3 source patch
         run: python3 patches/apply_v3_3.py
