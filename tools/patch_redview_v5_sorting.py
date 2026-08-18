@@ -2,6 +2,10 @@ from pathlib import Path
 
 activity_path = Path('android/app/src/main/java/com/scrolller/adblock/RedViewV2Activity.kt')
 api_path = Path('android/app/src/main/java/com/scrolller/adblock/network/ScrolllerApi.kt')
+legacy_activity_paths = [
+    Path('android/app/src/main/java/com/scrolller/adblock/MainActivity.kt'),
+    Path('android/app/src/main/java/com/scrolller/adblock/RedViewActivity.kt'),
+]
 text = activity_path.read_text()
 api = api_path.read_text()
 
@@ -22,9 +26,27 @@ def replace_api_once(old: str, new: str, label: str):
     api = api.replace(old, new, 1)
 
 
-# Scrolller does not expose an OLDEST GallerySortBy value. Request NEW as the
-# complete date-ordered corpus and reverse it locally when the UI asks for
-# oldest-first.
+def patch_legacy_sort_label(path: Path):
+    legacy = path.read_text()
+    old = '''private fun sortLabel(mode: SortMode): String = when (mode) {
+    SortMode.RANDOM -> "Random"
+    SortMode.HOT -> "Hot"
+    SortMode.NEW -> "New"
+    SortMode.TOP -> "Top"
+}'''
+    new = '''private fun sortLabel(mode: SortMode): String = when (mode) {
+    SortMode.RANDOM -> "Random"
+    SortMode.HOT -> "Hot"
+    SortMode.NEW -> "Newest → Oldest"
+    SortMode.OLDEST -> "Oldest → Newest"
+    SortMode.TOP -> "Top"
+}'''
+    count = legacy.count(old)
+    if count != 1:
+        raise SystemExit(f'{path.name} sortLabel: expected exactly 1 match, found {count}')
+    path.write_text(legacy.replace(old, new, 1))
+
+
 replace_api_once(
     '.put("sortBy", sort.name)',
     '.put("sortBy", if (sort == SortMode.OLDEST) SortMode.NEW.name else sort.name)',
@@ -40,8 +62,7 @@ replace_once(
 replace_once(
 '''    var sortMode by mutableStateOf(SortMode.RANDOM)
     var favoriteSort by mutableStateOf(FavoriteSort.SAVED)''',
-'''    // Random is intentionally the default everywhere. Other sorts are opt-in.
-    var sortMode by mutableStateOf(SortMode.RANDOM)
+'''    var sortMode by mutableStateOf(SortMode.RANDOM)
     var favoriteSort by mutableStateOf(FavoriteSort.RANDOM)
     var favoriteRandomSeed by mutableStateOf(System.nanoTime())''',
     'random defaults'
@@ -85,9 +106,6 @@ replace_once(
     'favorites and global ordering'
 )
 
-# Do not reuse a cached RANDOM gallery when a genuinely new gallery screen is
-# opened. Covered/back-stack screens remain mounted, so Back still reveals the
-# exact prior corpus and scroll position without reloading.
 replace_once(
 '''    suspend fun loadGalleryCached(url: String, sort: SortMode): GalleryInfo {
         val key = "${url.trim().lowercase()}|${sort.name}"
@@ -166,4 +184,6 @@ replace_once(
 
 activity_path.write_text(text)
 api_path.write_text(api)
+for legacy_path in legacy_activity_paths:
+    patch_legacy_sort_label(legacy_path)
 print('RedView V5 global sorting/random-default patch applied successfully')
