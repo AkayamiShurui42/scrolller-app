@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class RedditPost {
-    public enum MediaKind { IMAGE, GALLERY, VIDEO, EXTERNAL }
+    public enum MediaKind { IMAGE, GALLERY, GIF, VIDEO, EXTERNAL }
 
     public final String id;
     public final String title;
@@ -122,6 +122,9 @@ public final class RedditPost {
         if (redditVideo == null && media != null) redditVideo = media.optJSONObject("reddit_video");
         JSONObject preview = d.optJSONObject("preview");
         JSONObject redditVideoPreview = preview != null ? preview.optJSONObject("reddit_video_preview") : null;
+        boolean gifPreview = redditVideo == null
+                && redditVideoPreview != null
+                && !d.optBoolean("is_video", false);
         if (redditVideo == null) redditVideo = redditVideoPreview;
         if (redditVideo != null) {
             String video = decode(firstNonEmpty(
@@ -130,7 +133,11 @@ public final class RedditPost {
                     redditVideo.optString("fallback_url", "")
             ));
             if (!video.isEmpty()) {
-                return new ParsedMedia(MediaKind.VIDEO, new ArrayList<>(), video, previewImage(d));
+                return new ParsedMedia(
+                        gifPreview ? MediaKind.GIF : MediaKind.VIDEO,
+                        new ArrayList<>(),
+                        video,
+                        previewImage(d));
             }
         }
 
@@ -138,12 +145,19 @@ public final class RedditPost {
         String hint = d.optString("post_hint", "");
         String domain = d.optString("domain", "");
 
-        // Keep direct video files inline. Preview-only rich-video links are deliberately excluded.
         if (direct.matches("(?i).*\\.(mp4|webm|m3u8)(\\?.*)?$")) {
             return new ParsedMedia(MediaKind.VIDEO, new ArrayList<>(), direct, previewImage(d));
         }
 
-        if ("image".equals(hint) || direct.matches("(?i).*\\.(jpe?g|png|webp|gif)(\\?.*)?$") || "i.redd.it".equalsIgnoreCase(domain)) {
+        if (direct.matches("(?i).*\\.gif(\\?.*)?$")) {
+            ArrayList<String> one = new ArrayList<>();
+            one.add(direct);
+            return new ParsedMedia(MediaKind.GIF, one, "", direct);
+        }
+
+        if ("image".equals(hint)
+                || direct.matches("(?i).*\\.(jpe?g|png|webp)(\\?.*)?$")
+                || "i.redd.it".equalsIgnoreCase(domain)) {
             String image = !direct.isEmpty() ? direct : previewImage(d);
             if (!image.isEmpty()) {
                 ArrayList<String> one = new ArrayList<>();
@@ -152,8 +166,8 @@ public final class RedditPost {
             }
         }
 
-        // RedGIFs/Imgur/Streamable/etc. without a direct playable URL used to become
-        // EXTERNAL cards with an "Open media" button. Those are now omitted entirely.
+        // Preview-only external media is excluded. If it cannot render/play inline,
+        // it does not belong in the fullscreen media feed.
         return null;
     }
 
