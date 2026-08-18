@@ -23,7 +23,7 @@ layout.write_text('''<?xml version="1.0" encoding="utf-8"?>
     app:surface_type="texture_view"
     app:resize_mode="fit"
     app:use_controller="true"
-    app:controller_auto_show="false"
+    app:auto_show="false"
     app:show_timeout="4000"
     app:keep_content_on_player_reset="false" />
 ''')
