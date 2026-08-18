@@ -1,8 +1,8 @@
 name: One-shot RedView Native Build
 
 on:
-  schedule:
-    - cron: '10 2 18 8 *'
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
