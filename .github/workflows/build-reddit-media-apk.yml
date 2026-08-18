@@ -12,6 +12,8 @@ concurrency:
   group: reddit-native-redview-${{ github.ref }}
   cancel-in-progress: true
 
+# Clean v3.5.1 trigger after stale v3.5 jobs completed.
+
 jobs:
   build:
     name: Build native Reddit RedView Android APK
