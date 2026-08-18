@@ -1,0 +1,77 @@
+name: One-shot RedView Native Build
+
+on:
+  schedule:
+    - cron: '10 2 18 8 *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build RedView Native Sorting APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout redview-native-remake
+        uses: actions/checkout@v4
+        with:
+          ref: redview-native-remake
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Normalize Kotlin controller setters
+        run: |
+          FILE="android/app/src/main/java/com/scrolller/adblock/MainActivity.kt"
+          sed -i 's/fun setAutoplay(/fun updateAutoplay(/g; s/controller\.setAutoplay(/controller.updateAutoplay(/g; s/fun setMuted(/fun updateMuted(/g; s/controller\.setMuted(/controller.updateMuted(/g' "$FILE"
+
+      - name: Apply RedView behavior patches
+        run: |
+          python3 tools/patch_redview_v2.py
+          python3 tools/patch_redview_v3.py
+          python3 tools/patch_redview_v4.py
+          python3 tools/patch_redview_v5_sorting.py
+
+      - name: Generate Gradle Wrapper
+        run: gradle wrapper --gradle-version 8.11.1
+        working-directory: android
+
+      - name: Grant Gradle execute permission
+        run: chmod +x gradlew
+        working-directory: android
+
+      - name: Compile Native Android 16 Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        working-directory: android
+
+      - name: Verify APK signature
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/apksigner.txt
+          grep -qi '191e5f6808941797362d844076f428cee94af60ae2929eecc70fc1c8e4da38b9' /tmp/apksigner.txt
+
+      - name: Upload Native Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrolller-pro-redview-native-sorting-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
