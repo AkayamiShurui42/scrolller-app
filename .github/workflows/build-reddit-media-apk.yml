@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: reddit-native-redview-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build native Reddit RedView Android APK
