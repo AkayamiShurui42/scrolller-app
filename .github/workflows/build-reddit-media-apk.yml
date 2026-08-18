@@ -46,6 +46,8 @@ jobs:
           grep -q "NativeRedditBridge" android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           grep -q "ViewPager2.ORIENTATION_VERTICAL" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "GridLayoutManager(this, 2)" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q "ImageView.ScaleType.FIT_CENTER" android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
+          grep -q 'load(thumb).fitCenter()' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
           grep -q "openSearchScreen" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "openUserProfile" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q "Deque<NavState> history" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
@@ -125,7 +127,7 @@ jobs:
               --target reddit-native-redview \
               --title "Reddit Media v3.4.0 debug" \
               --prerelease \
-              --notes "v3.4 fixes duplicate/looping Random and Oldest feeds by collecting unique post IDs across every cursor Reddit exposes before ordering. Favorites uses the same exhaustive unique pagination. Media filters are now All, Images, Videos, and GIFs."
+              --notes "v3.4 fixes duplicate/looping Random and Oldest feeds by collecting unique post IDs across every cursor Reddit exposes before ordering. Favorites uses the same exhaustive unique pagination. Media filters are All, Images, Videos, and GIFs. Grid uses fit-inside rendering so media is not cropped."
           fi
 
       - name: Record build result
