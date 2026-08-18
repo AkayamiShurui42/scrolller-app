@@ -55,9 +55,9 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     @Override
     public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         FrameLayout root = new FrameLayout(context);
-        int size = parent.getResources().getDisplayMetrics().widthPixels / 2;
         root.setLayoutParams(new RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, size));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
         root.setBackgroundColor(Color.BLACK);
 
         ImageView image = new ImageView(context);
@@ -88,6 +88,20 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     @Override
     public void onBindViewHolder(@NonNull Holder holder, int position) {
         RedditPost post = posts.get(position);
+
+        // A single continuous column: each holder uses the media's real aspect ratio.
+        // No margins or item decoration means adjacent posts touch directly.
+        int widthPx = context.getResources().getDisplayMetrics().widthPixels;
+        int heightPx = widthPx;
+        if (post.mediaWidth > 0 && post.mediaHeight > 0) {
+            heightPx = Math.max(1, Math.round(
+                    widthPx * (post.mediaHeight / (float) post.mediaWidth)));
+        }
+        RecyclerView.LayoutParams rp = new RecyclerView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, heightPx);
+        rp.setMargins(0, 0, 0, 0);
+        holder.root.setLayoutParams(rp);
+
         String thumb = !post.imageUrls.isEmpty() ? post.imageUrls.get(0) : post.posterUrl;
         Glide.with(holder.image).load(thumb).fitCenter().into(holder.image);
 
