@@ -3,6 +3,9 @@ name: Build Native Reddit RedView APK
 on:
   push:
     branches: [ reddit-native-redview ]
+    paths-ignore:
+      - 'android/active-build-v3.5.2.txt'
+      - 'android/build-status-v3.5.2.txt'
   workflow_dispatch:
 
 permissions:
@@ -20,6 +23,22 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Record active v3.5.2 run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          printf 'run_id=%s\nstatus=running\nhead_sha=%s\n' "$RUN_ID" "$HEAD_SHA" > /tmp/active-build-v3.5.2.txt
+          CONTENT=$(base64 -w0 /tmp/active-build-v3.5.2.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/active-build-v3.5.2.txt"
+          CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api --method PUT "$API" -f message='ci: record active v3.5.2 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+          else
+            gh api --method PUT "$API" -f message='ci: record active v3.5.2 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+          fi
 
       - name: Apply v3.3 source patch
         run: python3 patches/apply_v3_3.py
@@ -134,4 +153,22 @@ jobs:
               --title "Reddit Media v3.5.2 debug" \
               --prerelease \
               --notes "v3.5.2 removes stale duplicate media surfaces by using TextureView-backed Media3 players in both Fullscreen and Stream, detaching players before release, and synchronously releasing Stream players whenever Fullscreen takes over."
+          fi
+
+      - name: Record build result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.5.2-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.5.2.txt
+          CONTENT=$(base64 -w0 /tmp/build-status-v3.5.2.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.5.2.txt"
+          CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api --method PUT "$API" -f message='ci: record v3.5.2 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+          else
+            gh api --method PUT "$API" -f message='ci: record v3.5.2 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
           fi
