@@ -12,8 +12,6 @@ concurrency:
   group: reddit-native-redview-${{ github.ref }}
   cancel-in-progress: true
 
-# Final v3.5 trigger: unified Video/GIF playback controls + fullscreen tap chrome.
-
 jobs:
   build:
     name: Build native Reddit RedView Android APK
@@ -39,6 +37,10 @@ jobs:
         run: python3 patches/apply_v3_5.py
         working-directory: android
 
+      - name: Apply v3.5.1 progressive loading fix
+        run: python3 patches/apply_v3_5_1_loading.py
+        working-directory: android
+
       - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
@@ -54,39 +56,29 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate RedView 3.5 behavior
+      - name: Validate RedView 3.5.1 behavior
         run: |
           grep -q "GridLayoutManager(this, 1)" android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q '"Stream"' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'finishFeedCollection' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'seenPostIds' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'seenCursors' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'feedSeenPostIds' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'feedSeenCursors' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'boolean oldest = sort.equals("oldest")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'boolean random = sort.equals("random")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'collected.size() < 45 && page < 2' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          ! grep -q 'boolean exhaustive = sort.equals("random") || sort.equals("oldest")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'finishFavoritesCollection' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'Videos / GIFs' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'post.mediaKind == RedditPost.MediaKind.GIF' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          ! grep -q '{"gif", "GIFs"}' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'fullscreenChromeVisible' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'toggleFullscreenChrome' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'postAdapter.setChromeVisible' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'void onToggleChrome' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
           grep -q 'setUseController(true)' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q 'setControllerShowTimeoutMs(4000)' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
           grep -q 'asGif()' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
           grep -q 'GifDrawable.LOOP_FOREVER' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q 'resource.start()' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q 'applyChromeVisibility' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q 'playerView.hideController' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
           grep -q 'setPlayWhenReady(post.mediaKind == RedditPost.MediaKind.GIF)' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
-          grep -q 'AspectRatioFrameLayout.RESIZE_MODE_FIT' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
-          grep -q 'asGif()' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
-          grep -q 'GifDrawable.LOOP_FOREVER' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
           grep -q 'rp.setMargins(0, 0, 0, 0)' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
-          grep -q 'post.mediaWidth' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
-          grep -q 'post.mediaHeight' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
           ! grep -q 'new ParsedMedia(MediaKind.EXTERNAL' android/app/src/main/java/com/scrolller/adblock/RedditPost.java
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 14' android/app/build.gradle
-          grep -q 'versionName "3.5.0"' android/app/build.gradle
+          grep -q 'versionCode 15' android/app/build.gradle
+          grep -q 'versionName "3.5.1"' android/app/build.gradle
 
       - name: Prepare stable debug signing key
         run: |
@@ -113,15 +105,15 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='14'" /tmp/badging.txt
-          grep -q "versionName='3.5.0'" /tmp/badging.txt
-          cp "$APK" Reddit-Media-v3.5.0-debug.apk
+          grep -q "versionCode='15'" /tmp/badging.txt
+          grep -q "versionName='3.5.1'" /tmp/badging.txt
+          cp "$APK" Reddit-Media-v3.5.1-debug.apk
 
       - name: Upload native Reddit APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.5.0-video-gif-controls-tap-chrome-android16-debug-apk
-          path: Reddit-Media-v3.5.0-debug.apk
+          name: reddit-media-v3.5.1-progressive-random-video-gif-controls-android16-debug-apk
+          path: Reddit-Media-v3.5.1-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -129,14 +121,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v3.5.0-debug >/dev/null 2>&1; then
-            gh release upload v3.5.0-debug Reddit-Media-v3.5.0-debug.apk --clobber
+          if gh release view v3.5.1-debug >/dev/null 2>&1; then
+            gh release upload v3.5.1-debug Reddit-Media-v3.5.1-debug.apk --clobber
           else
-            gh release create v3.5.0-debug Reddit-Media-v3.5.0-debug.apk \
+            gh release create v3.5.1-debug Reddit-Media-v3.5.1-debug.apk \
               --target reddit-native-redview \
-              --title "Reddit Media v3.5.0 debug" \
+              --title "Reddit Media v3.5.1 debug" \
               --prerelease \
-              --notes "v3.5 reunifies Videos and GIFs, explicitly loops GIFs, adds media controls to video/GIF playback, keeps the gapless full-aspect Stream, and makes Fullscreen chrome hidden until the media is tapped."
+              --notes "v3.5.1 fixes startup/loading stalls by making Random progressively load unique batches with persistent seen-post and seen-cursor state. Oldest remains exhaustive because it must reach the end to identify the oldest posts. Video/GIF controls, GIF autoplay, fullscreen tap-to-toggle chrome, and the continuous Stream remain intact."
           fi
 
       - name: Record build result
@@ -147,12 +139,12 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           HEAD_SHA: ${{ github.sha }}
         run: |
-          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.5.0-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.5.txt
-          CONTENT=$(base64 -w0 /tmp/build-status-v3.5.txt)
-          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.5.txt"
+          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.5.1-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.5.1.txt
+          CONTENT=$(base64 -w0 /tmp/build-status-v3.5.1.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.5.1.txt"
           CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
           if [ -n "$CURRENT_SHA" ]; then
-            gh api --method PUT "$API" -f message='ci: record v3.5 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record v3.5.1 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
           else
-            gh api --method PUT "$API" -f message='ci: record v3.5 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record v3.5.1 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
           fi
