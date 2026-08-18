@@ -12,6 +12,8 @@ concurrency:
   group: reddit-native-redview-${{ github.ref }}
   cancel-in-progress: true
 
+# Final v3.5 trigger: unified Video/GIF playback controls + fullscreen tap chrome.
+
 jobs:
   build:
     name: Build native Reddit RedView Android APK
