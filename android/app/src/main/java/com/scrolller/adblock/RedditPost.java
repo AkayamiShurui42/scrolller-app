@@ -26,6 +26,8 @@ public final class RedditPost {
     public final List<String> imageUrls;
     public final String videoUrl;
     public final String posterUrl;
+    public final int mediaWidth;
+    public final int mediaHeight;
 
     private RedditPost(
             String id,
@@ -42,7 +44,9 @@ public final class RedditPost {
             MediaKind mediaKind,
             List<String> imageUrls,
             String videoUrl,
-            String posterUrl
+            String posterUrl,
+            int mediaWidth,
+            int mediaHeight
     ) {
         this.id = id;
         this.title = title;
@@ -59,6 +63,8 @@ public final class RedditPost {
         this.imageUrls = imageUrls;
         this.videoUrl = videoUrl;
         this.posterUrl = posterUrl;
+        this.mediaWidth = mediaWidth;
+        this.mediaHeight = mediaHeight;
     }
 
     public static RedditPost fromChild(JSONObject child) {
@@ -90,7 +96,9 @@ public final class RedditPost {
                 media.kind,
                 media.images,
                 media.video,
-                media.poster
+                media.poster,
+                media.width,
+                media.height
         );
     }
 
@@ -102,18 +110,26 @@ public final class RedditPost {
             JSONArray items = galleryData != null ? galleryData.optJSONArray("items") : null;
             JSONObject metadata = d.optJSONObject("media_metadata");
             ArrayList<String> urls = new ArrayList<>();
+            int width = 0;
+            int height = 0;
             if (items != null && metadata != null) {
                 for (int i = 0; i < items.length(); i++) {
                     JSONObject item = items.optJSONObject(i);
                     String mediaId = item != null ? item.optString("media_id", "") : "";
                     JSONObject m = metadata.optJSONObject(mediaId);
-                    JSONObject s = m != null ? m.optJSONObject("s") : null;
-                    if (s == null) continue;
-                    String u = firstNonEmpty(s.optString("gif", ""), s.optString("u", ""), s.optString("mp4", ""));
-                    if (!u.isEmpty()) urls.add(decode(u));
+                    JSONObject source = m != null ? m.optJSONObject("s") : null;
+                    if (source == null) continue;
+                    String u = firstNonEmpty(source.optString("gif", ""), source.optString("u", ""), source.optString("mp4", ""));
+                    if (!u.isEmpty()) {
+                        urls.add(decode(u));
+                        if (width <= 0 || height <= 0) {
+                            width = positive(source.optInt("x", 0), m != null ? m.optInt("x", 0) : 0);
+                            height = positive(source.optInt("y", 0), m != null ? m.optInt("y", 0) : 0);
+                        }
+                    }
                 }
             }
-            if (!urls.isEmpty()) return new ParsedMedia(MediaKind.GALLERY, urls, "", "");
+            if (!urls.isEmpty()) return new ParsedMedia(MediaKind.GALLERY, urls, "", "", width, height);
         }
 
         JSONObject secureMedia = d.optJSONObject("secure_media");
@@ -137,22 +153,26 @@ public final class RedditPost {
                         gifPreview ? MediaKind.GIF : MediaKind.VIDEO,
                         new ArrayList<>(),
                         video,
-                        previewImage(d));
+                        previewImage(d),
+                        positive(redditVideo.optInt("width", 0), previewWidth(d)),
+                        positive(redditVideo.optInt("height", 0), previewHeight(d)));
             }
         }
 
         String direct = decode(firstNonEmpty(d.optString("url_overridden_by_dest", ""), d.optString("url", "")));
         String hint = d.optString("post_hint", "");
         String domain = d.optString("domain", "");
+        int previewWidth = previewWidth(d);
+        int previewHeight = previewHeight(d);
 
         if (direct.matches("(?i).*\\.(mp4|webm|m3u8)(\\?.*)?$")) {
-            return new ParsedMedia(MediaKind.VIDEO, new ArrayList<>(), direct, previewImage(d));
+            return new ParsedMedia(MediaKind.VIDEO, new ArrayList<>(), direct, previewImage(d), previewWidth, previewHeight);
         }
 
         if (direct.matches("(?i).*\\.gif(\\?.*)?$")) {
             ArrayList<String> one = new ArrayList<>();
             one.add(direct);
-            return new ParsedMedia(MediaKind.GIF, one, "", direct);
+            return new ParsedMedia(MediaKind.GIF, one, "", direct, previewWidth, previewHeight);
         }
 
         if ("image".equals(hint)
@@ -162,21 +182,37 @@ public final class RedditPost {
             if (!image.isEmpty()) {
                 ArrayList<String> one = new ArrayList<>();
                 one.add(image);
-                return new ParsedMedia(MediaKind.IMAGE, one, "", image);
+                return new ParsedMedia(MediaKind.IMAGE, one, "", image, previewWidth, previewHeight);
             }
         }
 
-        // Preview-only external media is excluded. If it cannot render/play inline,
-        // it does not belong in the fullscreen media feed.
         return null;
     }
 
-    private static String previewImage(JSONObject d) {
+    private static JSONObject previewSource(JSONObject d) {
         JSONObject preview = d.optJSONObject("preview");
         JSONArray images = preview != null ? preview.optJSONArray("images") : null;
         JSONObject first = images != null ? images.optJSONObject(0) : null;
-        JSONObject source = first != null ? first.optJSONObject("source") : null;
+        return first != null ? first.optJSONObject("source") : null;
+    }
+
+    private static String previewImage(JSONObject d) {
+        JSONObject source = previewSource(d);
         return decode(source != null ? source.optString("url", "") : "");
+    }
+
+    private static int previewWidth(JSONObject d) {
+        JSONObject source = previewSource(d);
+        return source != null ? source.optInt("width", 0) : 0;
+    }
+
+    private static int previewHeight(JSONObject d) {
+        JSONObject source = previewSource(d);
+        return source != null ? source.optInt("height", 0) : 0;
+    }
+
+    private static int positive(int first, int fallback) {
+        return first > 0 ? first : Math.max(0, fallback);
     }
 
     private static String firstNonEmpty(String... values) {
@@ -194,12 +230,16 @@ public final class RedditPost {
         final List<String> images;
         final String video;
         final String poster;
+        final int width;
+        final int height;
 
-        ParsedMedia(MediaKind kind, List<String> images, String video, String poster) {
+        ParsedMedia(MediaKind kind, List<String> images, String video, String poster, int width, int height) {
             this.kind = kind;
             this.images = images;
             this.video = video;
             this.poster = poster;
+            this.width = width;
+            this.height = height;
         }
     }
 }
