@@ -61,8 +61,8 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         root.setBackgroundColor(Color.BLACK);
 
         ImageView image = new ImageView(context);
-        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        image.setBackgroundColor(0xFF111111);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setBackgroundColor(Color.BLACK);
         root.addView(image, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -89,7 +89,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     public void onBindViewHolder(@NonNull Holder holder, int position) {
         RedditPost post = posts.get(position);
         String thumb = !post.imageUrls.isEmpty() ? post.imageUrls.get(0) : post.posterUrl;
-        Glide.with(holder.image).load(thumb).centerCrop().into(holder.image);
+        Glide.with(holder.image).load(thumb).fitCenter().into(holder.image);
 
         if (post.mediaKind == RedditPost.MediaKind.VIDEO) holder.badge.setText("▶");
         else if (post.mediaKind == RedditPost.MediaKind.GALLERY) holder.badge.setText(post.imageUrls.size() + " ▣");
