@@ -1,6 +1,7 @@
 package com.scrolller.adblock.model
 
 enum class LayoutType { GRID, LIST }
+// Native UI defaults to RANDOM; OLDEST is resolved locally against a NEW corpus.
 enum class SortMode { RANDOM, HOT, NEW, OLDEST, TOP }
 enum class NsfwMode { ALL, SFW, NSFW }
 enum class ThemeMode { SYSTEM, DARK, LIGHT }
