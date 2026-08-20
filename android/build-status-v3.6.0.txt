@@ -1,0 +1,4 @@
+run_id=32381902474
+status=success
+head_sha=d57c5ce65dde93d63c238a390bcd3a5f42de33b1
+release_tag=v3.6.0-debug
