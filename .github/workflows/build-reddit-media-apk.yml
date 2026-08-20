@@ -4,8 +4,8 @@ on:
   push:
     branches: [ reddit-native-redview ]
     paths-ignore:
-      - 'android/active-build-v3.5.3.txt'
-      - 'android/build-status-v3.5.3.txt'
+      - 'android/active-build-*.txt'
+      - 'android/build-status-*.txt'
   workflow_dispatch:
 
 permissions:
@@ -24,20 +24,20 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Record active v3.5.3 run
+      - name: Record active v3.6.0 run
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}
         run: |
-          printf 'run_id=%s\nstatus=running\nhead_sha=%s\n' "$RUN_ID" "$HEAD_SHA" > /tmp/active-build-v3.5.3.txt
-          CONTENT=$(base64 -w0 /tmp/active-build-v3.5.3.txt)
-          API="repos/${GITHUB_REPOSITORY}/contents/android/active-build-v3.5.3.txt"
+          printf 'run_id=%s\nstatus=running\nhead_sha=%s\n' "$RUN_ID" "$HEAD_SHA" > /tmp/active-build-v3.6.0.txt
+          CONTENT=$(base64 -w0 /tmp/active-build-v3.6.0.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/active-build-v3.6.0.txt"
           CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
           if [ -n "$CURRENT_SHA" ]; then
-            gh api --method PUT "$API" -f message='ci: record active v3.5.3 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record active v3.6.0 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
           else
-            gh api --method PUT "$API" -f message='ci: record active v3.5.3 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record active v3.6.0 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
           fi
 
       - name: Apply v3.3 source patch
@@ -68,6 +68,14 @@ jobs:
         run: python3 patches/apply_v3_5_3_back_dispatcher.py
         working-directory: android
 
+      - name: Apply v3.6 fullscreen read hide feature
+        run: python3 patches/apply_v3_6_read_hide.py
+        working-directory: android
+
+      - name: Apply v3.6 Favorites protection
+        run: python3 patches/apply_v3_6_favorites_protection.py
+        working-directory: android
+
       - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
@@ -83,30 +91,44 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate RedView 3.5.3 behavior
+      - name: Validate RedView 3.6.0 behavior
         run: |
+          MAIN="android/app/src/main/java/com/scrolller/adblock/MainActivity.java"
+          PAGER="android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java"
+          GRID="android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java"
+          POST="android/app/src/main/java/com/scrolller/adblock/RedditPost.java"
           grep -q 'surface_type="texture_view"' android/app/src/main/res/layout/view_texture_player.xml
-          grep -q 'R.layout.view_texture_player' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q 'R.layout.view_texture_player' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
-          ! grep -q 'new PlayerView(context)' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          ! grep -q 'new PlayerView(context)' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
-          grep -q 'playerView.setPlayer(null)' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q 'public void releaseAllPlayers()' android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java
-          grep -q 'gridAdapter.releaseAllPlayers()' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'feedSeenPostIds' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'feedSeenCursors' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'Videos / GIFs' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'fullscreenChromeVisible' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'GridLayoutManager(this, 1)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'OnBackPressedCallback' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'getOnBackPressedDispatcher().addCallback' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'handleBackNavigation()' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'moveTaskToBack(true)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          ! grep -q 'public void onBackPressed()' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          ! grep -q 'new ParsedMedia(MediaKind.EXTERNAL' android/app/src/main/java/com/scrolller/adblock/RedditPost.java
+          grep -q 'R.layout.view_texture_player' "$PAGER"
+          grep -q 'R.layout.view_texture_player' "$GRID"
+          grep -q 'playerView.setPlayer(null)' "$PAGER"
+          grep -q 'public void releaseAllPlayers()' "$GRID"
+          grep -q 'gridAdapter.releaseAllPlayers()' "$MAIN"
+          grep -q 'feedSeenPostIds' "$MAIN"
+          grep -q 'feedSeenCursors' "$MAIN"
+          grep -q 'Videos / GIFs' "$MAIN"
+          grep -q 'GridLayoutManager(this, 1)' "$MAIN"
+          grep -q 'OnBackPressedCallback' "$MAIN"
+          grep -q 'getOnBackPressedDispatcher().addCallback' "$MAIN"
+          ! grep -q 'public void onBackPressed()' "$MAIN"
+          grep -q 'Exit Reddit Media?' "$MAIN"
+          grep -q 'There are no previous pages in this app history.' "$MAIN"
+          grep -q 'trackFullscreenVisit(position)' "$MAIN"
+          grep -q 'screen != Screen.FAVORITES' "$MAIN"
+          grep -q 'pendingReadAfter' "$MAIN"
+          grep -q 'entry.getValue().size() >= 5' "$MAIN"
+          grep -q 'hiddenPosts' "$MAIN"
+          grep -q 'Hidden posts · ' "$MAIN"
+          grep -q 'Saved posts' "$MAIN"
+          grep -q 'favoritesSaved' "$MAIN"
+          grep -q 'hiddenLibrary || favoritesSaved || !hiddenPosts.containsKey' "$MAIN"
+          grep -q 'onRestoreHidden' "$PAGER"
+          grep -q '↶ Restore' "$PAGER"
+          grep -q 'removePostById' "$GRID"
+          ! grep -q 'trackFullscreenVisit' "$GRID"
+          ! grep -q 'new ParsedMedia(MediaKind.EXTERNAL' "$POST"
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 17' android/app/build.gradle
-          grep -q 'versionName "3.5.3"' android/app/build.gradle
+          grep -q 'versionCode 18' android/app/build.gradle
+          grep -q 'versionName "3.6.0"' android/app/build.gradle
 
       - name: Prepare stable debug signing key
         run: |
@@ -133,15 +155,15 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='17'" /tmp/badging.txt
-          grep -q "versionName='3.5.3'" /tmp/badging.txt
-          cp "$APK" Reddit-Media-v3.5.3-debug.apk
+          grep -q "versionCode='18'" /tmp/badging.txt
+          grep -q "versionName='3.6.0'" /tmp/badging.txt
+          cp "$APK" Reddit-Media-v3.6.0-debug.apk
 
       - name: Upload native Reddit APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.5.3-android16-back-dispatcher-texture-surface-debug-apk
-          path: Reddit-Media-v3.5.3-debug.apk
+          name: reddit-media-v3.6.0-read-hide-favorites-protection-back-confirm-debug-apk
+          path: Reddit-Media-v3.6.0-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -149,14 +171,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v3.5.3-debug >/dev/null 2>&1; then
-            gh release upload v3.5.3-debug Reddit-Media-v3.5.3-debug.apk --clobber
+          if gh release view v3.6.0-debug >/dev/null 2>&1; then
+            gh release upload v3.6.0-debug Reddit-Media-v3.6.0-debug.apk --clobber
           else
-            gh release create v3.5.3-debug Reddit-Media-v3.5.3-debug.apk \
+            gh release create v3.6.0-debug Reddit-Media-v3.6.0-debug.apk \
               --target reddit-native-redview \
-              --title "Reddit Media v3.5.3 debug" \
+              --title "Reddit Media v3.6.0 debug" \
               --prerelease \
-              --notes "v3.5.3 migrates Back handling from deprecated Activity.onBackPressed() to AndroidX OnBackPressedDispatcher so Android 16 edge gestures unwind browser and in-app history before returning Home, with root Back moving the existing task to Recents. It also retains the v3.5.2 TextureView stale-media-surface fix."
+              --notes "v3.6.0 adds persistent fullscreen-only read tracking with a five-unique-post delayed local hide, a Favorites Hidden library with Restore, Saved Favorites protection from both read tracking and hidden filtering, and root-Home exit confirmation. It retains the Android 16 Back dispatcher and TextureView stale-media-surface fixes."
           fi
 
       - name: Record build result
@@ -167,12 +189,12 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           HEAD_SHA: ${{ github.sha }}
         run: |
-          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.5.3-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.5.3.txt
-          CONTENT=$(base64 -w0 /tmp/build-status-v3.5.3.txt)
-          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.5.3.txt"
+          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.6.0-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.6.0.txt
+          CONTENT=$(base64 -w0 /tmp/build-status-v3.6.0.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.6.0.txt"
           CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
           if [ -n "$CURRENT_SHA" ]; then
-            gh api --method PUT "$API" -f message='ci: record v3.5.3 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record v3.6.0 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
           else
-            gh api --method PUT "$API" -f message='ci: record v3.5.3 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record v3.6.0 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
           fi
