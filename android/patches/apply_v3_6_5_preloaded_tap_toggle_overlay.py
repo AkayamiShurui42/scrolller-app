@@ -9,7 +9,8 @@ def replace_required(text, old, new, label):
 # ---------------------------------------------------------------------------
 # MainActivity: fullscreen chrome is preloaded and visible by default. The user
 # can hide/show it with a background media tap, and that state persists across
-# fullscreen page changes.
+# fullscreen page changes. Search also gets the same Random ordering option as
+# normal feeds instead of forcibly falling back to Best.
 # ---------------------------------------------------------------------------
 main_path = Path('app/src/main/java/com/scrolller/adblock/MainActivity.java')
 s = main_path.read_text()
@@ -37,6 +38,50 @@ s = replace_required(
     '''                layoutMode = pair[0];
                 fullscreenChromeVisible = true;''',
     'layout switch keeps overlay preloaded visible')
+
+# Search used to explicitly forbid Random. Keep the current sort on Search entry
+# and expose Random alongside the other search sort modes.
+s = replace_required(
+    s,
+    '''        if (sort.equals("random")) sort = "best";
+        screen = Screen.SEARCH;
+        context = "search";''',
+    '''        screen = Screen.SEARCH;
+        context = "search";''',
+    'stop forcing Search Random back to Best')
+
+s = replace_required(
+    s,
+    '''        if (screen == Screen.SEARCH) {
+            values = new String[]{"best", "hot", "new", "top"};''',
+    '''        if (screen == Screen.SEARCH) {
+            values = new String[]{"random", "best", "hot", "new", "top"};''',
+    'Random option in Search sort sheet')
+
+# Reddit search itself has no Random sort. Fetch a broad New sample, then shuffle
+# the already-filtered visible results locally, matching the app's feed Random
+# behavior without reintroducing hidden/promoted/text-only items.
+s = replace_required(
+    s,
+    '''        String searchSort = sort.equals("best") ? "relevance"
+                : (sort.equals("rising") ? "new" : sort);''',
+    '''        String searchSort = sort.equals("random") ? "new"
+                : sort.equals("best") ? "relevance"
+                : (sort.equals("rising") ? "new" : sort);''',
+    'map Search Random to Reddit New sample')
+
+s = replace_required(
+    s,
+    '''            loading = false;
+            replacePosts(collected);
+            if (collected.isEmpty()) {
+                setStatus("No matching media found for “" + query + "”.", false);''',
+    '''            loading = false;
+            if (sort.equals("random")) Collections.shuffle(collected);
+            replacePosts(collected);
+            if (collected.isEmpty()) {
+                setStatus("No matching media found for “" + query + "”.", false);''',
+    'shuffle Search Random results after filtering')
 
 main_path.write_text(s)
 
@@ -157,4 +202,4 @@ new_tap_class = '''    private final class TapFrameLayout extends FrameLayout {
 p = replace_required(p, old_tap_class, new_tap_class, 'preloaded background tap toggle dispatcher')
 
 pager_path.write_text(p)
-print('Applied v3.6.5 preloaded visible fullscreen overlay with background tap toggle')
+print('Applied v3.6.5 preloaded tap-toggle overlay + Random search sorting')
