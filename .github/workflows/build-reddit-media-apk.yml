@@ -96,7 +96,7 @@ jobs:
         run: python3 patches/apply_v3_6_4_single_owner_overlay.py
         working-directory: android
 
-      - name: Apply v3.6.5 preloaded tap-toggle overlay
+      - name: Apply v3.6.5 preloaded tap-toggle overlay and Random search
         run: python3 patches/apply_v3_6_5_preloaded_tap_toggle_overlay.py
         working-directory: android
 
@@ -149,6 +149,9 @@ jobs:
           ! grep -q 'root.setOnClickListener(v -> listener.onToggleChrome())' "$PAGER"
           ! grep -q 'playerView.setOnClickListener(v -> listener.onToggleChrome())' "$PAGER"
           ! grep -q 'image.setOnClickListener(v -> listener.onToggleChrome())' "$PAGER"
+          grep -Fq 'values = new String[]{"random", "best", "hot", "new", "top"};' "$MAIN"
+          grep -Fq 'String searchSort = sort.equals("random") ? "new"' "$MAIN"
+          ! grep -Fq 'if (sort.equals("random")) sort = "best";' "$MAIN"
           grep -q 'Clear hidden list · restore all' "$MAIN"
           grep -q 'Restore images / galleries' "$MAIN"
           grep -q 'Restore videos / GIFs' "$MAIN"
@@ -195,7 +198,7 @@ jobs:
       - name: Upload native Reddit APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.6.5-preloaded-tap-toggle-overlay-debug-apk
+          name: reddit-media-v3.6.5-preloaded-tap-toggle-overlay-random-search-debug-apk
           path: Reddit-Media-v3.6.5-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -211,7 +214,7 @@ jobs:
               --target reddit-native-redview \
               --title "Reddit Media v3.6.5 debug" \
               --prerelease \
-              --notes "v3.6.5 keeps fullscreen overlay controls attached and preloaded, shows them by default on fullscreen entry, and toggles them with a short background/media tap. The state persists across swipes. Save/Comments/Share and Media3 controller buttons are excluded from the background toggle, so actions do not accidentally hide the overlay. The explicit v3.6.4 Hide button is removed. All prior pagination, media-ready read tracking, Saved/Hidden separation, Hidden management, stale-surface, and Android 16 Back fixes remain."
+              --notes "v3.6.5 keeps fullscreen overlay controls attached and preloaded, shows them by default on fullscreen entry, and toggles them with a short background/media tap. The state persists across swipes. Save/Comments/Share and Media3 controller buttons are excluded from the background toggle, so actions do not accidentally hide the overlay. Search now includes Random ordering, implemented as a larger filtered Reddit search sample followed by client-side shuffling. The explicit v3.6.4 Hide button is removed. All prior pagination, media-ready read tracking, Saved/Hidden separation, Hidden management, stale-surface, and Android 16 Back fixes remain."
           fi
 
       - name: Record build result
