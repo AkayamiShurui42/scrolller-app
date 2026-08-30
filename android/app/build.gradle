@@ -10,13 +10,13 @@ android {
         applicationId "com.crimson.redditmedia"
         minSdk 24
         targetSdk 36
-        versionCode 24
-        versionName "3.6.6"
+        versionCode 25
+        versionName "3.6.7"
     }
 
     signingConfigs {
         debug {
-            storeFile file('scrolller-debug.keystore')
+            storeFile file('scrolller-debug.keystore.b64').exists() ? file('scrolller-debug.keystore') : file('scrolller-debug.keystore')
             storePassword 'android'
             keyAlias 'androiddebugkey'
             keyPassword 'android'
