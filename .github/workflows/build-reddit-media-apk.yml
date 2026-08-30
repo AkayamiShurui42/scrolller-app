@@ -108,8 +108,24 @@ jobs:
         run: python3 patches/apply_v3_6_7_reservoir.py
         working-directory: android
 
-      - name: Apply v3.6.7 HD media and external provider resolution
-        run: python3 patches/apply_v3_6_7_media_quality.py
+      - name: Apply v3.6.7 retain RedGIFs posts
+        run: python3 patches/apply_v3_6_7_redgifs_post.py
+        working-directory: android
+
+      - name: Apply v3.6.7 RedGIFs HD resolver
+        run: python3 patches/apply_v3_6_7_redgifs_resolver.py
+        working-directory: android
+
+      - name: Apply v3.6.7 highest-quality Media3 factory
+        run: python3 patches/apply_v3_6_7_hq_player.py
+        working-directory: android
+
+      - name: Apply v3.6.7 fullscreen HD media wiring
+        run: python3 patches/apply_v3_6_7_pager_media.py
+        working-directory: android
+
+      - name: Apply v3.6.7 Stream HD media wiring
+        run: python3 patches/apply_v3_6_7_grid_media.py
         working-directory: android
 
       - name: Setup Java 17
@@ -153,7 +169,6 @@ jobs:
           grep -q '!previous.saved' "$MAIN"
           grep -q 'Player.STATE_READY' "$PAGER"
 
-          # Fullscreen overlay remains preloaded and tap-toggle controlled.
           grep -q 'TapFrameLayout' "$PAGER"
           grep -q 'dispatchTouchEvent(MotionEvent event)' "$PAGER"
           grep -q 'private boolean fullscreenChromeVisible = true' "$MAIN"
@@ -162,7 +177,6 @@ jobs:
           ! grep -q 'Button hideChrome = pillButton("Hide")' "$PAGER"
           ! grep -q 'root.setOnClickListener(v -> listener.onToggleChrome())' "$PAGER"
 
-          # Search remains clean/exhaustive/unique.
           grep -Fq 'values = new String[]{"random", "best", "hot", "new", "top"};' "$MAIN"
           grep -Fq 'String searchSort = sort.equals("random") ? "new"' "$MAIN"
           grep -q 'prefs.edit().remove("lastSearch").apply()' "$MAIN"
@@ -173,13 +187,11 @@ jobs:
           grep -q 'page < 49' "$MAIN"
           grep -q 'finishSearchCollection' "$MAIN"
 
-          # Native subreddit Subscribe / Unsubscribe remains.
           grep -q 'private Button subscribeButton;' "$MAIN"
           grep -q 'subscribeButton.setText(subscribed ? "Unsubscribe" : "Subscribe")' "$MAIN"
           grep -q 'engine.postForm("/api/subscribe"' "$MAIN"
           grep -q 'currentlySubscribed ? "unsub" : "sub"' "$MAIN"
 
-          # v3.6.7 deep subreddit loading.
           grep -q 'postAdapter.getItemCount() < 300' "$MAIN"
           grep -q 'postAdapter.getItemCount() >= 800' "$MAIN"
           grep -q 'prefetchRandomSubredditArchiveIfNeeded' "$MAIN"
@@ -188,7 +200,6 @@ jobs:
           grep -q 'position >= postAdapter.getItemCount() - 60' "$MAIN"
           grep -q 'archivePrefetchGeneration' "$MAIN"
 
-          # v3.6.7 external media and highest-quality playback.
           grep -q '"redgifs:" + redgifsId' "$POST"
           grep -q 'public String videoUrl;' "$POST"
           grep -q 'RedgifsResolver.resolve' "$PAGER"
