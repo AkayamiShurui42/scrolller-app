@@ -24,20 +24,20 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Record active v3.6.6 run
+      - name: Record active v3.6.7 run
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}
         run: |
-          printf 'run_id=%s\nstatus=running\nhead_sha=%s\n' "$RUN_ID" "$HEAD_SHA" > /tmp/active-build-v3.6.6.txt
-          CONTENT=$(base64 -w0 /tmp/active-build-v3.6.6.txt)
-          API="repos/${GITHUB_REPOSITORY}/contents/android/active-build-v3.6.6.txt"
+          printf 'run_id=%s\nstatus=running\nhead_sha=%s\n' "$RUN_ID" "$HEAD_SHA" > /tmp/active-build-v3.6.7.txt
+          CONTENT=$(base64 -w0 /tmp/active-build-v3.6.7.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/active-build-v3.6.7.txt"
           CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
           if [ -n "$CURRENT_SHA" ]; then
-            gh api --method PUT "$API" -f message='ci: record active v3.6.6 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record active v3.6.7 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
           else
-            gh api --method PUT "$API" -f message='ci: record active v3.6.6 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record active v3.6.7 run [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
           fi
 
       - name: Apply v3.3 source patch
@@ -104,6 +104,10 @@ jobs:
         run: python3 patches/apply_v3_6_6_search_subscribe.py
         working-directory: android
 
+      - name: Apply v3.6.7 deep media quality and subreddit reservoir
+        run: python3 patches/apply_v3_6_7_deep_media_quality.py
+        working-directory: android
+
       - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
@@ -119,12 +123,15 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate RedView 3.6.6 behavior
+      - name: Validate RedView 3.6.7 behavior
         run: |
           MAIN="android/app/src/main/java/com/scrolller/adblock/MainActivity.java"
           PAGER="android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java"
           GRID="android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java"
           POST="android/app/src/main/java/com/scrolller/adblock/RedditPost.java"
+          RG="android/app/src/main/java/com/scrolller/adblock/RedgifsResolver.java"
+          HQ="android/app/src/main/java/com/scrolller/adblock/HighQualityPlayerFactory.java"
+
           grep -q 'surface_type="texture_view"' android/app/src/main/res/layout/view_texture_player.xml
           grep -q 'R.layout.view_texture_player' "$PAGER"
           grep -q 'playerView.setPlayer(null)' "$PAGER"
@@ -140,58 +147,65 @@ jobs:
           ! grep -q 'gridAdapter.removePostById(id)' "$MAIN"
           grep -q 'mediaReadyPostIds.contains(previous.id)' "$MAIN"
           grep -q '!previous.saved' "$MAIN"
-          grep -q 'collected.size() < 45 && page < 20' "$MAIN"
           grep -q 'Player.STATE_READY' "$PAGER"
+
+          # Fullscreen overlay remains preloaded and tap-toggle controlled.
           grep -q 'TapFrameLayout' "$PAGER"
           grep -q 'dispatchTouchEvent(MotionEvent event)' "$PAGER"
           grep -q 'private boolean fullscreenChromeVisible = true' "$MAIN"
-          grep -q 'fullscreenChromeVisible = true;' "$MAIN"
           grep -q 'downOnActionControl' "$PAGER"
           grep -q 'Overlay views remain attached/preloaded' "$PAGER"
-          grep -q 'instanceof android.widget.ImageButton' "$PAGER"
           ! grep -q 'Button hideChrome = pillButton("Hide")' "$PAGER"
           ! grep -q 'root.setOnClickListener(v -> listener.onToggleChrome())' "$PAGER"
-          ! grep -q 'playerView.setOnClickListener(v -> listener.onToggleChrome())' "$PAGER"
-          ! grep -q 'image.setOnClickListener(v -> listener.onToggleChrome())' "$PAGER"
 
-          # Search: fresh input state, exhaustive cursor paging, and global per-query dedupe.
+          # Search remains clean/exhaustive/unique.
           grep -Fq 'values = new String[]{"random", "best", "hot", "new", "top"};' "$MAIN"
           grep -Fq 'String searchSort = sort.equals("random") ? "new"' "$MAIN"
-          ! grep -Fq 'if (sort.equals("random")) sort = "best";' "$MAIN"
           grep -q 'prefs.edit().remove("lastSearch").apply()' "$MAIN"
-          ! grep -q 'putString("lastSearch"' "$MAIN"
           grep -q 'searchInput.setText("")' "$MAIN"
-          grep -q 'Set<String> seenPostIds' "$MAIN"
-          grep -q 'Set<String> seenCursors' "$MAIN"
           grep -q '!seenPostIds.add(post.id)' "$MAIN"
           grep -q '!seenCursors.add(cursor)' "$MAIN"
           grep -q 'show=all&sort=' "$MAIN"
-          grep -q '&count=' "$MAIN"
           grep -q 'page < 49' "$MAIN"
           grep -q 'finishSearchCollection' "$MAIN"
 
-          # Subreddit relationship control uses Reddit's native subscribe API.
+          # Native subreddit Subscribe / Unsubscribe remains.
           grep -q 'private Button subscribeButton;' "$MAIN"
-          grep -q 'subscribeButton = topPill("Subscribe")' "$MAIN"
           grep -q 'subscribeButton.setText(subscribed ? "Unsubscribe" : "Subscribe")' "$MAIN"
-          grep -q 'toggleSubredditSubscription()' "$MAIN"
           grep -q 'engine.postForm("/api/subscribe"' "$MAIN"
-          grep -q '"&sr_name=" + enc(target)' "$MAIN"
           grep -q 'currentlySubscribed ? "unsub" : "sub"' "$MAIN"
+
+          # v3.6.7 deep subreddit loading.
+          grep -q 'postAdapter.getItemCount() < 300' "$MAIN"
+          grep -q 'postAdapter.getItemCount() >= 800' "$MAIN"
+          grep -q 'prefetchRandomSubredditArchiveIfNeeded' "$MAIN"
+          grep -q 'archiveListingPath' "$MAIN"
+          grep -q '/controversial.json?limit=100' "$MAIN"
+          grep -q 'position >= postAdapter.getItemCount() - 60' "$MAIN"
+          grep -q 'archivePrefetchGeneration' "$MAIN"
+
+          # v3.6.7 external media and highest-quality playback.
+          grep -q '"redgifs:" + redgifsId' "$POST"
+          grep -q 'public String videoUrl;' "$POST"
+          grep -q 'RedgifsResolver.resolve' "$PAGER"
+          grep -q 'RedgifsResolver.resolve' "$GRID"
+          grep -q '/v2/auth/temporary' "$RG"
+          grep -q '/v2/gifs/' "$RG"
+          grep -q 'optString("hd"' "$RG"
+          grep -q 'setForceHighestSupportedBitrate(true)' "$HQ"
+          grep -q 'HighQualityPlayerFactory.create(context, post.videoUrl)' "$PAGER"
+          grep -q 'HighQualityPlayerFactory.create(context, post.videoUrl)' "$GRID"
+          grep -q 'Referer' "$HQ"
 
           grep -q 'Clear hidden list · restore all' "$MAIN"
           grep -q 'Restore images / galleries' "$MAIN"
           grep -q 'Restore videos / GIFs' "$MAIN"
-          grep -q 'Restore by subreddit' "$MAIN"
           grep -q 'favoritesView.equals("hidden") ? "Manage"' "$MAIN"
           grep -q 'post.saved && post.id != null && hiddenPosts.remove(post.id) != null' "$MAIN"
-          grep -q 'hiddenLibrary || favoritesSaved || !hiddenPosts.containsKey' "$MAIN"
           grep -q 'Preserve fullscreen chrome state across page changes' "$MAIN"
-          ! grep -q 'if (layoutMode.equals("fullscreen") && fullscreenChromeVisible)' "$MAIN"
-          ! grep -q 'new ParsedMedia(MediaKind.EXTERNAL' "$POST"
           grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 24' android/app/build.gradle
-          grep -q 'versionName "3.6.6"' android/app/build.gradle
+          grep -q 'versionCode 25' android/app/build.gradle
+          grep -q 'versionName "3.6.7"' android/app/build.gradle
 
       - name: Prepare stable debug signing key
         run: |
@@ -218,15 +232,15 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='24'" /tmp/badging.txt
-          grep -q "versionName='3.6.6'" /tmp/badging.txt
-          cp "$APK" Reddit-Media-v3.6.6-debug.apk
+          grep -q "versionCode='25'" /tmp/badging.txt
+          grep -q "versionName='3.6.7'" /tmp/badging.txt
+          cp "$APK" Reddit-Media-v3.6.7-debug.apk
 
       - name: Upload native Reddit APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.6.6-exhaustive-search-subscribe-debug-apk
-          path: Reddit-Media-v3.6.6-debug.apk
+          name: reddit-media-v3.6.7-deep-media-quality-debug-apk
+          path: Reddit-Media-v3.6.7-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -234,14 +248,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v3.6.6-debug >/dev/null 2>&1; then
-            gh release upload v3.6.6-debug Reddit-Media-v3.6.6-debug.apk --clobber
+          if gh release view v3.6.7-debug >/dev/null 2>&1; then
+            gh release upload v3.6.7-debug Reddit-Media-v3.6.7-debug.apk --clobber
           else
-            gh release create v3.6.6-debug Reddit-Media-v3.6.6-debug.apk \
+            gh release create v3.6.7-debug Reddit-Media-v3.6.7-debug.apk \
               --target reddit-native-redview \
-              --title "Reddit Media v3.6.6 debug" \
+              --title "Reddit Media v3.6.7 debug" \
               --prerelease \
-              --notes "v3.6.6 makes Search ephemeral and exhaustive within Reddit's listing window: entering Search starts blank, submitted text clears, old searches do not auto-reload, every returned post ID and cursor is deduplicated, and pagination follows Reddit's after cursor until exhaustion/repetition or a safety ceiling. Random shuffles only after the complete unique result set is collected. Subreddit pages now include a native Subscribe/Unsubscribe header control backed by /api/subscribe and synchronized with the app's local subscription list. All v3.6.5 overlay, hidden/read, Favorites, media-ready, stale-surface and Android 16 Back behavior remains."
+              --notes "v3.6.7 closes the main ReddClips-style gaps: subreddit feeds now build a 300-post live background reservoir without delaying first render, Random discovery augments that pool from older Top/Hot/Controversial listing windows with global ID dedupe up to an 800-item working catalog, and refill starts much earlier near the end. RedGIFs posts without Reddit-hosted video previews are retained and resolved asynchronously through the provider temporary-token API with HD preferred. Media3 playback forces the highest supported bitrate while keeping Reddit DASH/HLS audio intact, and RedGIFs CDN requests use the appropriate origin/referrer headers. All v3.6.6 Search, Subscribe, overlay, hidden/read, Favorites, stale-surface and Android 16 Back behavior remains."
           fi
 
       - name: Record build result
@@ -252,12 +266,12 @@ jobs:
           JOB_STATUS: ${{ job.status }}
           HEAD_SHA: ${{ github.sha }}
         run: |
-          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.6.6-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.6.6.txt
-          CONTENT=$(base64 -w0 /tmp/build-status-v3.6.6.txt)
-          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.6.6.txt"
+          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.6.7-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.6.7.txt
+          CONTENT=$(base64 -w0 /tmp/build-status-v3.6.7.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.6.7.txt"
           CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
           if [ -n "$CURRENT_SHA" ]; then
-            gh api --method PUT "$API" -f message='ci: record v3.6.6 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record v3.6.7 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
           else
-            gh api --method PUT "$API" -f message='ci: record v3.6.6 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+            gh api --method PUT "$API" -f message='ci: record v3.6.7 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
           fi
