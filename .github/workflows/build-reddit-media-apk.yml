@@ -104,8 +104,12 @@ jobs:
         run: python3 patches/apply_v3_6_6_search_subscribe.py
         working-directory: android
 
-      - name: Apply v3.6.7 deep media quality and subreddit reservoir
-        run: python3 patches/apply_v3_6_7_deep_media_quality.py
+      - name: Apply v3.6.7 subreddit reservoir
+        run: python3 patches/apply_v3_6_7_reservoir.py
+        working-directory: android
+
+      - name: Apply v3.6.7 HD media and external provider resolution
+        run: python3 patches/apply_v3_6_7_media_quality.py
         working-directory: android
 
       - name: Setup Java 17
