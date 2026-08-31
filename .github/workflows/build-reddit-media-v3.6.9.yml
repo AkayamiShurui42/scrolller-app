@@ -51,6 +51,7 @@ jobs:
           python3 patches/apply_v3_6_7_grid_media.py
           python3 patches/apply_v3_6_8_scrolller_source.py
           python3 patches/apply_v3_6_9_unread_content_filters.py
+          python3 patches/apply_v3_6_9_filters_saved_state.py
 
       - name: Setup Java 17
         uses: actions/setup-java@v5
@@ -81,15 +82,21 @@ jobs:
           grep -q 'private boolean isSavedForUnread(RedditPost post)' "$MAIN"
           grep -q 'post.saved || savedPostIds.contains(post.id)' "$MAIN"
           grep -q 'persistSavedPostIds' "$MAIN"
-          grep -q 'postAdapter.removePostById(post.id)' "$MAIN"
-          grep -q 'gridAdapter.removePostById(post.id)' "$MAIN"
-          grep -q 'No unread media remains in this collection' "$MAIN"
+          grep -q 'savedPostIds.clear()' "$MAIN"
+          grep -q 'feedSeenPostIds.remove(post.id)' "$MAIN"
+
+          # Active ViewPager collection remains immutable on Save. This preserves
+          # the v3.6.1 fix for synthetic page changes/skipping/reloads.
+          ! grep -q 'postAdapter.removePostById(post.id)' "$MAIN"
+          ! grep -q 'gridAdapter.removePostById(post.id)' "$MAIN"
+          grep -q '!savedPostIds.contains(previous.id)' "$MAIN"
+          grep -q 'current pager collection' "$MAIN"
 
           # Saved and Hidden remain explicit management libraries.
           grep -q 'boolean favoritesSaved = screen == Screen.FAVORITES' "$MAIN"
           grep -q 'hiddenLibrary || favoritesSaved' "$MAIN"
-          grep -q 'savedPostIds.clear()' "$MAIN"
           grep -q 'hiddenPosts.remove(savedPost.id)' "$MAIN"
+          grep -q 'loadFavoritesInternal();' "$MAIN"
 
           # Independent content preferences affect discovery only.
           grep -q 'blockLgbtTopics = prefs.getBoolean' "$MAIN"
@@ -173,7 +180,7 @@ jobs:
               --target reddit-native-redview \
               --title "Reddit Media v3.6.9 debug" \
               --prerelease \
-              --notes "v3.6.9 makes Saved and Read/Hidden mutually exclusive terminal states for the Unread feed. A successful Save immediately removes that post from the active unread collection and stores its canonical Reddit ID locally; Favorites refresh reconciles the local Saved set with Reddit. Unsave makes the post eligible for future discovery again. Adds independent Account toggles for blocking LGBTQ-topic posts and gore/blood content based only on subreddit/title text. Content filtering never guesses account identity, never writes to Hidden, and Saved/Hidden management libraries bypass the content filters. No discovery-depth, Scrolller, RedGIFs, media-quality, Search, Subscribe, overlay or cache architecture changes are included in this release."
+              --notes "v3.6.9 separates Unread, Saved, Hidden/Read, and content-filter states. Saving immediately moves the canonical Reddit ID out of the logical Unread population and removes any legacy Hidden overlap, while the active ViewPager collection remains immutable until reload to preserve pager stability. Unsave makes the post eligible for future discovery again. Adds independent Account toggles for blocking LGBTQ-topic posts and gore/blood content based only on subreddit/title text; these filters never create Hidden/Read records and Saved/Hidden management libraries remain accessible. No new quality crawl, discovery-depth, cache architecture, Scrolller, RedGIFs, Search, Subscribe, or overlay behavior is added in this release."
           fi
 
       - name: Record build result
