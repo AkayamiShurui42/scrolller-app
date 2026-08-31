@@ -90,7 +90,7 @@ jobs:
           ! grep -q 'postAdapter.removePostById(post.id)' "$MAIN"
           ! grep -q 'gridAdapter.removePostById(post.id)' "$MAIN"
           grep -q '!savedPostIds.contains(previous.id)' "$MAIN"
-          grep -q 'current pager collection' "$MAIN"
+          grep -q 'Keeping this collection immutable prevents the old' "$MAIN"
 
           # Saved and Hidden remain explicit management libraries.
           grep -q 'boolean favoritesSaved = screen == Screen.FAVORITES' "$MAIN"
