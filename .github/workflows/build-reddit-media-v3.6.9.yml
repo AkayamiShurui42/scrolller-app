@@ -1,0 +1,195 @@
+name: Build Reddit Media v3.6.9
+
+on:
+  push:
+    branches: [ reddit-native-redview ]
+    paths-ignore:
+      - 'android/active-build-*.txt'
+      - 'android/build-status-*.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reddit-media-v3.6.9-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Reddit Media 3.6.9 unread-state filters APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Apply source patch stack
+        working-directory: android
+        run: |
+          python3 patches/apply_v3_3.py
+          python3 patches/apply_v3_4.py
+          python3 patches/apply_v3_4_stream.py
+          python3 patches/apply_v3_5.py
+          python3 patches/apply_v3_5_1_loading.py
+          python3 patches/apply_v3_5_2_texture_surface.py
+          python3 patches/apply_v3_5_3_back_dispatcher.py
+          python3 patches/apply_v3_6_read_hide.py
+          python3 patches/apply_v3_6_favorites_protection.py
+          python3 patches/apply_v3_6_1_stable_pager.py
+          python3 patches/apply_v3_6_1_immediate_mark.py
+          python3 patches/apply_v3_6_2_loading_ready_hidden_manage.py
+          python3 patches/apply_v3_6_3_persistent_fullscreen_overlay.py
+          python3 patches/apply_v3_6_4_single_owner_overlay.py
+          python3 patches/apply_v3_6_5_preloaded_tap_toggle_overlay.py
+          python3 patches/apply_v3_6_6_search_subscribe.py
+          python3 patches/apply_v3_6_7_reservoir.py
+          python3 patches/apply_v3_6_7_redgifs_post.py
+          python3 patches/apply_v3_6_7_redgifs_resolver.py
+          python3 patches/apply_v3_6_7_hq_player.py
+          python3 patches/apply_v3_6_7_pager_media.py
+          python3 patches/apply_v3_6_7_grid_media.py
+          python3 patches/apply_v3_6_8_scrolller_source.py
+          python3 patches/apply_v3_6_9_unread_content_filters.py
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Validate unread-state and content filters
+        run: |
+          MAIN="android/app/src/main/java/com/scrolller/adblock/MainActivity.java"
+          POST="android/app/src/main/java/com/scrolller/adblock/RedditPost.java"
+          SCROLLLER="android/app/src/main/java/com/scrolller/adblock/ScrolllerClient.java"
+          PAGER="android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java"
+          GRID="android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java"
+          HQ="android/app/src/main/java/com/scrolller/adblock/HighQualityPlayerFactory.java"
+
+          # v3.6.9 state model: Unread excludes both Read/Hidden and Saved.
+          grep -q 'private final Set<String> savedPostIds = new HashSet<>()' "$MAIN"
+          grep -q 'private boolean isSavedForUnread(RedditPost post)' "$MAIN"
+          grep -q 'post.saved || savedPostIds.contains(post.id)' "$MAIN"
+          grep -q 'persistSavedPostIds' "$MAIN"
+          grep -q 'postAdapter.removePostById(post.id)' "$MAIN"
+          grep -q 'gridAdapter.removePostById(post.id)' "$MAIN"
+          grep -q 'No unread media remains in this collection' "$MAIN"
+
+          # Saved and Hidden remain explicit management libraries.
+          grep -q 'boolean favoritesSaved = screen == Screen.FAVORITES' "$MAIN"
+          grep -q 'hiddenLibrary || favoritesSaved' "$MAIN"
+          grep -q 'savedPostIds.clear()' "$MAIN"
+          grep -q 'hiddenPosts.remove(savedPost.id)' "$MAIN"
+
+          # Independent content preferences affect discovery only.
+          grep -q 'blockLgbtTopics = prefs.getBoolean' "$MAIN"
+          grep -q 'blockGoreContent = prefs.getBoolean' "$MAIN"
+          grep -q 'private boolean isContentBlocked(RedditPost post)' "$MAIN"
+          grep -q 'LGBTQ topics · ' "$MAIN"
+          grep -q 'Gore / blood · ' "$MAIN"
+          grep -q 'These filters reject posts from Unread discovery only' "$MAIN"
+          grep -q 'isSavedForUnread(post) || isContentBlocked(post)' "$MAIN"
+          ! grep -q 'hiddenPosts.put.*blockLgbt' "$MAIN"
+          ! grep -q 'hiddenPosts.put.*blockGore' "$MAIN"
+
+          # Preserve the real swipe/read gate: no programmatic read marking.
+          grep -q 'fullscreenUserGesture' "$MAIN"
+          grep -q 'mediaReadyPostIds.contains(previous.id)' "$MAIN"
+          grep -q '!previous.saved' "$MAIN"
+
+          # Preserve v3.6.8 multisource/high-quality behavior unchanged.
+          grep -q 'https://api.scrolller.com/admin' "$SCROLLLER"
+          grep -q 'public static RedditPost fromScrolller' "$POST"
+          grep -q 'ScrolllerClient.crawlSubreddit(targetSubreddit, 600' "$MAIN"
+          grep -q 'postAdapter.getItemCount() < 1400' "$MAIN"
+          grep -q 'postAdapter.getItemCount() < 300' "$MAIN"
+          grep -q 'postAdapter.getItemCount() >= 800' "$MAIN"
+          grep -q 'setForceHighestSupportedBitrate(true)' "$HQ"
+          grep -q 'RedgifsResolver.resolve' "$PAGER"
+          grep -q 'RedgifsResolver.resolve' "$GRID"
+
+          # Preserve Search/Subscribe/overlay behavior.
+          grep -q 'finishSearchCollection' "$MAIN"
+          grep -q 'engine.postForm("/api/subscribe"' "$MAIN"
+          grep -q 'private boolean fullscreenChromeVisible = true' "$MAIN"
+
+          grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
+          grep -q 'versionCode 27' android/app/build.gradle
+          grep -q 'versionName "3.6.9"' android/app/build.gradle
+
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.11.1
+        working-directory: android
+
+      - name: Compile debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+        working-directory: android
+
+      - name: Verify APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
+          grep -q "versionCode='27'" /tmp/badging.txt
+          grep -q "versionName='3.6.9'" /tmp/badging.txt
+          cp "$APK" Reddit-Media-v3.6.9-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-media-v3.6.9-unread-content-filters-debug-apk
+          path: Reddit-Media-v3.6.9-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish v3.6.9 debug release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v3.6.9-debug >/dev/null 2>&1; then
+            gh release upload v3.6.9-debug Reddit-Media-v3.6.9-debug.apk --clobber
+          else
+            gh release create v3.6.9-debug Reddit-Media-v3.6.9-debug.apk \
+              --target reddit-native-redview \
+              --title "Reddit Media v3.6.9 debug" \
+              --prerelease \
+              --notes "v3.6.9 makes Saved and Read/Hidden mutually exclusive terminal states for the Unread feed. A successful Save immediately removes that post from the active unread collection and stores its canonical Reddit ID locally; Favorites refresh reconciles the local Saved set with Reddit. Unsave makes the post eligible for future discovery again. Adds independent Account toggles for blocking LGBTQ-topic posts and gore/blood content based only on subreddit/title text. Content filtering never guesses account identity, never writes to Hidden, and Saved/Hidden management libraries bypass the content filters. No discovery-depth, Scrolller, RedGIFs, media-quality, Search, Subscribe, overlay or cache architecture changes are included in this release."
+          fi
+
+      - name: Record build result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.6.9-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.6.9.txt
+          CONTENT=$(base64 -w0 /tmp/build-status-v3.6.9.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.6.9.txt"
+          CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api --method PUT "$API" -f message='ci: record v3.6.9 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+          else
+            gh api --method PUT "$API" -f message='ci: record v3.6.9 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+          fi
