@@ -1,0 +1,178 @@
+name: Build Reddit Media v3.6.8
+
+on:
+  push:
+    branches: [ reddit-native-redview ]
+    paths-ignore:
+      - 'android/active-build-*.txt'
+      - 'android/build-status-*.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reddit-media-v3.6.8-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Reddit Media 3.6.8 Scrolller multisource APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Apply source patch stack
+        working-directory: android
+        run: |
+          python3 patches/apply_v3_3.py
+          python3 patches/apply_v3_4.py
+          python3 patches/apply_v3_4_stream.py
+          python3 patches/apply_v3_5.py
+          python3 patches/apply_v3_5_1_loading.py
+          python3 patches/apply_v3_5_2_texture_surface.py
+          python3 patches/apply_v3_5_3_back_dispatcher.py
+          python3 patches/apply_v3_6_read_hide.py
+          python3 patches/apply_v3_6_favorites_protection.py
+          python3 patches/apply_v3_6_1_stable_pager.py
+          python3 patches/apply_v3_6_1_immediate_mark.py
+          python3 patches/apply_v3_6_2_loading_ready_hidden_manage.py
+          python3 patches/apply_v3_6_3_persistent_fullscreen_overlay.py
+          python3 patches/apply_v3_6_4_single_owner_overlay.py
+          python3 patches/apply_v3_6_5_preloaded_tap_toggle_overlay.py
+          python3 patches/apply_v3_6_6_search_subscribe.py
+          python3 patches/apply_v3_6_7_reservoir.py
+          python3 patches/apply_v3_6_7_redgifs_post.py
+          python3 patches/apply_v3_6_7_redgifs_resolver.py
+          python3 patches/apply_v3_6_7_hq_player.py
+          python3 patches/apply_v3_6_7_pager_media.py
+          python3 patches/apply_v3_6_7_grid_media.py
+          python3 patches/apply_v3_6_8_scrolller_source.py
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Validate multisource behavior
+        run: |
+          MAIN="android/app/src/main/java/com/scrolller/adblock/MainActivity.java"
+          POST="android/app/src/main/java/com/scrolller/adblock/RedditPost.java"
+          SCROLLLER="android/app/src/main/java/com/scrolller/adblock/ScrolllerClient.java"
+          PAGER="android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java"
+          GRID="android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java"
+          HQ="android/app/src/main/java/com/scrolller/adblock/HighQualityPlayerFactory.java"
+
+          # Scrolller discovery normalizes back to canonical Reddit identities.
+          grep -q 'https://api.scrolller.com/admin' "$SCROLLLER"
+          grep -q 'getSubredditChildren' "$SCROLLLER"
+          grep -q 'nextVars.put("limit", Math.min(50' "$SCROLLLER"
+          grep -q 'Thread.sleep(650L)' "$SCROLLLER"
+          grep -q 'public static RedditPost fromScrolller' "$POST"
+          grep -q '"t3_" + redditId' "$POST"
+          grep -q 'redditIdFromPath' "$POST"
+          grep -q 'bestScrolllerSource' "$POST"
+          grep -q 'prefetchScrolllerSubredditIfNeeded' "$MAIN"
+          grep -q 'ScrolllerClient.crawlSubreddit(targetSubreddit, 600' "$MAIN"
+          grep -q 'postAdapter.getItemCount() < 1400' "$MAIN"
+          grep -q '!sort.equals("random")' "$MAIN"
+          grep -q '!feedSeenPostIds.add(post.id)' "$MAIN"
+
+          # Preserve deep Reddit and high-quality media behavior from 3.6.7.
+          grep -q 'postAdapter.getItemCount() < 300' "$MAIN"
+          grep -q 'postAdapter.getItemCount() >= 800' "$MAIN"
+          grep -q 'prefetchRandomSubredditArchiveIfNeeded' "$MAIN"
+          grep -q 'setForceHighestSupportedBitrate(true)' "$HQ"
+          grep -q 'RedgifsResolver.resolve' "$PAGER"
+          grep -q 'RedgifsResolver.resolve' "$GRID"
+
+          # Preserve Search, subscription, overlay and read/hide protections.
+          grep -q 'finishSearchCollection' "$MAIN"
+          grep -q 'engine.postForm("/api/subscribe"' "$MAIN"
+          grep -q 'private boolean fullscreenChromeVisible = true' "$MAIN"
+          grep -q 'mediaReadyPostIds.contains(previous.id)' "$MAIN"
+          ! grep -q 'postAdapter.removePostById(id)' "$MAIN"
+          ! grep -q 'gridAdapter.removePostById(id)' "$MAIN"
+
+          grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
+          grep -q 'versionCode 26' android/app/build.gradle
+          grep -q 'versionName "3.6.8"' android/app/build.gradle
+
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.11.1
+        working-directory: android
+
+      - name: Compile debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+        working-directory: android
+
+      - name: Verify APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
+          grep -q "versionCode='26'" /tmp/badging.txt
+          grep -q "versionName='3.6.8'" /tmp/badging.txt
+          cp "$APK" Reddit-Media-v3.6.8-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-media-v3.6.8-scrolller-multisource-debug-apk
+          path: Reddit-Media-v3.6.8-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish v3.6.8 debug release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v3.6.8-debug >/dev/null 2>&1; then
+            gh release upload v3.6.8-debug Reddit-Media-v3.6.8-debug.apk --clobber
+          else
+            gh release create v3.6.8-debug Reddit-Media-v3.6.8-debug.apk \
+              --target reddit-native-redview \
+              --title "Reddit Media v3.6.8 debug" \
+              --prerelease \
+              --notes "v3.6.8 adds Scrolller as a supplemental Reddit discovery backend for Random subreddit feeds. Reddit remains canonical for post identity, saves, comments and subscriptions. Scrolller GraphQL contributes up to 600 candidates in 50-item iterator pages, normalizes redditPath into the same t3 Reddit post identity, selects the largest available Scrolller media source, and globally deduplicates against direct Reddit/archive results. The combined working collection is capped around 1400 posts and Scrolller failure never interrupts the Reddit feed. All v3.6.7 deep Reddit reservoir, RedGIFs HD, highest-bitrate playback, Search, Subscribe, overlay, Hidden/Favorites and Android 16 Back behavior remains."
+          fi
+
+      - name: Record build result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.6.8-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.6.8.txt
+          CONTENT=$(base64 -w0 /tmp/build-status-v3.6.8.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.6.8.txt"
+          CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api --method PUT "$API" -f message='ci: record v3.6.8 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+          else
+            gh api --method PUT "$API" -f message='ci: record v3.6.8 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+          fi
