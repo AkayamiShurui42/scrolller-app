@@ -1,0 +1,204 @@
+name: Build Reddit Media v3.7.0
+
+on:
+  push:
+    branches: [ reddit-native-redview ]
+    paths-ignore:
+      - 'android/active-build-*.txt'
+      - 'android/build-status-*.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reddit-media-v3.7.0-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Reddit Media 3.7.0 self-tuning quality crawl APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Apply source patch stack
+        working-directory: android
+        run: |
+          python3 patches/apply_v3_3.py
+          python3 patches/apply_v3_4.py
+          python3 patches/apply_v3_4_stream.py
+          python3 patches/apply_v3_5.py
+          python3 patches/apply_v3_5_1_loading.py
+          python3 patches/apply_v3_5_2_texture_surface.py
+          python3 patches/apply_v3_5_3_back_dispatcher.py
+          python3 patches/apply_v3_6_read_hide.py
+          python3 patches/apply_v3_6_favorites_protection.py
+          python3 patches/apply_v3_6_1_stable_pager.py
+          python3 patches/apply_v3_6_1_immediate_mark.py
+          python3 patches/apply_v3_6_2_loading_ready_hidden_manage.py
+          python3 patches/apply_v3_6_3_persistent_fullscreen_overlay.py
+          python3 patches/apply_v3_6_4_single_owner_overlay.py
+          python3 patches/apply_v3_6_5_preloaded_tap_toggle_overlay.py
+          python3 patches/apply_v3_6_6_search_subscribe.py
+          python3 patches/apply_v3_6_7_reservoir.py
+          python3 patches/apply_v3_6_7_redgifs_post.py
+          python3 patches/apply_v3_6_7_redgifs_resolver.py
+          python3 patches/apply_v3_6_7_hq_player.py
+          python3 patches/apply_v3_6_7_pager_media.py
+          python3 patches/apply_v3_6_7_grid_media.py
+          python3 patches/apply_v3_6_8_scrolller_source.py
+          python3 patches/apply_v3_6_9_unread_content_filters.py
+          python3 patches/apply_v3_6_9_filters_saved_state.py
+          python3 patches/apply_v3_6_9_saved_immediate_performance.py
+          python3 patches/apply_v3_7_0_quality_crawl.py
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Validate quality crawl and preserved state behavior
+        run: |
+          MAIN="android/app/src/main/java/com/scrolller/adblock/MainActivity.java"
+          POST="android/app/src/main/java/com/scrolller/adblock/RedditPost.java"
+          SCROLLLER="android/app/src/main/java/com/scrolller/adblock/ScrolllerClient.java"
+          PAGER="android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java"
+          GRID="android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java"
+          HQ="android/app/src/main/java/com/scrolller/adblock/HighQualityPlayerFactory.java"
+
+          # Quality is an explicit separate feed, not cross-contamination of subreddit feeds.
+          grep -q 'Quality crawl' "$MAIN"
+          grep -q 'navigateHome("quality", true)' "$MAIN"
+          grep -q 'context.equals("quality")' "$MAIN"
+          grep -q 'title = "Quality"' "$MAIN"
+          grep -q 'private void loadQualityFeed(boolean reset)' "$MAIN"
+          grep -q 'private boolean qualityContextStillValid' "$MAIN"
+
+          # Self-tuning discovery: probe subscriptions, learn yield, deepen best sources.
+          grep -q 'for (int i = 0; i < names.size(); i += 10)' "$MAIN"
+          grep -q 'String\[\] windows = {"all", "year", "month"}' "$MAIN"
+          grep -q 'bestQualitySources(12)' "$MAIN"
+          grep -q 'private void crawlQualityDeep' "$MAIN"
+          grep -q '/new.json?limit=100&raw_json=1&show=all' "$MAIN"
+          grep -q 'root.postDelayed.*220L' "$MAIN"
+
+          # Actual source dimensions, not upvotes, decide whether a post is high quality.
+          grep -q 'private int qualityScoreForChild' "$MAIN"
+          grep -q 'media_metadata' "$MAIN"
+          grep -q 'averageArea >= 3500000L' "$MAIN"
+          grep -q 'maxArea >= 8000000L' "$MAIN"
+          grep -q 'longEdge < 2400' "$MAIN"
+          grep -q 'shortEdge < 900' "$MAIN"
+          grep -q 'qualityScores.getOrDefault' "$MAIN"
+          grep -q 'qualitySourceHits.put' "$MAIN"
+
+          # Quality results remain part of the Unread state machine.
+          grep -q 'hiddenPosts.containsKey(post.id)' "$MAIN"
+          grep -q 'isSavedForUnread(post)' "$MAIN"
+          grep -q 'isContentBlocked(post)' "$MAIN"
+          grep -q 'private final Set<String> savedPostIds = new HashSet<>()' "$MAIN"
+          grep -q 'private void removeSavedFromUnread(String id)' "$MAIN"
+          grep -q 'mediaReadyPostIds.contains(previous.id)' "$MAIN"
+          grep -q '!savedPostIds.contains(previous.id)' "$MAIN"
+
+          # Preserve smooth playback and idle-only asynchronous appends from 3.6.9.
+          grep -q 'setForceHighestSupportedBitrate(false)' "$HQ"
+          ! grep -q 'setForceHighestSupportedBitrate(true)' "$HQ"
+          grep -q 'private final ArrayList<RedditPost> deferredAppends' "$MAIN"
+          grep -q 'pager.getScrollState() != ViewPager2.SCROLL_STATE_IDLE' "$MAIN"
+          grep -q 'flushDeferredAppends' "$MAIN"
+
+          # Preserve multisource and account functionality untouched.
+          grep -q 'https://api.scrolller.com/admin' "$SCROLLLER"
+          grep -q 'public static RedditPost fromScrolller' "$POST"
+          grep -q 'ScrolllerClient.crawlSubreddit(targetSubreddit, 600' "$MAIN"
+          grep -q 'RedgifsResolver.resolve' "$PAGER"
+          grep -q 'RedgifsResolver.resolve' "$GRID"
+          grep -q 'finishSearchCollection' "$MAIN"
+          grep -q 'engine.postForm("/api/subscribe"' "$MAIN"
+          grep -q 'blockLgbtTopics = prefs.getBoolean' "$MAIN"
+          grep -q 'blockGoreContent = prefs.getBoolean' "$MAIN"
+
+          grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
+          grep -q 'versionCode 28' android/app/build.gradle
+          grep -q 'versionName "3.7.0"' android/app/build.gradle
+
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.11.1
+        working-directory: android
+
+      - name: Compile debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+        working-directory: android
+
+      - name: Verify APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
+          grep -q "versionCode='28'" /tmp/badging.txt
+          grep -q "versionName='3.7.0'" /tmp/badging.txt
+          cp "$APK" Reddit-Media-v3.7.0-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-media-v3.7.0-quality-crawl-debug-apk
+          path: Reddit-Media-v3.7.0-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish v3.7.0 debug release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v3.7.0-debug >/dev/null 2>&1; then
+            gh release upload v3.7.0-debug Reddit-Media-v3.7.0-debug.apk --clobber
+          else
+            gh release create v3.7.0-debug Reddit-Media-v3.7.0-debug.apk \
+              --target reddit-native-redview \
+              --title "Reddit Media v3.7.0 debug" \
+              --prerelease \
+              --notes "v3.7.0 adds a dedicated self-tuning Quality crawl feed while intentionally leaving the proven v3.6.9 Unread/Saved/Hidden and content-filter state model unchanged. Quality probes subscribed communities in groups of ten across Top all/year/month, scores the original Reddit media dimensions and gallery metadata, learns which subreddits actually yield the most high-resolution media, then deep-crawls up to twelve best-yielding sources across Top all/year/month and New. Single images require roughly QHD-class source dimensions, gallery scoring uses original media_metadata dimensions and rewards large multi-image sets, and video candidates require near-1080p-class dimensions. Ultra-resolution media receives additional ranking score. Saved, Hidden, LGBTQ-topic and gore/blood rejection rules still apply before a quality candidate enters Unread. Quality is a separate feed so no individual subreddit is polluted with unrelated communities. This build does not add archive recovery or a new persistent disk cache; those remain separate follow-up features."
+          fi
+
+      - name: Record build result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.7.0-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.7.0.txt
+          CONTENT=$(base64 -w0 /tmp/build-status-v3.7.0.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.7.0.txt"
+          CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api --method PUT "$API" -f message='ci: record v3.7.0 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+          else
+            gh api --method PUT "$API" -f message='ci: record v3.7.0 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+          fi
