@@ -18,3 +18,19 @@ if count != 1:
     raise SystemExit('Missing v3.7.0 quality normalization target: sortButton visibility block')
 path.write_text(s)
 runpy.run_path('patches/apply_v3_7_0_quality_crawl.py', run_name='__main__')
+
+# v3.6.3/3.6.9 inserted Favorites state between searchScope and query. Reorder
+# only these declarations so the source-aware Search patch has a stable anchor.
+s = path.read_text()
+old = '''    private String searchScope = "global";
+    private String favoriteSort = "random";
+    private String favoritesView = "saved";
+    private String query = "";'''
+new = '''    private String favoriteSort = "random";
+    private String favoritesView = "saved";
+    private String searchScope = "global";
+    private String query = "";'''
+if old not in s:
+    raise SystemExit('Missing v3.7.0 post-quality Search normalization target')
+s = s.replace(old, new, 1)
+path.write_text(s)
