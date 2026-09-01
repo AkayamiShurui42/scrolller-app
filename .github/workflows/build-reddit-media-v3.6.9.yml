@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build Reddit Media 3.6.9 unread-state filters APK
+    name: Build Reddit Media 3.6.9 unread-state filters + smooth playback APK
     runs-on: ubuntu-latest
 
     steps:
@@ -52,6 +52,7 @@ jobs:
           python3 patches/apply_v3_6_8_scrolller_source.py
           python3 patches/apply_v3_6_9_unread_content_filters.py
           python3 patches/apply_v3_6_9_filters_saved_state.py
+          python3 patches/apply_v3_6_9_saved_immediate_performance.py
 
       - name: Setup Java 17
         uses: actions/setup-java@v5
@@ -68,7 +69,7 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate unread-state and content filters
+      - name: Validate unread-state filters and performance behavior
         run: |
           MAIN="android/app/src/main/java/com/scrolller/adblock/MainActivity.java"
           POST="android/app/src/main/java/com/scrolller/adblock/RedditPost.java"
@@ -77,51 +78,57 @@ jobs:
           GRID="android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java"
           HQ="android/app/src/main/java/com/scrolller/adblock/HighQualityPlayerFactory.java"
 
-          # v3.6.9 state model: Unread excludes both Read/Hidden and Saved.
+          # State model: normal discovery is Unread = discovered - Hidden - Saved - blocked.
           grep -q 'private final Set<String> savedPostIds = new HashSet<>()' "$MAIN"
           grep -q 'private boolean isSavedForUnread(RedditPost post)' "$MAIN"
           grep -q 'post.saved || savedPostIds.contains(post.id)' "$MAIN"
           grep -q 'persistSavedPostIds' "$MAIN"
-          grep -q 'savedPostIds.clear()' "$MAIN"
-          grep -q 'feedSeenPostIds.remove(post.id)' "$MAIN"
+          grep -q 'isSavedForUnread(post) || isContentBlocked(post)' "$MAIN"
+          ! grep -q 'savedPostIds.clear()' "$MAIN"
 
-          # Active ViewPager collection remains immutable on Save. This preserves
-          # the v3.6.1 fix for synthetic page changes/skipping/reloads.
-          ! grep -q 'postAdapter.removePostById(post.id)' "$MAIN"
-          ! grep -q 'gridAdapter.removePostById(post.id)' "$MAIN"
+          # Explicit Save immediately leaves the visible Unread collection, but
+          # swipe/read progression still never removes an item from the live pager.
+          grep -q 'private void removeSavedFromUnread(String id)' "$MAIN"
+          grep -q 'removeSavedFromUnread(post.id)' "$MAIN"
+          grep -q 'fullscreenUserGesture = false' "$MAIN"
+          grep -q 'setFullscreenReadBaseline(target)' "$MAIN"
+          grep -q 'mediaReadyPostIds.contains(previous.id)' "$MAIN"
+          grep -q '!previous.saved' "$MAIN"
           grep -q '!savedPostIds.contains(previous.id)' "$MAIN"
-          grep -q 'Keeping this collection immutable prevents the old' "$MAIN"
+          ! grep -q 'postAdapter.removePostById(id)' "$MAIN"
+          ! grep -q 'gridAdapter.removePostById(id)' "$MAIN"
 
-          # Saved and Hidden remain explicit management libraries.
+          # Saved and Hidden remain mutually exclusive management libraries.
           grep -q 'boolean favoritesSaved = screen == Screen.FAVORITES' "$MAIN"
           grep -q 'hiddenLibrary || favoritesSaved' "$MAIN"
           grep -q 'hiddenPosts.remove(savedPost.id)' "$MAIN"
           grep -q 'loadFavoritesInternal();' "$MAIN"
 
-          # Independent content preferences affect discovery only.
+          # Independent content preferences affect discovery only, never identity.
           grep -q 'blockLgbtTopics = prefs.getBoolean' "$MAIN"
           grep -q 'blockGoreContent = prefs.getBoolean' "$MAIN"
           grep -q 'private boolean isContentBlocked(RedditPost post)' "$MAIN"
           grep -q 'LGBTQ topics · ' "$MAIN"
           grep -q 'Gore / blood · ' "$MAIN"
           grep -q 'These filters reject posts from Unread discovery only' "$MAIN"
-          grep -q 'isSavedForUnread(post) || isContentBlocked(post)' "$MAIN"
           ! grep -q 'hiddenPosts.put.*blockLgbt' "$MAIN"
           ! grep -q 'hiddenPosts.put.*blockGore' "$MAIN"
 
-          # Preserve the real swipe/read gate: no programmatic read marking.
-          grep -q 'fullscreenUserGesture' "$MAIN"
-          grep -q 'mediaReadyPostIds.contains(previous.id)' "$MAIN"
-          grep -q '!previous.saved' "$MAIN"
+          # Performance regression fix: do not force every prepared video to the
+          # maximum representation, and never insert discovery batches mid-swipe.
+          grep -q 'setForceHighestSupportedBitrate(false)' "$HQ"
+          ! grep -q 'setForceHighestSupportedBitrate(true)' "$HQ"
+          grep -q 'private final ArrayList<RedditPost> deferredAppends' "$MAIN"
+          grep -q 'pager.getScrollState() != ViewPager2.SCROLL_STATE_IDLE' "$MAIN"
+          grep -q 'flushDeferredAppends' "$MAIN"
 
-          # Preserve v3.6.8 multisource/high-quality behavior unchanged.
+          # Preserve v3.6.8 multisource/deep-feed/media behavior otherwise.
           grep -q 'https://api.scrolller.com/admin' "$SCROLLLER"
           grep -q 'public static RedditPost fromScrolller' "$POST"
           grep -q 'ScrolllerClient.crawlSubreddit(targetSubreddit, 600' "$MAIN"
           grep -q 'postAdapter.getItemCount() < 1400' "$MAIN"
           grep -q 'postAdapter.getItemCount() < 300' "$MAIN"
           grep -q 'postAdapter.getItemCount() >= 800' "$MAIN"
-          grep -q 'setForceHighestSupportedBitrate(true)' "$HQ"
           grep -q 'RedgifsResolver.resolve' "$PAGER"
           grep -q 'RedgifsResolver.resolve' "$GRID"
 
@@ -164,7 +171,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.6.9-unread-content-filters-debug-apk
+          name: reddit-media-v3.6.9-unread-filters-smooth-video-debug-apk
           path: Reddit-Media-v3.6.9-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -180,7 +187,7 @@ jobs:
               --target reddit-native-redview \
               --title "Reddit Media v3.6.9 debug" \
               --prerelease \
-              --notes "v3.6.9 separates Unread, Saved, Hidden/Read, and content-filter states. Saving immediately moves the canonical Reddit ID out of the logical Unread population and removes any legacy Hidden overlap, while the active ViewPager collection remains immutable until reload to preserve pager stability. Unsave makes the post eligible for future discovery again. Adds independent Account toggles for blocking LGBTQ-topic posts and gore/blood content based only on subreddit/title text; these filters never create Hidden/Read records and Saved/Hidden management libraries remain accessible. No new quality crawl, discovery-depth, cache architecture, Scrolller, RedGIFs, Search, Subscribe, or overlay behavior is added in this release."
+              --notes "v3.6.9 implements the explicit Unread/Saved/Hidden state model and independent contextual filters, while fixing the playback/swipe lag introduced by forcing maximum bitrate in v3.6.7. Saving a post immediately removes it from the current Unread collection and moves its canonical Reddit ID into Saved; swipe/read marking remains a separate gesture-gated path and Saved can never also become Hidden. Unsave makes the post eligible for future discovery again. LGBTQ-topic and gore/blood filters use subreddit/title text only and never infer account identity or create Hidden records. Media3 returns to adaptive bitrate selection, and asynchronous discovery batches wait for ViewPager2 to become idle before adapter insertion. Scrolller, RedGIFs, deep Reddit reservoirs, Search, Subscribe, overlay and existing archive-planning behavior are otherwise unchanged. The high-quality source crawl is intentionally deferred to the next build."
           fi
 
       - name: Record build result
