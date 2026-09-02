@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build Reddit Media 3.7.0 quality crawl + federated search APK
+    name: Build Reddit Media 3.7.0 Quality Crawl APK
     runs-on: ubuntu-latest
 
     steps:
@@ -54,9 +54,7 @@ jobs:
           python3 patches/apply_v3_6_9_filters_saved_state.py
           python3 patches/apply_v3_6_9_saved_immediate_performance.py
           python3 patches/apply_v3_7_0_quality_crawl_fixed.py
-          python3 patches/apply_v3_7_0_search_scopes_preserve.py
-          python3 patches/apply_v3_7_0_federated_search.py
-          python3 patches/apply_v3_7_0_federated_import_fix.py
+          python3 patches/apply_v3_7_0_quality_import_fix.py
 
       - name: Setup Java 17
         uses: actions/setup-java@v5
@@ -73,8 +71,8 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate quality crawl, federated search, and preserved state behavior
-        run: python3 android/patches/validate_v3_7_0_fixed.py
+      - name: Validate quality crawl and preserved v3.6.9 behavior
+        run: python3 android/patches/validate_v3_7_0_quality_only.py
 
       - name: Prepare stable debug signing key
         run: |
@@ -106,7 +104,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.7.0-quality-federated-search-debug-apk
+          name: reddit-media-v3.7.0-quality-crawl-debug-apk
           path: Reddit-Media-v3.7.0-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -115,14 +113,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          NOTES="v3.7.0 adds one feature on top of v3.6.9: a dedicated self-tuning Quality crawl. It probes subscribed communities in groups, samples Top all/year/month, learns which subreddits actually yield high-resolution media, then deepens the best sources with Top all/year/month and New. Quality is scored from original gallery/image/video dimensions, gallery size, and resolution thresholds rather than subreddit reputation. Saved, Hidden/read, LGBTQ-topic filter, gore filter, Scrolller/RedGIFs behavior, Search semantics, and active-pager immutability remain unchanged from v3.6.9. No federated Search, Arctic Shift search rewrite, or cache-architecture change is included in this build."
           if gh release view v3.7.0-debug >/dev/null 2>&1; then
             gh release upload v3.7.0-debug Reddit-Media-v3.7.0-debug.apk --clobber
+            gh release edit v3.7.0-debug --title "Reddit Media v3.7.0 debug" --notes "$NOTES"
           else
             gh release create v3.7.0-debug Reddit-Media-v3.7.0-debug.apk \
               --target reddit-native-redview \
               --title "Reddit Media v3.7.0 debug" \
               --prerelease \
-              --notes "v3.7.0 combines the self-tuning Quality crawl with federated Search. Search scopes are Global, Subreddit, Subscriptions, Favorites/Saved, and Collector. Live scopes use Reddit as the globally searchable first stage, then deepen matching subreddit candidates through Scrolller and Arctic Shift; all engine results normalize into RedditPost, dedupe by Reddit ID and canonical media URL, pass the same media/content/Unread filters, and receive one final Random/Best/Hot/New/Top sort. Subreddit queries hit all three engines directly. Subscriptions search Reddit across subscribed communities and deepens them with the secondary engines. Arctic Shift is subreddit/author-scoped, so Global uses Reddit-discovered communities as archive candidates rather than falsely claiming Arctic Shift has unrestricted global full-text search. Favorites and Collector remain local/private corpora and use the same search/sort UI. Search queries remain ephemeral. The v3.6.9 swipe read gate and active-pager immutability are preserved."
+              --notes "$NOTES"
           fi
 
       - name: Record build result
