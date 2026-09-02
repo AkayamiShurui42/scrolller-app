@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build Reddit Media 3.7.0 Quality Crawl APK
+    name: Build Reddit Media 3.7.0 Historical Access APK
     runs-on: ubuntu-latest
 
     steps:
@@ -53,8 +53,7 @@ jobs:
           python3 patches/apply_v3_6_9_unread_content_filters.py
           python3 patches/apply_v3_6_9_filters_saved_state.py
           python3 patches/apply_v3_6_9_saved_immediate_performance.py
-          python3 patches/apply_v3_7_0_quality_crawl_fixed.py
-          python3 patches/apply_v3_7_0_quality_import_fix.py
+          python3 patches/apply_v3_7_0_historical_access.py
 
       - name: Setup Java 17
         uses: actions/setup-java@v5
@@ -71,8 +70,63 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Validate quality crawl and preserved v3.6.9 behavior
-        run: python3 android/patches/validate_v3_7_0_quality_only.py
+      - name: Validate historical access and preserved v3.6.9 behavior
+        run: |
+          MAIN="android/app/src/main/java/com/scrolller/adblock/MainActivity.java"
+          ARCTIC="android/app/src/main/java/com/scrolller/adblock/ArcticShiftClient.java"
+          SCROLLLER="android/app/src/main/java/com/scrolller/adblock/ScrolllerClient.java"
+          HQ="android/app/src/main/java/com/scrolller/adblock/HighQualityPlayerFactory.java"
+
+          # Historical access is posts-only: subreddit, account submissions, exact post ID.
+          grep -q 'https://arctic-shift.photon-reddit.com/api' "$ARCTIC"
+          grep -q 'crawlSubreddit' "$ARCTIC"
+          grep -q 'crawlAuthor' "$ARCTIC"
+          grep -q '/posts/search' "$ARCTIC"
+          grep -q '/posts/ids?ids=' "$ARCTIC"
+          grep -q 'Accept-Encoding", "identity"' "$ARCTIC"
+          ! grep -q '/comments' "$ARCTIC"
+
+          # Subreddit archive supplements Random and becomes fallback when live Reddit is unavailable.
+          grep -q 'prefetchHistoricalSubredditIfNeeded(false)' "$MAIN"
+          grep -q 'prefetchHistoricalSubredditIfNeeded(true)' "$MAIN"
+          grep -q 'ArcticShiftClient.crawlSubreddit(targetSubreddit, 2400' "$MAIN"
+          grep -q 'No unread live or archived media remains' "$MAIN"
+
+          # User profiles merge historical submissions and deleted/suspended profiles fall back.
+          grep -q 'loadHistoricalUserProfile(true)' "$MAIN"
+          grep -q 'loadHistoricalUserProfile(false)' "$MAIN"
+          grep -q 'ArcticShiftClient.crawlAuthor(targetUser, 2400' "$MAIN"
+
+          # Direct archive entry points from Search.
+          grep -q 'tryHistoricalDirectSearch' "$MAIN"
+          grep -q 'lower.startsWith("r/")' "$MAIN"
+          grep -q 'lower.startsWith("u/")' "$MAIN"
+          grep -q 'lower.startsWith("post:")' "$MAIN"
+          grep -q 'ArcticShiftClient.lookupPost' "$MAIN"
+
+          # Archive results obey the same Unread state and content-filter rules.
+          grep -q 'isSavedForUnread(post)' "$MAIN"
+          grep -q 'isContentBlocked(post)' "$MAIN"
+          grep -q 'hiddenPosts.containsKey(post.id)' "$MAIN"
+          grep -q 'private final Set<String> savedPostIds = new HashSet<>()' "$MAIN"
+          grep -q 'private boolean blockLgbtTopics = false' "$MAIN"
+          grep -q 'private boolean blockGoreContent = false' "$MAIN"
+          grep -q 'private void removeSavedFromUnread(String id)' "$MAIN"
+          grep -q 'mediaReadyPostIds.contains(previous.id)' "$MAIN"
+
+          # Preserve Scrolller, adaptive playback and deferred append stability.
+          grep -q 'https://api.scrolller.com/admin' "$SCROLLLER"
+          grep -q 'setForceHighestSupportedBitrate(false)' "$HQ"
+          grep -q 'private final ArrayList<RedditPost> deferredAppends' "$MAIN"
+          grep -q 'pager.getScrollState() != ViewPager2.SCROLL_STATE_IDLE' "$MAIN"
+
+          # This build intentionally does not apply the quality-crawl patch.
+          ! grep -q 'Quality crawl' "$MAIN"
+          ! grep -q 'qualityCrawl' "$MAIN"
+
+          grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
+          grep -q 'versionCode 28' android/app/build.gradle
+          grep -q 'versionName "3.7.0"' android/app/build.gradle
 
       - name: Prepare stable debug signing key
         run: |
@@ -104,7 +158,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.7.0-quality-crawl-debug-apk
+          name: reddit-media-v3.7.0-historical-access-debug-apk
           path: Reddit-Media-v3.7.0-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -113,7 +167,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="v3.7.0 adds one feature on top of v3.6.9: a dedicated self-tuning Quality crawl. It probes subscribed communities in groups, samples Top all/year/month, learns which subreddits actually yield high-resolution media, then deepens the best sources with Top all/year/month and New. Quality is scored from original gallery/image/video dimensions, gallery size, and resolution thresholds rather than subreddit reputation. Saved, Hidden/read, LGBTQ-topic filter, gore filter, Scrolller/RedGIFs behavior, Search semantics, and active-pager immutability remain unchanged from v3.6.9. No federated Search, Arctic Shift search rewrite, or cache-architecture change is included in this build."
+          NOTES="v3.7.0 adds historical Reddit access on top of v3.6.9, without the deferred quality-crawl feature. Arctic Shift is a supplemental posts-only archive source: Random subreddit feeds can continue into up to 2400 historical candidates, banned/unavailable subreddit feeds fall back to archived posts, live user profiles merge older archived submissions, deleted/suspended user profiles fall back to archived submissions, and Search accepts r/name, u/name, or post:<id> for direct historical entry. No comment endpoint is used. Every archived item is normalized back into the existing RedditPost model and must pass the same media, Hidden/read, Saved, and content-filter rules before entering Unread. Scrolller, RedGIFs, adaptive playback, deferred pager appends, Save semantics, Subscribe, Search reset and overlay behavior remain from v3.6.9. The high-quality source crawl remains deferred to the next build."
           if gh release view v3.7.0-debug >/dev/null 2>&1; then
             gh release upload v3.7.0-debug Reddit-Media-v3.7.0-debug.apk --clobber
             gh release edit v3.7.0-debug --title "Reddit Media v3.7.0 debug" --notes "$NOTES"
