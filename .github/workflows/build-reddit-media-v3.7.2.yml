@@ -1,0 +1,202 @@
+name: Build Reddit Media v3.7.2
+
+on:
+  push:
+    branches: [ reddit-native-redview ]
+    paths-ignore:
+      - 'android/active-build-*.txt'
+      - 'android/build-status-*.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reddit-media-v3.7.2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Reddit Media 3.7.2 Searchable Quality Collection APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Apply source patch stack
+        working-directory: android
+        run: |
+          python3 patches/apply_v3_3.py
+          python3 patches/apply_v3_4.py
+          python3 patches/apply_v3_4_stream.py
+          python3 patches/apply_v3_5.py
+          python3 patches/apply_v3_5_1_loading.py
+          python3 patches/apply_v3_5_2_texture_surface.py
+          python3 patches/apply_v3_5_3_back_dispatcher.py
+          python3 patches/apply_v3_6_read_hide.py
+          python3 patches/apply_v3_6_favorites_protection.py
+          python3 patches/apply_v3_6_1_stable_pager.py
+          python3 patches/apply_v3_6_1_immediate_mark.py
+          python3 patches/apply_v3_6_2_loading_ready_hidden_manage.py
+          python3 patches/apply_v3_6_3_persistent_fullscreen_overlay.py
+          python3 patches/apply_v3_6_4_single_owner_overlay.py
+          python3 patches/apply_v3_6_5_preloaded_tap_toggle_overlay.py
+          python3 patches/apply_v3_6_6_search_subscribe.py
+          python3 patches/apply_v3_6_7_reservoir.py
+          python3 patches/apply_v3_6_7_redgifs_post.py
+          python3 patches/apply_v3_6_7_redgifs_resolver.py
+          python3 patches/apply_v3_6_7_hq_player.py
+          python3 patches/apply_v3_6_7_pager_media.py
+          python3 patches/apply_v3_6_7_grid_media.py
+          python3 patches/apply_v3_6_8_scrolller_source.py
+          python3 patches/apply_v3_6_9_unread_content_filters.py
+          python3 patches/apply_v3_6_9_filters_saved_state.py
+          python3 patches/apply_v3_6_9_saved_immediate_performance.py
+          python3 patches/apply_v3_7_0_historical_access.py
+          python3 patches/apply_v3_7_1_quality_crawl.py
+          python3 patches/apply_v3_7_1_import_fix.py
+          python3 patches/apply_v3_7_2_quality_browse.py
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Validate searchable categorized Quality collection
+        run: |
+          MAIN="android/app/src/main/java/com/scrolller/adblock/MainActivity.java"
+          STORE="android/app/src/main/java/com/scrolller/adblock/QualityCatalogStore.java"
+          ARCTIC="android/app/src/main/java/com/scrolller/adblock/ArcticShiftClient.java"
+          SCROLLLER="android/app/src/main/java/com/scrolller/adblock/ScrolllerClient.java"
+          HQ="android/app/src/main/java/com/scrolller/adblock/HighQualityPlayerFactory.java"
+
+          # v3.7.2 adds only a local browse layer over the existing Quality catalog.
+          grep -q 'private String qualityQuery = ""' "$MAIN"
+          grep -q 'private String qualityCategory = "all"' "$MAIN"
+          grep -q 'showQualityBrowseSheet' "$MAIN"
+          grep -q 'Search title, r/subreddit, or u/author' "$MAIN"
+          grep -q 'Apply search' "$MAIN"
+          grep -q 'Ultra HD · 8 MP / 3840px+' "$MAIN"
+          grep -q 'Galleries' "$MAIN"
+          grep -q 'Single images' "$MAIN"
+          grep -q 'Communities · ' "$MAIN"
+          grep -q 'communityCounts' "$MAIN"
+          grep -q 'matchesQualityBrowse' "$MAIN"
+          grep -q 'category.startsWith("subreddit:")' "$MAIN"
+          grep -q 'No unread Quality posts match this search/category.' "$MAIN"
+          grep -q '? "Browse"' "$MAIN"
+
+          # Preserve the isolated v3.7.1 crawler and its cache policy unchanged.
+          grep -q 'QUALITY_SEED_SUBREDDITS' "$MAIN"
+          grep -q 'startQualityCrawlIfNeeded' "$MAIN"
+          grep -q 'crawlQualitySeed' "$MAIN"
+          grep -q 'area >= 6_000_000L' "$MAIN"
+          grep -q 'longEdge >= 3000' "$MAIN"
+          grep -q 'gallerySize >= 3' "$MAIN"
+          grep -q 'area >= 4_000_000L' "$MAIN"
+          grep -q 'crawlLearnedQualityAuthors' "$MAIN"
+          grep -q 'authors.size() >= 16' "$MAIN"
+          grep -q 'quality_catalog.json' "$STORE"
+          grep -q 'getCacheDir()' "$STORE"
+          ! grep -q 'MAX_QUALITY' "$MAIN"
+          ! grep -q 'MAX_QUALITY' "$STORE"
+
+          # Browse filters must not rewrite unread state or crawl inputs.
+          grep -q 'eligibleQualityUnread' "$MAIN"
+          grep -q 'hiddenPosts.containsKey(post.id)' "$MAIN"
+          grep -q 'isSavedForUnread(post)' "$MAIN"
+          grep -q 'isContentBlocked(post)' "$MAIN"
+          ! grep -q 'hiddenPosts.put.*qualityQuery' "$MAIN"
+          ! grep -q 'savedPostIds.add.*qualityQuery' "$MAIN"
+
+          # Existing source and playback behavior remains present.
+          grep -q 'https://arctic-shift.photon-reddit.com/api' "$ARCTIC"
+          grep -q 'https://api.scrolller.com/admin' "$SCROLLLER"
+          grep -q 'setForceHighestSupportedBitrate(false)' "$HQ"
+          grep -q 'private final ArrayList<RedditPost> deferredAppends' "$MAIN"
+          grep -q 'blockLgbtTopics = prefs.getBoolean' "$MAIN"
+          grep -q 'blockGoreContent = prefs.getBoolean' "$MAIN"
+
+          grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
+          grep -q 'versionCode 30' android/app/build.gradle
+          grep -q 'versionName "3.7.2"' android/app/build.gradle
+
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.11.1
+        working-directory: android
+
+      - name: Compile debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+        working-directory: android
+
+      - name: Verify APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
+          grep -q "versionCode='30'" /tmp/badging.txt
+          grep -q "versionName='3.7.2'" /tmp/badging.txt
+          cp "$APK" Reddit-Media-v3.7.2-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-media-v3.7.2-searchable-quality-collection-debug-apk
+          path: Reddit-Media-v3.7.2-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish v3.7.2 debug release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="v3.7.2 is a focused Quality-collection browsing update. The existing v3.7.1 quality crawler and thresholds are unchanged. Inside Quality, the Feed control becomes Browse and opens a local search/category sheet. Search matches cached Quality posts by title, subreddit, or author. Categories include All quality, Ultra HD (8 MP or 3840px+), Galleries, Single images, plus a dynamic Communities list with unread eligible item counts for every subreddit currently represented in the catalog. Search and category filters combine and operate only on the local cached catalog; they never create Hidden/read records, alter Saved state, change crawler inputs, or issue a new Reddit search. Existing Saved/Hidden/content-filter semantics, Scrolller, Arctic Shift, RedGIFs, playback, Subscribe and overlay behavior remain unchanged."
+          if gh release view v3.7.2-debug >/dev/null 2>&1; then
+            gh release upload v3.7.2-debug Reddit-Media-v3.7.2-debug.apk --clobber
+            gh release edit v3.7.2-debug --title "Reddit Media v3.7.2 debug" --notes "$NOTES"
+          else
+            gh release create v3.7.2-debug Reddit-Media-v3.7.2-debug.apk \
+              --target reddit-native-redview \
+              --title "Reddit Media v3.7.2 debug" \
+              --prerelease \
+              --notes "$NOTES"
+          fi
+
+      - name: Record build result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          printf 'run_id=%s\nstatus=%s\nhead_sha=%s\nrelease_tag=v3.7.2-debug\n' "$RUN_ID" "$JOB_STATUS" "$HEAD_SHA" > /tmp/build-status-v3.7.2.txt
+          CONTENT=$(base64 -w0 /tmp/build-status-v3.7.2.txt)
+          API="repos/${GITHUB_REPOSITORY}/contents/android/build-status-v3.7.2.txt"
+          CURRENT_SHA=$(gh api "$API?ref=reddit-native-redview" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$CURRENT_SHA" ]; then
+            gh api --method PUT "$API" -f message='ci: record v3.7.2 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" -f sha="$CURRENT_SHA" >/dev/null
+          else
+            gh api --method PUT "$API" -f message='ci: record v3.7.2 build result [skip ci]' -f branch='reddit-native-redview' -f content="$CONTENT" >/dev/null
+          fi
