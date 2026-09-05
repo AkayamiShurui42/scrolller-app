@@ -68,6 +68,7 @@ jobs:
           python3 patches/apply_v3_7_5_category_folders.py
           python3 patches/apply_v3_7_5_search_index_home_random_final.py
           python3 patches/apply_v3_7_5_generated_structure_cleanup.py
+          python3 patches/apply_v3_7_5_generated_method_reconstruction.py
 
       - name: Validate v3.7.5 invariants
         run: |
