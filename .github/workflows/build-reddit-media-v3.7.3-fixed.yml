@@ -59,6 +59,7 @@ jobs:
           python3 patches/apply_v3_7_2_quality_browse.py
           python3 patches/apply_v3_7_3_feed_search_stability.py
           python3 patches/apply_v3_7_3_generated_structure_fix.py
+          python3 patches/apply_v3_7_3_generated_append_fix.py
 
       - name: Validate Search Sort and generated structure
         run: |
@@ -85,8 +86,18 @@ jobs:
           if missing: raise SystemExit('Missing invariants: ' + ', '.join(missing))
           if main.count('private void replacePosts(List<RedditPost> items) {') != 1:
               raise SystemExit('replacePosts signature count invalid')
-          orphan='\n        postAdapter.setPosts(visible);\n        gridAdapter.setPosts(visible);\n    }\n\n        postAdapter.setPosts(visible);'
-          if orphan in main: raise SystemExit('orphan replacePosts tail remains')
+          if main.count('private void appendUniqueNow(List<RedditPost> incoming) {') != 1:
+              raise SystemExit('appendUniqueNow signature count invalid')
+          replace_orphan='\n        postAdapter.setPosts(visible);\n        gridAdapter.setPosts(visible);\n    }\n\n        postAdapter.setPosts(visible);'
+          append_orphan='\n        postAdapter.appendPosts(unique);\n        gridAdapter.appendPosts(unique);\n    }\n\n        postAdapter.appendPosts(unique);'
+          if replace_orphan in main: raise SystemExit('orphan replacePosts tail remains')
+          if append_orphan in main: raise SystemExit('orphan appendUniqueNow tail remains')
+          # MainActivity must remain open at the historical prefetch method, proving
+          # neither generated tail closed the class early.
+          before = main.split('private void prefetchHistoricalTopAllIfNeeded', 1)[0]
+          depth = before.count('{') - before.count('}')
+          if depth != 1:
+              raise SystemExit(f'MainActivity class depth before historical prefetch is {depth}, expected 1')
           if 'versionCode 31' not in gradle or 'versionName "3.7.3"' not in gradle:
               raise SystemExit('version mismatch')
           print('Search/Sort stabilization and generated source structure validated')
@@ -146,7 +157,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="v3.7.3 restores the source-aware Search implementation and prevents stale asynchronous feed callbacks from contaminating a newly selected sort or media filter. Search again supports Global Reddit, Subreddit, Subscriptions, Favorites/Saved, and current Collector sources with generation-safe requests. Feed loads now use a separate generation guard, canonical post dedupe, Random media dedupe, and Top/All historical supplementation. This repaired build also removes the generated orphan replacePosts tail that caused the earlier 3.7.3 compile failure. Existing Unread/Saved/Hidden semantics, content filters, Scrolller, Arctic Shift, RedGIFs, Quality collection, and adaptive playback remain unchanged."
+          NOTES="v3.7.3 restores the source-aware Search implementation and prevents stale asynchronous feed callbacks from contaminating a newly selected sort or media filter. Search supports Global Reddit, Subreddit, Subscriptions, Favorites/Saved, and current Collector sources with generation-safe requests. Feed loads use a separate generation guard, canonical post dedupe, Random media dedupe, and Top/All historical supplementation. This repaired build removes both generated orphan adapter tails that caused the earlier v3.7.3 compile failures. Existing Unread/Saved/Hidden semantics, content filters, Scrolller, Arctic Shift, RedGIFs, Quality collection, and adaptive playback remain unchanged."
           if gh release view v3.7.3-debug >/dev/null 2>&1; then
             gh release upload v3.7.3-debug Reddit-Media-v3.7.3-Search-Sort-Stability-debug.apk --clobber
             gh release edit v3.7.3-debug --title "Reddit Media v3.7.3 debug" --notes "$NOTES"
