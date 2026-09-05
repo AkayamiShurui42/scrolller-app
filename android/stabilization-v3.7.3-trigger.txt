@@ -1,0 +1,1 @@
+Trigger v3.7.3 stabilization build after device report that Search and sort regressed in v3.7.2.
