@@ -101,11 +101,75 @@ quality = quality.replace(old_search_label, new_search_label, 1)
 quality = quality.replace(old_quality_label, new_quality_label, 1)
 quality_path.write_text(quality)
 
+# Adapt the final stabilization patch before it runs. Two of its original range
+# replacements used the *next method signature* as an end marker. Older patches
+# intentionally insert helper methods between replacePosts()/appendUnique(), so
+# that strategy deleted Reservoir, Historical, and Quality helper definitions.
+# Replace only the exact Java method body by matching braces instead.
+stability_path = Path('patches/apply_v3_7_3_feed_search_stability.py')
+stability = stability_path.read_text()
+
+helper_anchor = "\n\nmain_path = Path('app/src/main/java/com/scrolller/adblock/MainActivity.java')"
+brace_helper = r'''
+
+def replace_java_method(text, signature, replacement, label):
+    start = text.find(signature)
+    if start < 0:
+        raise SystemExit(f'Missing v3.7.3 Java method: {label}: {signature}')
+    brace = text.find('{', start + len(signature))
+    if brace < 0:
+        raise SystemExit(f'Missing v3.7.3 Java opening brace: {label}')
+    depth = 0
+    for i in range(brace, len(text)):
+        ch = text[i]
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                while end < len(text) and text[end] in '\r\n':
+                    end += 1
+                return text[:start] + replacement + text[end:]
+    raise SystemExit(f'Unbalanced v3.7.3 Java method: {label}')
+'''
+if helper_anchor not in stability:
+    raise SystemExit('Missing v3.7.3 brace-helper insertion anchor')
+stability = stability.replace(helper_anchor, brace_helper + helper_anchor, 1)
+
+old_replace_posts = '''s = replace_method(
+    s,
+    '    private void replacePosts(List<RedditPost> items) {',
+    '    private void appendUnique(List<RedditPost> incoming) {',
+    replace_posts,
+    'canonical replacePosts')'''
+new_replace_posts = '''s = replace_java_method(
+    s,
+    '    private void replacePosts(List<RedditPost> items) {',
+    replace_posts,
+    'canonical replacePosts')'''
+if old_replace_posts not in stability:
+    raise SystemExit('Missing v3.7.3 replacePosts range rewrite target')
+stability = stability.replace(old_replace_posts, new_replace_posts, 1)
+
+old_append_now = '''s = replace_method(
+    s,
+    '    private void appendUniqueNow(List<RedditPost> incoming) {',
+    '    private void openFullscreenAt(int position) {',
+    append_now,
+    'canonical appendUniqueNow')'''
+new_append_now = '''s = replace_java_method(
+    s,
+    '    private void appendUniqueNow(List<RedditPost> incoming) {',
+    append_now,
+    'canonical appendUniqueNow')'''
+if old_append_now not in stability:
+    raise SystemExit('Missing v3.7.3 appendUniqueNow range rewrite target')
+stability = stability.replace(old_append_now, new_append_now, 1)
+
 # The final stabilization patch creates canonicalPostKey() itself before it needs
 # to insert the Top/All archive helpers. Use that self-created method as the seam,
 # so later historical/Scrolller patches cannot move or erase the anchor.
-stability_path = Path('patches/apply_v3_7_3_feed_search_stability.py')
-stability = stability_path.read_text()
 old_anchor = "historical_anchor = '    private void prefetchHistoricalSubredditIfNeeded(boolean forceFallback) {'"
 new_anchor = "historical_anchor = '    private String canonicalPostKey(RedditPost post) {'"
 if old_anchor not in stability:
