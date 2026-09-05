@@ -77,58 +77,70 @@ jobs:
 
       - name: Validate v3.7.3 stabilization
         run: |
-          MAIN="android/app/src/main/java/com/scrolller/adblock/MainActivity.java"
-          PAGER="android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java"
-          ARCTIC="android/app/src/main/java/com/scrolller/adblock/ArcticShiftClient.java"
-          STORE="android/app/src/main/java/com/scrolller/adblock/QualityCatalogStore.java"
+          python3 - <<'PY'
+          from pathlib import Path
 
-          # Source-aware Search is finally part of the actual build stack.
-          grep -q 'private String searchSubreddit = ""' "$MAIN"
-          grep -q 'private int searchGeneration = 0' "$MAIN"
-          grep -q 'Global Reddit' "$MAIN"
-          grep -q 'Subscriptions' "$MAIN"
-          grep -q 'Favorites / Saved' "$MAIN"
-          grep -q 'Collector · current app collection' "$MAIN"
-          grep -q 'Subreddit search' "$MAIN"
-          grep -q 'searchStillValid' "$MAIN"
-          grep -q 'restrict_sr=' "$MAIN"
+          files = {
+              "MainActivity": Path("android/app/src/main/java/com/scrolller/adblock/MainActivity.java").read_text(),
+              "PostPagerAdapter": Path("android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java").read_text(),
+              "ArcticShiftClient": Path("android/app/src/main/java/com/scrolller/adblock/ArcticShiftClient.java").read_text(),
+              "QualityCatalogStore": Path("android/app/src/main/java/com/scrolller/adblock/QualityCatalogStore.java").read_text(),
+              "build.gradle": Path("android/app/build.gradle").read_text(),
+          }
 
-          # Historical direct syntax and deleted/suspended profile fallback survive Search integration.
-          grep -q 'tryHistoricalDirectSearch' "$MAIN"
-          grep -q 'loadHistoricalUserProfile(true)' "$MAIN"
-          grep -q 'loadHistoricalUserProfile(false)' "$MAIN"
-          grep -q 'ArcticShiftClient.lookupPost(post.id' "$MAIN"
-          grep -q 'Resolving deleted account from archive' "$MAIN"
-          grep -q 'void onOpenUser(RedditPost post)' "$PAGER"
-          grep -q 'listener.onOpenUser(post)' "$PAGER"
+          required = [
+              ("MainActivity", 'private String searchSubreddit = ""', "source-aware Search subreddit state"),
+              ("MainActivity", 'private int searchGeneration = 0', "Search generation guard"),
+              ("MainActivity", 'Global Reddit', "Global Reddit search source"),
+              ("MainActivity", 'Subscriptions', "Subscriptions search source"),
+              ("MainActivity", 'Favorites / Saved', "Favorites search source"),
+              ("MainActivity", 'Collector · current app collection', "Collector search source"),
+              ("MainActivity", 'Subreddit search', "Subreddit search source"),
+              ("MainActivity", 'searchStillValid', "stale Search request guard"),
+              ("MainActivity", 'restrict_sr=', "Reddit subreddit restriction"),
+              ("MainActivity", 'tryHistoricalDirectSearch', "historical direct Search"),
+              ("MainActivity", 'loadHistoricalUserProfile(true)', "deleted-account historical fallback"),
+              ("MainActivity", 'loadHistoricalUserProfile(false)', "suspended-account historical supplement"),
+              ("MainActivity", 'ArcticShiftClient.lookupPost(post.id', "exact-post deleted-author lookup"),
+              ("MainActivity", 'Resolving deleted account from archive', "deleted-author UI path"),
+              ("PostPagerAdapter", 'void onOpenUser(RedditPost post)', "post-aware author callback"),
+              ("PostPagerAdapter", 'listener.onOpenUser(post)', "author click passes post identity"),
+              ("MainActivity", 'private int feedGeneration = 0', "feed generation guard"),
+              ("MainActivity", 'generation != feedGeneration', "stale feed callback rejection"),
+              ("MainActivity", 'if (loading && !reset) return', "reset can supersede old load"),
+              ("MainActivity", 'canonicalPostKey', "canonical post identity"),
+              ("MainActivity", 'canonicalMediaKey', "Random media identity"),
+              ("MainActivity", 'String key = canonicalPostKey(post)', "canonical collection dedupe use"),
+              ("MainActivity", 'deferredAppends.clear()', "stale deferred producer reset"),
+              ("MainActivity", 'prefetchHistoricalTopAllIfNeeded', "Top/All historical supplement"),
+              ("MainActivity", 'ArcticShiftClient.crawlSubreddit(targetSubreddit, 4000', "Top/All bounded archive crawl"),
+              ("MainActivity", 'Integer.compare(b.score, a.score)', "Top/All client score ordering"),
+              ("MainActivity", 'topTime.equals("all")', "Top/All gate"),
+              ("MainActivity", 'QUALITY_SEED_SUBREDDITS', "Quality crawler retained"),
+              ("MainActivity", 'showQualityBrowseSheet', "Quality browser retained"),
+              ("QualityCatalogStore", 'quality_catalog.json', "Quality catalog retained"),
+              ("ArcticShiftClient", 'https://arctic-shift.photon-reddit.com/api', "Arctic Shift endpoint"),
+              ("build.gradle", 'applicationId "com.crimson.redditmedia"', "package identity"),
+              ("build.gradle", 'versionCode 31', "v3.7.3 versionCode"),
+              ("build.gradle", 'versionName "3.7.3"', "v3.7.3 versionName"),
+          ]
 
-          # Feed/filter request isolation and canonical dedupe.
-          grep -q 'private int feedGeneration = 0' "$MAIN"
-          grep -q 'generation != feedGeneration' "$MAIN"
-          grep -q 'if (loading && !reset) return' "$MAIN"
-          grep -q 'canonicalPostKey' "$MAIN"
-          grep -q 'canonicalMediaKey' "$MAIN"
-          grep -q 'feedSeenPostIds.add(canonicalPostKey(post))' "$MAIN"
-          grep -q 'deferredAppends.clear()' "$MAIN"
+          missing = []
+          for file_name, needle, label in required:
+              if needle not in files[file_name]:
+                  missing.append(f"{label} [{file_name}] -> {needle}")
 
-          # Top/All exhausts live Reddit then receives a bounded historical score-sorted supplement.
-          grep -q 'prefetchHistoricalTopAllIfNeeded' "$MAIN"
-          grep -q 'ArcticShiftClient.crawlSubreddit(targetSubreddit, 4000' "$MAIN"
-          grep -q 'Integer.compare(b.score, a.score)' "$MAIN"
-          grep -q 'topTime.equals("all")' "$MAIN"
+          if '/comments' in files['ArcticShiftClient']:
+              missing.append('Arctic Shift must remain posts-only; found /comments')
 
-          # Existing Quality collection/browse remains present.
-          grep -q 'QUALITY_SEED_SUBREDDITS' "$MAIN"
-          grep -q 'showQualityBrowseSheet' "$MAIN"
-          grep -q 'quality_catalog.json' "$STORE"
+          if missing:
+              print("VALIDATION FAILED. Missing invariants:")
+              for item in missing:
+                  print(" -", item)
+              raise SystemExit(1)
 
-          # Posts only in Arctic Shift.
-          grep -q 'https://arctic-shift.photon-reddit.com/api' "$ARCTIC"
-          ! grep -q '/comments' "$ARCTIC"
-
-          grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
-          grep -q 'versionCode 31' android/app/build.gradle
-          grep -q 'versionName "3.7.3"' android/app/build.gradle
+          print(f"Validated {len(required) + 1} v3.7.3 invariants")
+          PY
 
       - name: Prepare stable debug signing key
         run: |
