@@ -12,43 +12,28 @@ if start < 0 or version < 0 or version <= start:
 source = source[:start] + source[version:]
 exec(compile(source, str(source_path), "exec"), {"__name__": "__main__", "__file__": str(source_path)})
 
-# The older Quality patch stack has historically rewritten the listing method in
-# pieces. Replace the whole listingPath -> matchesMedia region after the main
-# cleanup runs so no stale branch tail can survive outside method scope.
+# The historical Quality patch can leave a stale tail from the old listingPath
+# immediately after the replacement method. Remove only that gap. Do not replace
+# the whole listingPath -> matchesMedia region because the Saved/content-filter
+# helpers intentionally live there.
 main_path = Path("app/src/main/java/com/scrolller/adblock/MainActivity.java")
 main = main_path.read_text()
 listing_start = main.find("    private String listingPath(String cursor) {")
-listing_end = main.find("    private boolean matchesMedia(RedditPost post) {", listing_start)
-if listing_start < 0 or listing_end < 0 or listing_end <= listing_start:
-    raise SystemExit("Could not isolate final v3.7.4 listingPath region")
-
-listing_method = r'''    private String listingPath(String cursor) {
-        String remoteSort = sort;
-        if (remoteSort.equals("random") || remoteSort.equals("oldest")) {
-            remoteSort = "new";
-        }
-
-        String base;
-        if (context.equals("home")) {
-            base = remoteSort.equals("best") ? "/.json" : "/" + remoteSort + ".json";
-        } else if (context.equals("popular")) {
-            base = remoteSort.equals("best")
-                    ? "/r/popular/hot.json"
-                    : "/r/popular/" + remoteSort + ".json";
-        } else {
-            base = remoteSort.equals("best")
-                    ? "/r/" + enc(subreddit) + "/hot.json"
-                    : "/r/" + enc(subreddit) + "/" + remoteSort + ".json";
-        }
-
-        String path = base + "?limit=100&raw_json=1&show=all";
-        if (sort.equals("top")) path += "&t=" + enc(topTime);
-        if (cursor != null && !cursor.isEmpty()) path += "&after=" + enc(cursor);
-        return path;
-    }
-
-'''
-main = main[:listing_start] + listing_method + main[listing_end:]
+if listing_start < 0:
+    raise SystemExit("Missing final v3.7.4 listingPath")
+listing_end_marker = "        return path;\n    }\n\n"
+listing_end = main.find(listing_end_marker, listing_start)
+if listing_end < 0:
+    raise SystemExit("Could not find final v3.7.4 listingPath end")
+listing_end += len(listing_end_marker)
+helpers_start = main.find("    private boolean isSavedForUnread(RedditPost post) {", listing_end)
+if helpers_start < 0:
+    raise SystemExit("Missing Saved/content-filter helper block after listingPath")
+listing_gap = main[listing_end:helpers_start]
+if listing_gap.strip():
+    if "context.equals(\"popular\")" not in listing_gap or "return path;" not in listing_gap:
+        raise SystemExit("Unexpected non-listing content in v3.7.4 listing gap")
+    main = main[:listing_end] + main[helpers_start:]
 main_path.write_text(main)
 
 pager_path = Path("app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java")
@@ -97,4 +82,4 @@ xml = xml.replace(
 )
 layout.write_text(xml)
 
-print("Applied v3.7.4 final listing cleanup + TextureView transition smoothing")
+print("Applied v3.7.4 final listing-tail cleanup + TextureView transition smoothing")
