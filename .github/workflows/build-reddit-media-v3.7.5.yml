@@ -67,6 +67,7 @@ jobs:
           python3 patches/apply_v3_7_5_subreddit_search.py
           python3 patches/apply_v3_7_5_category_folders.py
           python3 patches/apply_v3_7_5_search_index_home_random_final.py
+          python3 patches/apply_v3_7_5_generated_structure_cleanup.py
 
       - name: Validate v3.7.5 invariants
         run: |
@@ -111,6 +112,19 @@ jobs:
           if missing:
               raise SystemExit('Missing v3.7.5 MainActivity invariants: ' + ', '.join(missing))
 
+          open_sig = '    private void openSearchScreen() {'
+          begin_sig = '    private void beginSearch() {'
+          a = main.find(open_sig)
+          b = main.find(begin_sig, a + len(open_sig))
+          if a < 0 or b < 0:
+              raise SystemExit('Missing v3.7.5 search method seam')
+          # The final cleanup patch prints/validates the exact method boundary;
+          # this string guard also rejects the stale tail that broke the prior compile.
+          stale = '        query = "";\n        prefs.edit().remove("lastSearch").apply();\n        screen = Screen.SEARCH;\n        context = "search";'
+          region = main[a:b]
+          if region.count(stale) != 1:
+              raise SystemExit('openSearchScreen contains duplicated stale generated body')
+
           required_post = {
               'search metadata field': 'public String searchMetadata = "";',
               'link flair indexing': 'link_flair_text',
@@ -134,7 +148,7 @@ jobs:
           if 'versionCode 33' not in gradle or 'versionName "3.7.5"' not in gradle:
               raise SystemExit('v3.7.5 version mismatch')
 
-          print('v3.7.5 search, category, subreddit, and fair-random invariants validated')
+          print('v3.7.5 search, category, subreddit, fair-random, and generated structure invariants validated')
           PY
 
       - name: Setup Java 17
