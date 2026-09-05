@@ -53,6 +53,26 @@ if listing_gap.strip():
     if "context.equals(\"popular\")" not in listing_gap or "return path;" not in listing_gap:
         raise SystemExit("Unexpected non-listing content in v3.7.4 listing gap")
     main = main[:listing_end] + main[helpers_start:]
+
+# showSortSheet() is also replaced on top of generated v3.7.x source. In this
+# stack the old method body can survive after the new method closes, leaving an
+# orphaned `if (screen == Screen.SEARCH)` at class scope. Keep the new method and
+# trim only the stale body before the next known method declaration.
+sort_start = main.find("    private void showSortSheet() {")
+hidden_manage_start = main.find("    private void showHiddenManageSheet() {", sort_start)
+if sort_start < 0 or hidden_manage_start < 0:
+    raise SystemExit("Missing final v3.7.4 sort/hidden-manage declarations")
+sort_end_marker = "        dialog.show();\n    }\n\n"
+sort_end = main.find(sort_end_marker, sort_start)
+if sort_end < 0 or sort_end >= hidden_manage_start:
+    raise SystemExit("Could not find final v3.7.4 showSortSheet end")
+sort_end += len(sort_end_marker)
+sort_gap = main[sort_end:hidden_manage_start]
+if sort_gap.strip():
+    if "if (screen == Screen.SEARCH)" not in sort_gap or "dialog.show();" not in sort_gap:
+        raise SystemExit("Unexpected content between showSortSheet and showHiddenManageSheet")
+    main = main[:sort_end] + main[hidden_manage_start:]
+
 main_path.write_text(main)
 
 pager_path = Path("app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java")
@@ -101,4 +121,4 @@ xml = xml.replace(
 )
 layout.write_text(xml)
 
-print("Applied v3.7.4 final filter/listing tail cleanup + TextureView transition smoothing")
+print("Applied v3.7.4 final filter/listing/sort tail cleanup + TextureView transition smoothing")
