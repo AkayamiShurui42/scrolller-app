@@ -29,13 +29,14 @@ def replace_region(text, start_sig, next_sig, replacement, label):
     return text[:start] + replacement.rstrip() + "\n\n" + text[end:]
 
 
-# The runtime patch owns these method bodies. Re-extract its exact desired
-# replacements, but install them against the actual immediately-following method
-# declarations. This avoids the stale-tail failure mode of the earlier brace
-# scanner while preserving the other generated helper methods around them.
+# Re-install every runtime-owned Java replacement using explicit declaration
+# boundaries. The earlier generic brace scanner can stop at a stale generated
+# brace and leave the remainder of the old method at class scope.
 feed_pages = extract_raw_assignment("feed_pages")
 random_next = extract_raw_assignment("random_next")
 remote_search = extract_raw_assignment("remote_search")
+category_root = extract_raw_assignment("category_root")
+category_matches = extract_raw_assignment("category_matches")
 
 s = replace_region(
     s,
@@ -45,9 +46,6 @@ s = replace_region(
     "fetchFeedPages -> homeSubscriptionRandomEnabled",
 )
 
-# fetchHomeRandomRoundNext is the last Home Random helper immediately before
-# listingPath(). Hard-bound it too. The compiler diagnostic showed the stale old
-# engine.get callback beginning at MainActivity.java:1167 after this method.
 s = replace_region(
     s,
     "    private void fetchHomeRandomRoundNext(int feedGen, int randomGen) {",
@@ -64,6 +62,27 @@ s = replace_region(
     "fetchRemoteSearchGroup -> remoteSearchPath",
 )
 
+# The custom-category runtime patch inserts its persistence/editor helpers right
+# after showCategoryRoot(). Hard-bound to the first of those helpers so only the
+# stale old root tail is removed and all custom-category methods are preserved.
+s = replace_region(
+    s,
+    "    private void showCategoryRoot() {",
+    "    private JSONObject customCategoryStore() {",
+    category_root,
+    "showCategoryRoot -> customCategoryStore",
+)
+
+# showCategoryMatches is followed by the original categoryCommunities helper.
+# Hard-bound it too because its runtime replacement uses the same brace scanner.
+s = replace_region(
+    s,
+    "    private void showCategoryMatches(String term) {",
+    "    private String[] categoryCommunities(",
+    category_matches,
+    "showCategoryMatches -> categoryCommunities",
+)
+
 checks = {
     "feed method": "    private void fetchFeedPages(",
     "Home Random gate": "    private boolean homeSubscriptionRandomEnabled() {",
@@ -71,6 +90,12 @@ checks = {
     "listing path": "    private String listingPath(",
     "remote search method": "    private void fetchRemoteSearchGroup(",
     "remote search path": "    private String remoteSearchPath(",
+    "category root": "    private void showCategoryRoot() {",
+    "custom category store": "    private JSONObject customCategoryStore() {",
+    "custom category creator": "    private void showAddCustomCategorySheet() {",
+    "custom category viewer": "    private void showCustomCategory(String name) {",
+    "category matches": "    private void showCategoryMatches(String term) {",
+    "category communities": "    private String[] categoryCommunities(",
 }
 for label, signature in checks.items():
     if s.count(signature) != 1:
@@ -118,5 +143,27 @@ search_gap = s[search_start:search_path_start]
 if search_gap.count("engine.get(path, result -> {") != 1:
     raise SystemExit("Stale or missing fetchRemoteSearchGroup callback after hard-bound rewrite")
 
+category_root_start = s.find("    private void showCategoryRoot() {")
+custom_store_start = s.find("    private JSONObject customCategoryStore() {", category_root_start)
+category_root_gap = s[category_root_start:custom_store_start]
+for required in [
+    "Add category · pick at least two subreddits",
+    "My categories",
+    "Browse built-in categories",
+]:
+    if required not in category_root_gap:
+        raise SystemExit("Missing custom Categories root behavior: " + required)
+# A clean showCategoryRoot region has one dialog content assignment and one show.
+if category_root_gap.count("dialog.setContentView(scroll);") != 1 or category_root_gap.count("dialog.show();") != 1:
+    raise SystemExit("Stale showCategoryRoot tail remains after hard-bound rewrite")
+
+category_matches_start = s.find("    private void showCategoryMatches(String term) {")
+category_communities_start = s.find("    private String[] categoryCommunities(", category_matches_start)
+category_matches_gap = s[category_matches_start:category_communities_start]
+if category_matches_gap.count("dialog.setContentView(scroll);") != 1 or category_matches_gap.count("dialog.show();") != 1:
+    raise SystemExit("Stale showCategoryMatches tail remains after hard-bound rewrite")
+if "My category · " not in category_matches_gap:
+    raise SystemExit("Custom category lookup missing after hard-bound rewrite")
+
 main_path.write_text(s)
-print("Applied v3.7.5 hard-bound feed, Home Random, and Search runtime structure fix")
+print("Applied v3.7.5 hard-bound feed, Random, Search, and Categories runtime structure fix")
