@@ -65,6 +65,7 @@ jobs:
           python3 patches/apply_v3_7_3_generated_append_fix.py
           python3 patches/apply_v3_7_4_final.py
           python3 patches/apply_v3_7_5_subreddit_search.py
+          python3 patches/apply_v3_7_5_category_folders.py
 
       - name: Validate v3.7.5 invariants
         run: |
@@ -82,15 +83,26 @@ jobs:
               'dual search button behavior': 'else if (screen == Screen.HOME && context.equals("subreddit")) openSearchScreen();',
               'subreddit backend search': 'if (searchScope.equals("subreddit"))',
               'restricted reddit search': '&restrict_sr=',
+              'category hierarchy': 'CURATED_CATEGORY_ROWS',
+              'sfw category root': '{"SFW", "Animals", "Cute & social"',
+              'nsfw category root': '{"NSFW", "Adult", "General"',
+              'category browser': 'private void showCategoryRoot()',
+              'category folder browser': 'private void showCategoryFolder(String safety, String category)',
+              'subcategory browser': 'private void showCategorySubfolder(String safety, String category, String subcategory)',
+              'category-name search': 'private void showCategoryMatches(String term)',
+              'category content search': 'private void openCategorySearch(String title, String[] communities)',
+              'category search groups': 'private ArrayList<String> categorySearchGroups()',
+              'category search backend': 'if (searchScope.equals("category"))',
+              'folder search action': 'Search this folder',
           }
           missing = [label for label, needle in required.items() if needle not in main]
           if missing:
-              raise SystemExit('Missing v3.7.5 subreddit-search invariants: ' + ', '.join(missing))
+              raise SystemExit('Missing v3.7.5 invariants: ' + ', '.join(missing))
 
           if 'versionCode 33' not in gradle or 'versionName "3.7.5"' not in gradle:
               raise SystemExit('v3.7.5 version mismatch')
 
-          print('v3.7.5 subreddit search invariants validated')
+          print('v3.7.5 subreddit and category-search invariants validated')
           PY
 
       - name: Setup Java 17
@@ -148,7 +160,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="v3.7.5 adds a Search control directly to subreddit screens. Opening Search from a subreddit, through either the title-row Search pill or the bottom Search navigation button, automatically selects that subreddit as the search source and uses Reddit's restricted subreddit search endpoint. v3.7.4 cleanup, filtering, sorting, and pager transition fixes remain included."
+          NOTES="v3.7.5 adds direct in-subreddit search plus a Scrolller-style hierarchical Categories browser. Curated visual communities are grouped under SFW/NSFW roots, categories, and subcategories. The category browser can search folder names and communities, and every category/subcategory can launch a content search restricted to the communities inside that folder. v3.7.4 cleanup, filtering, sorting, and pager transition fixes remain included."
           if gh release view v3.7.5-debug >/dev/null 2>&1; then
             gh release upload v3.7.5-debug Reddit-Media-v3.7.5-debug.apk --clobber
             gh release edit v3.7.5-debug --title "Reddit Media v3.7.5 debug" --notes "$NOTES"
