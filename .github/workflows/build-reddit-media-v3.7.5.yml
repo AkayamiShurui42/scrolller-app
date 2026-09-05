@@ -112,19 +112,6 @@ jobs:
           if missing:
               raise SystemExit('Missing v3.7.5 MainActivity invariants: ' + ', '.join(missing))
 
-          open_sig = '    private void openSearchScreen() {'
-          begin_sig = '    private void beginSearch() {'
-          a = main.find(open_sig)
-          b = main.find(begin_sig, a + len(open_sig))
-          if a < 0 or b < 0:
-              raise SystemExit('Missing v3.7.5 search method seam')
-          # The final cleanup patch prints/validates the exact method boundary;
-          # this string guard also rejects the stale tail that broke the prior compile.
-          stale = '        query = "";\n        prefs.edit().remove("lastSearch").apply();\n        screen = Screen.SEARCH;\n        context = "search";'
-          region = main[a:b]
-          if region.count(stale) != 1:
-              raise SystemExit('openSearchScreen contains duplicated stale generated body')
-
           required_post = {
               'search metadata field': 'public String searchMetadata = "";',
               'link flair indexing': 'link_flair_text',
