@@ -1,0 +1,157 @@
+name: Build Reddit Media v3.7.5
+
+on:
+  push:
+    branches:
+      - reddit-native-redview
+      - reddit-native-redview-v3.7.5
+    paths-ignore:
+      - 'android/active-build-*.txt'
+      - 'android/build-status-*.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reddit-media-v3.7.5-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Reddit Media 3.7.5
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Apply source patch stack
+        working-directory: android
+        run: |
+          python3 patches/apply_v3_3.py
+          python3 patches/apply_v3_4.py
+          python3 patches/apply_v3_4_stream.py
+          python3 patches/apply_v3_5.py
+          python3 patches/apply_v3_5_1_loading.py
+          python3 patches/apply_v3_5_2_texture_surface.py
+          python3 patches/apply_v3_5_3_back_dispatcher.py
+          python3 patches/apply_v3_6_read_hide.py
+          python3 patches/apply_v3_6_favorites_protection.py
+          python3 patches/apply_v3_6_1_stable_pager.py
+          python3 patches/apply_v3_6_1_immediate_mark.py
+          python3 patches/apply_v3_6_2_loading_ready_hidden_manage.py
+          python3 patches/apply_v3_6_3_persistent_fullscreen_overlay.py
+          python3 patches/apply_v3_6_4_single_owner_overlay.py
+          python3 patches/apply_v3_6_5_preloaded_tap_toggle_overlay.py
+          python3 patches/apply_v3_6_6_search_subscribe.py
+          python3 patches/apply_v3_6_7_reservoir.py
+          python3 patches/apply_v3_6_7_redgifs_post.py
+          python3 patches/apply_v3_6_7_redgifs_resolver.py
+          python3 patches/apply_v3_6_7_hq_player.py
+          python3 patches/apply_v3_6_7_pager_media.py
+          python3 patches/apply_v3_6_7_grid_media.py
+          python3 patches/apply_v3_6_8_scrolller_source.py
+          python3 patches/apply_v3_6_9_unread_content_filters.py
+          python3 patches/apply_v3_6_9_filters_saved_state.py
+          python3 patches/apply_v3_6_9_saved_immediate_performance.py
+          python3 patches/apply_v3_7_3_search_scopes_compatible.py
+          python3 patches/apply_v3_7_0_historical_access.py
+          python3 patches/apply_v3_7_1_quality_crawl.py
+          python3 patches/apply_v3_7_1_import_fix.py
+          python3 patches/apply_v3_7_2_quality_browse.py
+          python3 patches/apply_v3_7_3_feed_search_stability.py
+          python3 patches/apply_v3_7_3_generated_structure_fix.py
+          python3 patches/apply_v3_7_3_generated_append_fix.py
+          python3 patches/apply_v3_7_4_final.py
+          python3 patches/apply_v3_7_5_subreddit_search.py
+
+      - name: Validate v3.7.5 invariants
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('android/app/src/main/java/com/scrolller/adblock/MainActivity.java').read_text()
+          gradle = Path('android/app/build.gradle').read_text()
+
+          required = {
+              'subreddit entry detection': 'boolean subredditEntry = screen == Screen.HOME',
+              'subreddit search scope': 'searchScope = "subreddit";',
+              'subreddit target persistence': '.putString("searchSubreddit", searchSubreddit)',
+              'subreddit search pill visibility': 'boolean subredditSearchEntry = screen == Screen.HOME && context.equals("subreddit");',
+              'dual search button behavior': 'else if (screen == Screen.HOME && context.equals("subreddit")) openSearchScreen();',
+              'subreddit backend search': 'if (searchScope.equals("subreddit"))',
+              'restricted reddit search': '&restrict_sr=',
+          }
+          missing = [label for label, needle in required.items() if needle not in main]
+          if missing:
+              raise SystemExit('Missing v3.7.5 subreddit-search invariants: ' + ', '.join(missing))
+
+          if 'versionCode 33' not in gradle or 'versionName "3.7.5"' not in gradle:
+              raise SystemExit('v3.7.5 version mismatch')
+
+          print('v3.7.5 subreddit search invariants validated')
+          PY
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Generate Gradle wrapper
+        working-directory: android
+        run: gradle wrapper --gradle-version 8.11.1
+
+      - name: Compile debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
+          grep -q "versionCode='33'" /tmp/badging.txt
+          grep -q "versionName='3.7.5'" /tmp/badging.txt
+          cp "$APK" Reddit-Media-v3.7.5-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-media-v3.7.5-debug-apk
+          path: Reddit-Media-v3.7.5-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish v3.7.5 debug release
+        if: github.ref == 'refs/heads/reddit-native-redview'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="v3.7.5 adds a Search control directly to subreddit screens. Opening Search from a subreddit, through either the title-row Search pill or the bottom Search navigation button, automatically selects that subreddit as the search source and uses Reddit's restricted subreddit search endpoint. v3.7.4 cleanup, filtering, sorting, and pager transition fixes remain included."
+          if gh release view v3.7.5-debug >/dev/null 2>&1; then
+            gh release upload v3.7.5-debug Reddit-Media-v3.7.5-debug.apk --clobber
+            gh release edit v3.7.5-debug --title "Reddit Media v3.7.5 debug" --notes "$NOTES"
+          else
+            gh release create v3.7.5-debug Reddit-Media-v3.7.5-debug.apk --target reddit-native-redview --title "Reddit Media v3.7.5 debug" --prerelease --notes "$NOTES"
+          fi
