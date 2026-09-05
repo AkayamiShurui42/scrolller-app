@@ -6,9 +6,9 @@ from pathlib import Path
 # the state-field order expected by that patch, narrows the scope-sheet edit to
 # the original method only, then executes the existing implementation.
 #
-# It also adapts the later v3.7.2 Quality-browse patch in the build workspace so
-# that Quality can extend the new searchScopeLabel() header instead of expecting
-# the older Global/Subs-only header text. This keeps the patch order stable.
+# It also adapts later patches in the build workspace so Search/Quality and the
+# final stabilization patch can coexist without depending on brittle historical
+# insertion points from older generated MainActivity snapshots.
 
 main_path = Path('app/src/main/java/com/scrolller/adblock/MainActivity.java')
 s = main_path.read_text()
@@ -100,5 +100,18 @@ if old_search_label not in quality or old_quality_label not in quality:
 quality = quality.replace(old_search_label, new_search_label, 1)
 quality = quality.replace(old_quality_label, new_quality_label, 1)
 quality_path.write_text(quality)
+
+# Historical access inserts its helper block immediately before the Scrolller
+# prefetch helper. That Scrolller signature is stable across the full stack,
+# whereas the historical helper signature itself may be rewritten/moved by later
+# generated patches. Point the final stabilization insertion at the stable seam.
+stability_path = Path('patches/apply_v3_7_3_feed_search_stability.py')
+stability = stability_path.read_text()
+old_anchor = "historical_anchor = '    private void prefetchHistoricalSubredditIfNeeded(boolean forceFallback) {'"
+new_anchor = "historical_anchor = '    private void prefetchScrolllerSubredditIfNeeded() {'"
+if old_anchor not in stability:
+    raise SystemExit('Missing v3.7.3 stability historical anchor compatibility target')
+stability = stability.replace(old_anchor, new_anchor, 1)
+stability_path.write_text(stability)
 
 print('Applied v3.7.3 compatible source-aware Search wrapper')
