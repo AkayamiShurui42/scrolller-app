@@ -69,6 +69,7 @@ jobs:
           python3 patches/apply_v3_7_5_search_index_home_random_final.py
           python3 patches/apply_v3_7_5_generated_structure_cleanup.py
           python3 patches/apply_v3_7_5_generated_method_reconstruction.py
+          python3 patches/apply_v3_7_5_restore_read_hide_helpers.py
 
       - name: Validate v3.7.5 invariants
         run: |
@@ -108,10 +109,33 @@ jobs:
               'random exact-post memory': 'homeRandomSeenPostIds',
               'round completion cursor': 'after = "home-random-round";',
               'random load interception': 'loadHomeSubscriptionRandom(reset);',
+              'hidden library loader': 'private void loadHiddenPostsView() {',
+              'fullscreen read baseline': 'private void setFullscreenReadBaseline(int position) {',
+              'fullscreen read tracking': 'private void trackFullscreenVisit(int position) {',
+              'hidden restore': 'private void restoreHiddenPost(RedditPost post) {',
+              'read-hide load': 'private void loadReadHideState() {',
+              'read-hide persistence': 'private void saveReadHideState() {',
+              'hidden post serializer': 'private JSONObject postToJson(RedditPost post) throws Exception {',
+              'hidden post deserializer': 'private RedditPost postFromJson(JSONObject o) {',
+              'read only after media ready': 'mediaReadyPostIds.contains(previous.id)',
+              'saved post read exclusion': '!savedPostIds.contains(previous.id)',
           }
           missing = [label for label, needle in required_main.items() if needle not in main]
           if missing:
               raise SystemExit('Missing v3.7.5 MainActivity invariants: ' + ', '.join(missing))
+
+          for signature in [
+              '    private void loadHiddenPostsView() {',
+              '    private void setFullscreenReadBaseline(int position) {',
+              '    private void trackFullscreenVisit(int position) {',
+              '    private void restoreHiddenPost(RedditPost post) {',
+              '    private void loadReadHideState() {',
+              '    private void saveReadHideState() {',
+              '    private JSONObject postToJson(RedditPost post) throws Exception {',
+              '    private RedditPost postFromJson(JSONObject o) {',
+          ]:
+              if main.count(signature) != 1:
+                  raise SystemExit('Expected exactly one v3.7.5 helper definition: ' + signature)
 
           required_post = {
               'search metadata field': 'public String searchMetadata = "";',
@@ -136,7 +160,7 @@ jobs:
           if 'versionCode 33' not in gradle or 'versionName "3.7.5"' not in gradle:
               raise SystemExit('v3.7.5 version mismatch')
 
-          print('v3.7.5 search, category, subreddit, fair-random, and generated structure invariants validated')
+          print('v3.7.5 search, category, subreddit, fair-random, read-hide, and generated structure invariants validated')
           PY
 
       - name: Setup Java 17
