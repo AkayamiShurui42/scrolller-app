@@ -38,12 +38,46 @@ remote_search = extract_raw_assignment("remote_search")
 category_root = extract_raw_assignment("category_root")
 category_matches = extract_raw_assignment("category_matches")
 
+# fetchFeedPages() and finishFeedCollection() are one logical block in the
+# v3.7.3+ generated source. The earlier hard-bound rewrite stopped at the Home
+# Random gate and accidentally removed finishFeedCollection(). Restore it
+# explicitly here so subsequent hard-bound repairs cannot swallow it again.
+finish_feed = r'''    private void finishFeedCollection(
+            int generation,
+            boolean reset,
+            ArrayList<RedditPost> collected) {
+        if (generation != feedGeneration || screen != Screen.HOME) return;
+        loading = false;
+
+        if (sort.equals("random")) {
+            Collections.shuffle(collected);
+        } else if (sort.equals("oldest")) {
+            collected.sort((a, b) -> Long.compare(a.createdUtc, b.createdUtc));
+        }
+
+        if (reset) replacePosts(collected);
+        else appendUnique(collected);
+
+        if (postAdapter.getItemCount() == 0) {
+            setStatus("No unique media posts match this feed/filter.", false);
+        } else {
+            hideStatus();
+        }
+        updateChrome();
+        restorePendingPosition();
+        prefetchSubredditReservoir();
+
+        if (context.equals("subreddit") && sort.equals("top") && topTime.equals("all")) {
+            prefetchHistoricalTopAllIfNeeded(generation);
+        }
+    }'''
+
 s = replace_region(
     s,
     "    private void fetchFeedPages(",
     "    private boolean homeSubscriptionRandomEnabled() {",
-    feed_pages,
-    "fetchFeedPages -> homeSubscriptionRandomEnabled",
+    feed_pages + "\n\n" + finish_feed,
+    "fetchFeedPages/finishFeedCollection -> homeSubscriptionRandomEnabled",
 )
 
 s = replace_region(
@@ -85,6 +119,7 @@ s = replace_region(
 
 checks = {
     "feed method": "    private void fetchFeedPages(",
+    "feed finalizer": "    private void finishFeedCollection(",
     "Home Random gate": "    private boolean homeSubscriptionRandomEnabled() {",
     "Home Random loader": "    private void fetchHomeRandomRoundNext(int feedGen, int randomGen) {",
     "listing path": "    private String listingPath(",
@@ -102,10 +137,26 @@ for label, signature in checks.items():
         raise SystemExit(f"Expected exactly one {label}: {signature}")
 
 feed_start = s.find("    private void fetchFeedPages(")
-random_gate_start = s.find("    private boolean homeSubscriptionRandomEnabled() {", feed_start)
-feed_gap = s[feed_start:random_gate_start]
+finish_start = s.find("    private void finishFeedCollection(", feed_start)
+random_gate_start = s.find("    private boolean homeSubscriptionRandomEnabled() {", finish_start)
+if feed_start < 0 or finish_start < 0 or random_gate_start < 0:
+    raise SystemExit("Feed/finalizer/Home Random boundaries are incomplete")
+if not (feed_start < finish_start < random_gate_start):
+    raise SystemExit("Feed/finalizer/Home Random ordering is invalid")
+
+feed_gap = s[feed_start:finish_start]
 if feed_gap.count("engine.get(path, result -> {") != 1:
     raise SystemExit("Stale or missing fetchFeedPages callback after hard-bound rewrite")
+
+finish_gap = s[finish_start:random_gate_start]
+for required in [
+    'sort.equals("random")',
+    'sort.equals("oldest")',
+    'Long.compare(a.createdUtc, b.createdUtc)',
+    'prefetchHistoricalTopAllIfNeeded(generation)',
+]:
+    if required not in finish_gap:
+        raise SystemExit("Missing restored finishFeedCollection behavior: " + required)
 
 random_gate_start = s.find("    private boolean homeSubscriptionRandomEnabled() {")
 random_loader_start = s.find(
@@ -166,4 +217,4 @@ if "My category · " not in category_matches_gap:
     raise SystemExit("Custom category lookup missing after hard-bound rewrite")
 
 main_path.write_text(s)
-print("Applied v3.7.5 hard-bound feed, Random, Search, and Categories runtime structure fix")
+print("Applied v3.7.5 hard-bound feed/finalizer, Random, Search, and Categories runtime structure fix")
