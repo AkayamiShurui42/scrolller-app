@@ -101,14 +101,13 @@ quality = quality.replace(old_search_label, new_search_label, 1)
 quality = quality.replace(old_quality_label, new_quality_label, 1)
 quality_path.write_text(quality)
 
-# Historical access inserts its helper block immediately before the Scrolller
-# prefetch helper. That Scrolller signature is stable across the full stack,
-# whereas the historical helper signature itself may be rewritten/moved by later
-# generated patches. Point the final stabilization insertion at the stable seam.
+# The final stabilization patch creates canonicalPostKey() itself before it needs
+# to insert the Top/All archive helpers. Use that self-created method as the seam,
+# so later historical/Scrolller patches cannot move or erase the anchor.
 stability_path = Path('patches/apply_v3_7_3_feed_search_stability.py')
 stability = stability_path.read_text()
 old_anchor = "historical_anchor = '    private void prefetchHistoricalSubredditIfNeeded(boolean forceFallback) {'"
-new_anchor = "historical_anchor = '    private void prefetchScrolllerSubredditIfNeeded() {'"
+new_anchor = "historical_anchor = '    private String canonicalPostKey(RedditPost post) {'"
 if old_anchor not in stability:
     raise SystemExit('Missing v3.7.3 stability historical anchor compatibility target')
 stability = stability.replace(old_anchor, new_anchor, 1)
