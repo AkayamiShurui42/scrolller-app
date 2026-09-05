@@ -63,7 +63,7 @@ jobs:
           python3 patches/apply_v3_7_3_feed_search_stability.py
           python3 patches/apply_v3_7_3_generated_structure_fix.py
           python3 patches/apply_v3_7_3_generated_append_fix.py
-          python3 patches/apply_v3_7_4_cleanup_filters_sort_pager.py
+          python3 patches/apply_v3_7_4_final.py
 
       - name: Validate v3.7.4 invariants
         run: |
@@ -72,6 +72,7 @@ jobs:
 
           main = Path('android/app/src/main/java/com/scrolller/adblock/MainActivity.java').read_text()
           pager = Path('android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java').read_text()
+          player_layout = Path('android/app/src/main/res/layout/view_texture_player.xml').read_text()
           gradle = Path('android/app/build.gradle').read_text()
 
           required_main = {
@@ -104,6 +105,11 @@ jobs:
           missing = [label for label, needle in required_pager.items() if needle not in pager]
           if missing:
               raise SystemExit('Missing v3.7.4 pager invariants: ' + ', '.join(missing))
+
+          if 'android:background="@android:color/transparent"' not in player_layout:
+              raise SystemExit('TextureView player background is not transparent')
+          if 'app:keep_content_on_player_reset="true"' not in player_layout:
+              raise SystemExit('TextureView player does not preserve content during reset')
 
           if 'versionCode 32' not in gradle or 'versionName "3.7.4"' not in gradle:
               raise SystemExit('v3.7.4 version mismatch')
@@ -166,7 +172,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="v3.7.4 removes the standalone Quality collection surface and moves its curated subreddit seeds into the normal feed picker. Content filtering now checks title, subreddit, permalink, and source URL with broader explicit aliases. Oldest and Random no longer use invalid Reddit sort endpoints; feed and search build a NEW reservoir and apply client-side order, including Oldest for local search. Fullscreen video cards keep a poster beneath a transparent Media3 shutter to reduce black flashes during post-to-post transitions."
+          NOTES="v3.7.4 removes the standalone Quality collection surface and moves its curated subreddit seeds into the normal feed picker. Content filtering now checks title, subreddit, permalink, and source URL with broader explicit aliases. Oldest and Random no longer use invalid Reddit sort endpoints; feed and search build a NEW reservoir and apply client-side order, including Oldest for local search. Fullscreen video cards keep a poster beneath a transparent TextureView-backed Media3 player to reduce black flashes during post-to-post transitions."
           if gh release view v3.7.4-debug >/dev/null 2>&1; then
             gh release upload v3.7.4-debug Reddit-Media-v3.7.4-debug.apk --clobber
             gh release edit v3.7.4-debug --title "Reddit Media v3.7.4 debug" --notes "$NOTES"
