@@ -114,6 +114,7 @@ jobs:
               'bounded search crawl': 'int maxPages = deepSingleSource ? 4 : 1;',
               'streaming search first page': 'First useful page becomes visible now',
               'fair random round state': 'private final ArrayList<String> homeRandomRound',
+              'Home Random gate': 'private boolean homeSubscriptionRandomEnabled() {',
               'one-sub-per-round loader': 'private void fetchHomeRandomRoundNext(int feedGen, int randomGen)',
               'round reshuffle': 'Collections.shuffle(homeRandomRound);',
               'random exact-post memory': 'homeRandomSeenPostIds',
@@ -148,6 +149,7 @@ jobs:
               '    private void showAddCustomCategorySheet() {',
               '    private void showCustomCategory(String name) {',
               '    private void fetchFeedPages(',
+              '    private boolean homeSubscriptionRandomEnabled() {',
               '    private String listingPath(',
               '    private void fetchRemoteSearchGroup(',
               '    private String remoteSearchPath(',
@@ -156,9 +158,21 @@ jobs:
                   raise SystemExit('Expected exactly one v3.7.5 helper definition: ' + signature)
 
           feed_start = main.find('    private void fetchFeedPages(')
-          listing_start = main.find('    private String listingPath(', feed_start)
-          if feed_start < 0 or listing_start < 0 or main[feed_start:listing_start].count('engine.get(path, result -> {') != 1:
+          random_start = main.find('    private boolean homeSubscriptionRandomEnabled() {', feed_start)
+          if feed_start < 0 or random_start < 0 or main[feed_start:random_start].count('engine.get(path, result -> {') != 1:
               raise SystemExit('Malformed v3.7.5 feed method boundary')
+          listing_start = main.find('    private String listingPath(', random_start)
+          random_gap = main[random_start:listing_start]
+          for needle in [
+              'private void prepareHomeRandomRound() {',
+              'Collections.shuffle(homeRandomRound);',
+              'private void fetchHomeRandomRoundNext(int feedGen, int randomGen) {',
+              'after = "home-random-round";',
+              'homeRandomRequestsThisLoad >= 12',
+              '280L',
+          ]:
+              if needle not in random_gap:
+                  raise SystemExit('Malformed v3.7.5 Home Random helper region: ' + needle)
           search_start = main.find('    private void fetchRemoteSearchGroup(')
           search_path_start = main.find('    private String remoteSearchPath(', search_start)
           if search_start < 0 or search_path_start < 0 or main[search_start:search_path_start].count('engine.get(path, result -> {') != 1:
