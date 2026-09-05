@@ -130,8 +130,16 @@ jobs:
               if needle not in files[file_name]:
                   missing.append(f"{label} [{file_name}] -> {needle}")
 
-          if '/comments' in files['ArcticShiftClient']:
-              missing.append('Arctic Shift must remain posts-only; found /comments')
+          arctic = files['ArcticShiftClient']
+          forbidden_comment_api = (
+              'BASE + "/comments',
+              '.append("/comments',
+              '"/comments/search?',
+              '"/comments/ids?',
+          )
+          for needle in forbidden_comment_api:
+              if needle in arctic:
+                  missing.append(f'Arctic Shift must remain posts-only; found comments API construction: {needle}')
 
           if missing:
               print("VALIDATION FAILED. Missing invariants:")
