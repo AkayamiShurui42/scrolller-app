@@ -1,4 +1,4 @@
-run_id=33959519624
-status=cancelled
-head_sha=52d673e459626f0879a8cfcb978d731f9e039220
+run_id=33959570039
+status=success
+head_sha=66ec113aacb15f24a1e5e1116e9e6ca9e12c2ed1
 release_tag=v3.7.2-debug
