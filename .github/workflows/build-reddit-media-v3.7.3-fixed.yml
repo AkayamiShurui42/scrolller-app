@@ -1,0 +1,155 @@
+name: Build Reddit Media v3.7.3 fixed
+
+on:
+  push:
+    branches: [ reddit-native-redview ]
+    paths-ignore:
+      - 'android/active-build-*.txt'
+      - 'android/build-status-*.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reddit-media-v3.7.3-fixed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Reddit Media 3.7.3 Search Sort Stabilization APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Apply exact source patch stack
+        working-directory: android
+        run: |
+          python3 patches/apply_v3_3.py
+          python3 patches/apply_v3_4.py
+          python3 patches/apply_v3_4_stream.py
+          python3 patches/apply_v3_5.py
+          python3 patches/apply_v3_5_1_loading.py
+          python3 patches/apply_v3_5_2_texture_surface.py
+          python3 patches/apply_v3_5_3_back_dispatcher.py
+          python3 patches/apply_v3_6_read_hide.py
+          python3 patches/apply_v3_6_favorites_protection.py
+          python3 patches/apply_v3_6_1_stable_pager.py
+          python3 patches/apply_v3_6_1_immediate_mark.py
+          python3 patches/apply_v3_6_2_loading_ready_hidden_manage.py
+          python3 patches/apply_v3_6_3_persistent_fullscreen_overlay.py
+          python3 patches/apply_v3_6_4_single_owner_overlay.py
+          python3 patches/apply_v3_6_5_preloaded_tap_toggle_overlay.py
+          python3 patches/apply_v3_6_6_search_subscribe.py
+          python3 patches/apply_v3_6_7_reservoir.py
+          python3 patches/apply_v3_6_7_redgifs_post.py
+          python3 patches/apply_v3_6_7_redgifs_resolver.py
+          python3 patches/apply_v3_6_7_hq_player.py
+          python3 patches/apply_v3_6_7_pager_media.py
+          python3 patches/apply_v3_6_7_grid_media.py
+          python3 patches/apply_v3_6_8_scrolller_source.py
+          python3 patches/apply_v3_6_9_unread_content_filters.py
+          python3 patches/apply_v3_6_9_filters_saved_state.py
+          python3 patches/apply_v3_6_9_saved_immediate_performance.py
+          python3 patches/apply_v3_7_3_search_scopes_compatible.py
+          python3 patches/apply_v3_7_0_historical_access.py
+          python3 patches/apply_v3_7_1_quality_crawl.py
+          python3 patches/apply_v3_7_1_import_fix.py
+          python3 patches/apply_v3_7_2_quality_browse.py
+          python3 patches/apply_v3_7_3_feed_search_stability.py
+          python3 patches/apply_v3_7_3_generated_structure_fix.py
+
+      - name: Validate Search Sort and generated structure
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          main = Path('android/app/src/main/java/com/scrolller/adblock/MainActivity.java').read_text()
+          gradle = Path('android/app/build.gradle').read_text()
+          checks = [
+              ('private int searchGeneration = 0', 'search generation'),
+              ('searchStillValid', 'stale search rejection'),
+              ('Global Reddit', 'global search source'),
+              ('Subreddit search', 'subreddit search source'),
+              ('Subscriptions', 'subscriptions search source'),
+              ('Favorites / Saved', 'saved search source'),
+              ('Collector · current app collection', 'collector search source'),
+              ('private int feedGeneration = 0', 'feed generation'),
+              ('generation != feedGeneration', 'stale feed rejection'),
+              ('if (loading && !reset) return', 'reset supersedes old load'),
+              ('canonicalPostKey', 'canonical post dedupe'),
+              ('canonicalMediaKey', 'random media dedupe'),
+              ('topTime.equals("all")', 'top all behavior'),
+          ]
+          missing=[label for needle,label in checks if needle not in main]
+          if missing: raise SystemExit('Missing invariants: ' + ', '.join(missing))
+          if main.count('private void replacePosts(List<RedditPost> items) {') != 1:
+              raise SystemExit('replacePosts signature count invalid')
+          orphan='\n        postAdapter.setPosts(visible);\n        gridAdapter.setPosts(visible);\n    }\n\n        postAdapter.setPosts(visible);'
+          if orphan in main: raise SystemExit('orphan replacePosts tail remains')
+          if 'versionCode 31' not in gradle or 'versionName "3.7.3"' not in gradle:
+              raise SystemExit('version mismatch')
+          print('Search/Sort stabilization and generated source structure validated')
+          PY
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Prepare stable debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          keytool -list -keystore android/app/scrolller-debug.keystore -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Generate Gradle wrapper
+        working-directory: android
+        run: gradle wrapper --gradle-version 8.11.1
+
+      - name: Compile debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
+          grep -q "versionCode='31'" /tmp/badging.txt
+          grep -q "versionName='3.7.3'" /tmp/badging.txt
+          cp "$APK" Reddit-Media-v3.7.3-Search-Sort-Stability-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-media-v3.7.3-search-sort-stability-debug-apk
+          path: Reddit-Media-v3.7.3-Search-Sort-Stability-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish v3.7.3 debug release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="v3.7.3 restores the source-aware Search implementation and prevents stale asynchronous feed callbacks from contaminating a newly selected sort or media filter. Search again supports Global Reddit, Subreddit, Subscriptions, Favorites/Saved, and current Collector sources with generation-safe requests. Feed loads now use a separate generation guard, canonical post dedupe, Random media dedupe, and Top/All historical supplementation. This repaired build also removes the generated orphan replacePosts tail that caused the earlier 3.7.3 compile failure. Existing Unread/Saved/Hidden semantics, content filters, Scrolller, Arctic Shift, RedGIFs, Quality collection, and adaptive playback remain unchanged."
+          if gh release view v3.7.3-debug >/dev/null 2>&1; then
+            gh release upload v3.7.3-debug Reddit-Media-v3.7.3-Search-Sort-Stability-debug.apk --clobber
+            gh release edit v3.7.3-debug --title "Reddit Media v3.7.3 debug" --notes "$NOTES"
+          else
+            gh release create v3.7.3-debug Reddit-Media-v3.7.3-Search-Sort-Stability-debug.apk --target reddit-native-redview --title "Reddit Media v3.7.3 debug" --prerelease --notes "$NOTES"
+          fi
