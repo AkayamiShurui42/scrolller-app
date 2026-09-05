@@ -1,0 +1,67 @@
+name: Diagnose v3.7.3 generated source
+
+on:
+  push:
+    branches: [ reddit-native-redview ]
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply exact v3.7.3 patch stack
+        working-directory: android
+        run: |
+          python3 patches/apply_v3_3.py
+          python3 patches/apply_v3_4.py
+          python3 patches/apply_v3_4_stream.py
+          python3 patches/apply_v3_5.py
+          python3 patches/apply_v3_5_1_loading.py
+          python3 patches/apply_v3_5_2_texture_surface.py
+          python3 patches/apply_v3_5_3_back_dispatcher.py
+          python3 patches/apply_v3_6_read_hide.py
+          python3 patches/apply_v3_6_favorites_protection.py
+          python3 patches/apply_v3_6_1_stable_pager.py
+          python3 patches/apply_v3_6_1_immediate_mark.py
+          python3 patches/apply_v3_6_2_loading_ready_hidden_manage.py
+          python3 patches/apply_v3_6_3_persistent_fullscreen_overlay.py
+          python3 patches/apply_v3_6_4_single_owner_overlay.py
+          python3 patches/apply_v3_6_5_preloaded_tap_toggle_overlay.py
+          python3 patches/apply_v3_6_6_search_subscribe.py
+          python3 patches/apply_v3_6_7_reservoir.py
+          python3 patches/apply_v3_6_7_redgifs_post.py
+          python3 patches/apply_v3_6_7_redgifs_resolver.py
+          python3 patches/apply_v3_6_7_hq_player.py
+          python3 patches/apply_v3_6_7_pager_media.py
+          python3 patches/apply_v3_6_7_grid_media.py
+          python3 patches/apply_v3_6_8_scrolller_source.py
+          python3 patches/apply_v3_6_9_unread_content_filters.py
+          python3 patches/apply_v3_6_9_filters_saved_state.py
+          python3 patches/apply_v3_6_9_saved_immediate_performance.py
+          python3 patches/apply_v3_7_3_search_scopes_compatible.py
+          python3 patches/apply_v3_7_0_historical_access.py
+          python3 patches/apply_v3_7_1_quality_crawl.py
+          python3 patches/apply_v3_7_1_import_fix.py
+          python3 patches/apply_v3_7_2_quality_browse.py
+          python3 patches/apply_v3_7_3_feed_search_stability.py
+      - name: Print generated collection methods
+        run: |
+          FILE=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          echo '--- replacePosts signatures ---'
+          grep -n 'private void replacePosts' "$FILE" || true
+          echo '--- appendUnique signatures ---'
+          grep -n 'private void appendUnique' "$FILE" || true
+          echo '--- generated lines 1060-1160 ---'
+          nl -ba "$FILE" | sed -n '1060,1160p'
+          echo '--- brace balance through line 1160 ---'
+          python3 - <<'PY'
+          from pathlib import Path
+          lines=Path('android/app/src/main/java/com/scrolller/adblock/MainActivity.java').read_text().splitlines()
+          depth=0
+          for i,line in enumerate(lines[:1160],1):
+              # Approximate structural diagnostic, sufficient around methods with no text blocks.
+              depth += line.count('{') - line.count('}')
+              if 1060 <= i <= 1160:
+                  print(f'{i:4} depth={depth:3} {line}')
+          PY
