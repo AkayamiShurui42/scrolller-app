@@ -12,12 +12,31 @@ if start < 0 or version < 0 or version <= start:
 source = source[:start] + source[version:]
 exec(compile(source, str(source_path), "exec"), {"__name__": "__main__", "__file__": str(source_path)})
 
+main_path = Path("app/src/main/java/com/scrolller/adblock/MainActivity.java")
+main = main_path.read_text()
+
+# The original v3.6.9 helper block can leave a stale tail after replacing
+# isContentBlocked(). The next declaration must be normalizeFilterText(), so trim
+# only anything between the new method's real end and that helper declaration.
+blocked_start = main.find("    private boolean isContentBlocked(RedditPost post) {")
+normalize_start = main.find("    private static String normalizeFilterText(String value) {", blocked_start)
+if blocked_start < 0 or normalize_start < 0:
+    raise SystemExit("Missing final v3.7.4 content filter/helper declarations")
+blocked_end_marker = "        return false;\n    }\n\n"
+blocked_end = main.find(blocked_end_marker, blocked_start)
+if blocked_end < 0 or blocked_end >= normalize_start:
+    raise SystemExit("Could not find final v3.7.4 isContentBlocked end")
+blocked_end += len(blocked_end_marker)
+filter_gap = main[blocked_end:normalize_start]
+if filter_gap.strip():
+    if "blockGoreContent" not in filter_gap and "blockLgbtTopics" not in filter_gap:
+        raise SystemExit("Unexpected content between isContentBlocked and normalizeFilterText")
+    main = main[:blocked_end] + main[normalize_start:]
+
 # The historical Quality patch can leave a stale tail from the old listingPath
 # immediately after the replacement method. Remove only that gap. Do not replace
 # the whole listingPath -> matchesMedia region because the Saved/content-filter
 # helpers intentionally live there.
-main_path = Path("app/src/main/java/com/scrolller/adblock/MainActivity.java")
-main = main_path.read_text()
 listing_start = main.find("    private String listingPath(String cursor) {")
 if listing_start < 0:
     raise SystemExit("Missing final v3.7.4 listingPath")
@@ -82,4 +101,4 @@ xml = xml.replace(
 )
 layout.write_text(xml)
 
-print("Applied v3.7.4 final listing-tail cleanup + TextureView transition smoothing")
+print("Applied v3.7.4 final filter/listing tail cleanup + TextureView transition smoothing")
