@@ -70,6 +70,7 @@ jobs:
           python3 patches/apply_v3_7_5_generated_structure_cleanup.py
           python3 patches/apply_v3_7_5_generated_method_reconstruction.py
           python3 patches/apply_v3_7_5_restore_read_hide_helpers.py
+          python3 patches/apply_v3_7_5_runtime_reliability_custom_categories.py
 
       - name: Validate v3.7.5 invariants
         run: |
@@ -99,16 +100,26 @@ jobs:
               'category content search': 'private void openCategorySearch(String title, String[] communities)',
               'category search backend': 'if (searchScope.equals("category"))',
               'folder search action': 'Search this folder',
+              'custom category creator': 'private void showAddCustomCategorySheet() {',
+              'custom category viewer': 'private void showCustomCategory(String name) {',
+              'custom category persistence': 'customCategories',
+              'custom category minimum two': 'pick at least two subreddits',
               'hidden search lead-ins': 'private void startHiddenSearchLeadIns(int generation)',
               'comment-parent hydration': 'private void fetchSearchLeadInPosts(',
               'category metadata matching': 'private String categoryLabelsForSubreddit(String subredditName)',
               'category metadata lead-ins': 'private void startCategoryMetadataLeadIns(int generation)',
+              'bounded feed crawl': 'int pageLimit = topAll ? 12 : oldest ? 5 : random ? 3 : 4;',
+              'streaming feed first page': 'if (reset && page == 0 && !collected.isEmpty())',
+              'bounded search crawl': 'int maxPages = deepSingleSource ? 4 : 1;',
+              'streaming search first page': 'First useful page becomes visible now',
               'fair random round state': 'private final ArrayList<String> homeRandomRound',
               'one-sub-per-round loader': 'private void fetchHomeRandomRoundNext(int feedGen, int randomGen)',
               'round reshuffle': 'Collections.shuffle(homeRandomRound);',
               'random exact-post memory': 'homeRandomSeenPostIds',
               'round completion cursor': 'after = "home-random-round";',
               'random load interception': 'loadHomeSubscriptionRandom(reset);',
+              'random chunk budget': 'homeRandomRequestsThisLoad >= 12',
+              'random paced request': '280L',
               'hidden library loader': 'private void loadHiddenPostsView() {',
               'fullscreen read baseline': 'private void setFullscreenReadBaseline(int position) {',
               'fullscreen read tracking': 'private void trackFullscreenVisit(int position) {',
@@ -133,6 +144,8 @@ jobs:
               '    private void saveReadHideState() {',
               '    private JSONObject postToJson(RedditPost post) throws Exception {',
               '    private RedditPost postFromJson(JSONObject o) {',
+              '    private void showAddCustomCategorySheet() {',
+              '    private void showCustomCategory(String name) {',
           ]:
               if main.count(signature) != 1:
                   raise SystemExit('Expected exactly one v3.7.5 helper definition: ' + signature)
@@ -160,7 +173,7 @@ jobs:
           if 'versionCode 33' not in gradle or 'versionName "3.7.5"' not in gradle:
               raise SystemExit('v3.7.5 version mismatch')
 
-          print('v3.7.5 search, category, subreddit, fair-random, read-hide, and generated structure invariants validated')
+          print('v3.7.5 runtime reliability, search, categories, fair-random, read-hide, and generated structure invariants validated')
           PY
 
       - name: Setup Java 17
@@ -218,7 +231,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="v3.7.5 adds direct in-subreddit search, SFW/NSFW category folders with subcategories, folder-scoped search, a hidden PullPush submission/comment lead-in index, hidden flair/selftext/domain search metadata, category-label matching, and fair Home Random rounds. Home Random now gives each subscription at most one post per round, reshuffles the full subscription list only after every community has had its turn, and avoids immediately recycling the same post. Comments remain invisible and are used only to locate their parent posts. v3.7.4 cleanup, filtering, sorting, and pager transition fixes remain included."
+          NOTES="v3.7.5 adds direct in-subreddit search, SFW/NSFW category folders with subcategories, folder-scoped search, persistent user-created categories, bounded streaming search, and paced Reddit feed/random loading. Home Random keeps one-post-per-community rounds but now processes them in rate-friendly chunks. Comments remain invisible and are used only to locate their parent posts. v3.7.4 cleanup, filtering, sorting, and pager transition fixes remain included."
           if gh release view v3.7.5-debug >/dev/null 2>&1; then
             gh release upload v3.7.5-debug Reddit-Media-v3.7.5-debug.apk --clobber
             gh release edit v3.7.5-debug --title "Reddit Media v3.7.5 debug" --notes "$NOTES"
