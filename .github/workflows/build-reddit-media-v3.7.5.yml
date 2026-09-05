@@ -66,7 +66,7 @@ jobs:
           python3 patches/apply_v3_7_4_final.py
           python3 patches/apply_v3_7_5_subreddit_search.py
           python3 patches/apply_v3_7_5_category_folders.py
-          python3 patches/apply_v3_7_5_search_index_home_random.py
+          python3 patches/apply_v3_7_5_search_index_home_random_final.py
 
       - name: Validate v3.7.5 invariants
         run: |
@@ -104,7 +104,8 @@ jobs:
               'one-sub-per-round loader': 'private void fetchHomeRandomRoundNext(int feedGen, int randomGen)',
               'round reshuffle': 'Collections.shuffle(homeRandomRound);',
               'random exact-post memory': 'homeRandomSeenPostIds',
-              'random pagination trigger': 'homeSubscriptionRandomEnabled() || !after.isEmpty()',
+              'round completion cursor': 'after = "home-random-round";',
+              'random load interception': 'loadHomeSubscriptionRandom(reset);',
           }
           missing = [label for label, needle in required_main.items() if needle not in main]
           if missing:
