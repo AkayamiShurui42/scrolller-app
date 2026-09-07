@@ -1,0 +1,93 @@
+name: Build Infinity+ 8.2.1 WebView Login
+
+on:
+  push:
+    branches:
+      - infinity-v8.2.1-webview-login
+    paths:
+      - 'infinity/**'
+      - '.github/workflows/build-infinity-webview-login.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infinity-v8.2.1-webview-login-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout patch repository
+        uses: actions/checkout@v4
+
+      - name: Checkout exact Infinity+ 8.2.1 source
+        run: |
+          git clone --depth 1 --branch v8.2.1 https://github.com/Docile-Alligator/Infinity-For-Reddit.git infinity-src
+
+      - name: Apply isolated login patch
+        run: |
+          cd infinity-src
+          python3 ../infinity/patches/apply_webview_login.py
+          git diff -- app/src/main/java/ml/docilealligator/infinityforreddit/activities/MainActivity.java
+          CHANGED=$(git diff --name-only | wc -l)
+          test "$CHANGED" -eq 1
+          test "$(git diff --name-only)" = "app/src/main/java/ml/docilealligator/infinityforreddit/activities/MainActivity.java"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 build tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build release APK
+        working-directory: infinity-src
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease -x lint --stacktrace
+
+      - name: Sign test APK without changing package id
+        run: |
+          keytool -genkeypair -v \
+            -keystore infinity-webview-test.jks \
+            -storepass android \
+            -alias infinitywebview \
+            -keypass android \
+            -keyalg RSA -keysize 4096 -validity 36500 \
+            -dname "CN=Infinity WebView Login Test"
+          UNSIGNED=$(find infinity-src/app/build/outputs/apk/release -name '*unsigned*.apk' -o -name '*release*.apk' | head -1)
+          test -n "$UNSIGNED"
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -p -f 4 "$UNSIGNED" Infinity+-v8.2.1-WebViewLogin-aligned.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+            --ks infinity-webview-test.jks \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --ks-key-alias infinitywebview \
+            --out Infinity+-v8.2.1-WebViewLogin.apk \
+            Infinity+-v8.2.1-WebViewLogin-aligned.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs Infinity+-v8.2.1-WebViewLogin.apk
+
+      - name: Package corresponding modified source
+        run: |
+          rm -rf infinity-src/.git infinity-src/app/build infinity-src/.gradle
+          tar -czf Infinity+-v8.2.1-WebViewLogin-source.tar.gz infinity-src
+
+      - name: Upload patched APK and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: infinity-v8.2.1-webview-login
+          path: |
+            Infinity+-v8.2.1-WebViewLogin.apk
+            Infinity+-v8.2.1-WebViewLogin-source.tar.gz
+          if-no-files-found: error
