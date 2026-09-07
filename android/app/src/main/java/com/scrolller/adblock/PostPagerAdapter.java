@@ -2,8 +2,13 @@ package com.scrolller.adblock;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Rect;
+import android.graphics.drawable.Animatable;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -13,13 +18,21 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
 
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.DataSource;
+import com.bumptech.glide.load.engine.GlideException;
+import com.bumptech.glide.load.resource.gif.GifDrawable;
+import com.bumptech.glide.request.RequestListener;
+import com.bumptech.glide.request.target.Target;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,7 +42,11 @@ import java.util.Map;
 public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapter.PostHolder> {
     public interface Listener {
         void onOpenSubreddit(String subreddit);
-        void onOpenUser(String username);
+        void onOpenUser(RedditPost post);
+        void onToggleChrome();
+        void onMediaReady(RedditPost post);
+        void onMediaFailed(RedditPost post);
+        void onRestoreHidden(RedditPost post);
         void onSave(RedditPost post);
         void onComments(RedditPost post);
         void onShare(RedditPost post);
@@ -41,8 +58,11 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     private final Listener listener;
     private final ArrayList<RedditPost> posts = new ArrayList<>();
     private final Map<Integer, ExoPlayer> players = new HashMap<>();
+    private final ArrayList<PostHolder> attachedHolders = new ArrayList<>();
     private int activePosition = 0;
     private boolean muted = true;
+    private boolean chromeVisible = false;
+    private boolean hiddenMode = false;
     private int topInsetPx = 0;
     private int bottomInsetPx = 0;
 
@@ -85,6 +105,32 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
     public boolean isMuted() { return muted; }
 
+    public void setHiddenMode(boolean hiddenMode) {
+        if (this.hiddenMode == hiddenMode) return;
+        this.hiddenMode = hiddenMode;
+        notifyDataSetChanged();
+    }
+
+    public void removePostById(String id) {
+        if (id == null || id.isEmpty()) return;
+        int index = -1;
+        for (int i = 0; i < posts.size(); i++) {
+            if (id.equals(posts.get(i).id)) { index = i; break; }
+        }
+        if (index < 0) return;
+        releaseAll();
+        posts.remove(index);
+        activePosition = Math.max(0, Math.min(activePosition, posts.size() - 1));
+        notifyDataSetChanged();
+    }
+
+    public void setChromeVisible(boolean visible) {
+        chromeVisible = visible;
+        for (PostHolder holder : new ArrayList<>(attachedHolders)) {
+            holder.applyChromeVisibility();
+        }
+    }
+
     public void setSystemInsets(int topPx, int bottomPx) {
         if (topInsetPx == topPx && bottomInsetPx == bottomPx) return;
         topInsetPx = Math.max(0, topPx);
@@ -117,7 +163,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     @NonNull
     @Override
     public PostHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-        FrameLayout root = new FrameLayout(context);
+        FrameLayout root = new TapFrameLayout(context);
         root.setBackgroundColor(Color.BLACK);
         root.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -131,7 +177,21 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     }
 
     @Override
+    public void onViewAttachedToWindow(@NonNull PostHolder holder) {
+        super.onViewAttachedToWindow(holder);
+        if (!attachedHolders.contains(holder)) attachedHolders.add(holder);
+        holder.applyChromeVisibility();
+    }
+
+    @Override
+    public void onViewDetachedFromWindow(@NonNull PostHolder holder) {
+        attachedHolders.remove(holder);
+        super.onViewDetachedFromWindow(holder);
+    }
+
+    @Override
     public void onViewRecycled(@NonNull PostHolder holder) {
+        attachedHolders.remove(holder);
         holder.releasePlayer();
         super.onViewRecycled(holder);
     }
@@ -141,6 +201,10 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     final class PostHolder extends RecyclerView.ViewHolder {
         final FrameLayout root;
         ExoPlayer player;
+        PlayerView playerView;
+        View topMeta;
+        View bottomInfo;
+        View mediaControl;
         int boundPosition = -1;
 
         PostHolder(FrameLayout root) {
@@ -151,31 +215,87 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         void bind(RedditPost post, int position) {
             releasePlayer();
             boundPosition = position;
+            topMeta = null;
+            bottomInfo = null;
+            mediaControl = null;
+            playerView = null;
             root.removeAllViews();
             root.setBackgroundColor(Color.BLACK);
+            root.setOnClickListener(null);
             addMedia(post, position);
             addTopMeta(post);
             addBottomInfo(post);
+            applyChromeVisibility();
         }
 
         private void addMedia(RedditPost post, int position) {
-            if (post.mediaKind == RedditPost.MediaKind.VIDEO && post.videoUrl != null && !post.videoUrl.isEmpty()) {
-                PlayerView playerView = new PlayerView(context);
-                playerView.setUseController(false);
-                playerView.setBackgroundColor(Color.BLACK);
+            if (post.videoUrl != null && post.videoUrl.startsWith("redgifs:")) {
+                final String unresolved = post.videoUrl;
+                final String id = unresolved.substring("redgifs:".length());
+                ImageView poster = new ImageView(context);
+                poster.setBackgroundColor(Color.BLACK);
+                poster.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                root.addView(poster, fullParams());
+                if (post.posterUrl != null && !post.posterUrl.isEmpty()) {
+                    Glide.with(poster).load(post.posterUrl).fitCenter().into(poster);
+                }
+                RedgifsResolver.resolve(id, new RedgifsResolver.Callback() {
+                    @Override
+                    public void onResolved(String url) {
+                        if (post.videoUrl.equals(unresolved)) post.videoUrl = url;
+                        if (boundPosition == position) bind(post, position);
+                    }
+
+                    @Override
+                    public void onError(String error) {
+                        listener.onMediaFailed(post);
+                    }
+                });
+                return;
+            }
+
+            if ((post.mediaKind == RedditPost.MediaKind.VIDEO || post.mediaKind == RedditPost.MediaKind.GIF)
+                    && post.videoUrl != null && !post.videoUrl.isEmpty()) {
+                if (post.posterUrl != null && !post.posterUrl.isEmpty()) {
+                    ImageView videoPoster = new ImageView(context);
+                    videoPoster.setBackgroundColor(Color.BLACK);
+                    videoPoster.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                    root.addView(videoPoster, fullParams());
+                    Glide.with(videoPoster).load(post.posterUrl).fitCenter().into(videoPoster);
+                }
+
+                playerView = (PlayerView) android.view.LayoutInflater.from(context)
+                        .inflate(R.layout.view_texture_player, root, false);
+                playerView.setKeepContentOnPlayerReset(true);
+                playerView.setShutterBackgroundColor(Color.TRANSPARENT);
+                playerView.setBackgroundColor(Color.TRANSPARENT);
                 root.addView(playerView, fullParams());
 
-                player = new ExoPlayer.Builder(context).build();
+                player = HighQualityPlayerFactory.create(context, post.videoUrl);
                 player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
                 player.setMediaItem(MediaItem.fromUri(post.videoUrl));
+                player.addListener(new Player.Listener() {
+                    @Override
+                    public void onPlaybackStateChanged(int state) {
+                        if (state == Player.STATE_READY) listener.onMediaReady(post);
+                    }
+
+                    @Override
+                    public void onPlayerError(PlaybackException error) {
+                        listener.onMediaFailed(post);
+                    }
+                });
                 player.setVolume(muted ? 0f : 1f);
                 player.setPlayWhenReady(position == activePosition);
                 player.prepare();
                 playerView.setPlayer(player);
                 players.put(position, player);
+                playerView.setOnClickListener(null);
 
                 Button mute = pillButton(muted ? "Muted" : "Sound");
-                FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(74), dp(36), Gravity.TOP | Gravity.END);
+                mediaControl = mute;
+                FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(
+                        dp(74), dp(36), Gravity.TOP | Gravity.END);
                 mp.topMargin = topInsetPx + dp(102);
                 mp.rightMargin = dp(10);
                 root.addView(mute, mp);
@@ -188,13 +308,51 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
                 return;
             }
 
+            if (post.mediaKind == RedditPost.MediaKind.GIF && !post.imageUrls.isEmpty()) {
+                ImageView image = new ImageView(context);
+                image.setBackgroundColor(Color.BLACK);
+                image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                root.addView(image, fullParams());
+                String url = post.imageUrls.get(0);
+                Glide.with(image)
+                        .asGif()
+                        .load(url)
+                        .fitCenter()
+                        .listener(loopingGifListener(post))
+                        .into(image);
+                image.setOnClickListener(null);
+
+                Button playPause = pillButton("Pause");
+                mediaControl = playPause;
+                FrameLayout.LayoutParams gp = new FrameLayout.LayoutParams(
+                        dp(74), dp(36), Gravity.TOP | Gravity.END);
+                gp.topMargin = topInsetPx + dp(102);
+                gp.rightMargin = dp(10);
+                root.addView(playPause, gp);
+                playPause.setOnClickListener(v -> {
+                    Drawable drawable = image.getDrawable();
+                    if (drawable instanceof Animatable) {
+                        Animatable anim = (Animatable) drawable;
+                        if (anim.isRunning()) {
+                            anim.stop();
+                            playPause.setText("Play");
+                        } else {
+                            anim.start();
+                            playPause.setText("Pause");
+                        }
+                    }
+                });
+                return;
+            }
+
             if (post.mediaKind == RedditPost.MediaKind.GALLERY && post.imageUrls.size() > 1) {
                 ViewPager2 gallery = new ViewPager2(context);
                 gallery.setOrientation(ViewPager2.ORIENTATION_HORIZONTAL);
-                gallery.setAdapter(new GalleryAdapter(post.imageUrls));
+                gallery.setAdapter(new GalleryAdapter(post, post.imageUrls));
                 root.addView(gallery, fullParams());
 
                 TextView badge = smallBadge(post.imageUrls.size() + " images");
+                mediaControl = badge;
                 FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT, dp(32), Gravity.TOP | Gravity.END);
                 bp.topMargin = topInsetPx + dp(102);
@@ -208,21 +366,13 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             root.addView(image, fullParams());
             String url = !post.imageUrls.isEmpty() ? post.imageUrls.get(0) : post.posterUrl;
-            Glide.with(image).load(url).fitCenter().into(image);
-
-            if (post.mediaKind == RedditPost.MediaKind.EXTERNAL) {
-                Button open = pillButton("Open media");
-                open.setTextColor(Color.BLACK);
-                open.setBackground(rounded(Color.WHITE, 999));
-                FrameLayout.LayoutParams op = new FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT, dp(44), Gravity.CENTER);
-                root.addView(open, op);
-                open.setOnClickListener(v -> listener.onOpenExternal(post));
-            }
+            Glide.with(image).load(url).fitCenter().listener(imageLoadListener(post)).into(image);
+            image.setOnClickListener(null);
         }
 
         private void addTopMeta(RedditPost post) {
             LinearLayout meta = new LinearLayout(context);
+            topMeta = meta;
             meta.setOrientation(LinearLayout.HORIZONTAL);
             meta.setGravity(Gravity.CENTER_VERTICAL);
             meta.setPadding(dp(10), topInsetPx + dp(98), dp(10), dp(8));
@@ -243,7 +393,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(0, dp(36), 1f);
             ap.leftMargin = dp(3);
             meta.addView(author, ap);
-            author.setOnClickListener(v -> listener.onOpenUser(post.author));
+            author.setOnClickListener(v -> listener.onOpenUser(post));
 
             if (post.nsfw) {
                 TextView nsfw = smallBadge("NSFW");
@@ -259,6 +409,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
         private void addBottomInfo(RedditPost post) {
             LinearLayout bottom = new LinearLayout(context);
+            bottomInfo = bottom;
             bottom.setOrientation(LinearLayout.VERTICAL);
             bottom.setGravity(Gravity.BOTTOM);
             bottom.setPadding(dp(11), dp(70), dp(11), bottomInsetPx + dp(70));
@@ -285,13 +436,21 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             actionScroll.addView(actions, new HorizontalScrollView.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-            Button save = pillButton(post.saved ? "★ Saved" : "☆ Save");
-            if (post.saved) {
-                save.setTextColor(Color.BLACK);
-                save.setBackground(rounded(0xFFF0F0F0, 999));
+            if (hiddenMode) {
+                Button restore = pillButton("↶ Restore");
+                restore.setTextColor(Color.BLACK);
+                restore.setBackground(rounded(0xFFF0F0F0, 999));
+                actions.addView(restore, actionParams());
+                restore.setOnClickListener(v -> listener.onRestoreHidden(post));
+            } else {
+                Button save = pillButton(post.saved ? "★ Saved" : "☆ Save");
+                if (post.saved) {
+                    save.setTextColor(Color.BLACK);
+                    save.setBackground(rounded(0xFFF0F0F0, 999));
+                }
+                actions.addView(save, actionParams());
+                save.setOnClickListener(v -> listener.onSave(post));
             }
-            actions.addView(save, actionParams());
-            save.setOnClickListener(v -> listener.onSave(post));
 
             Button comments = pillButton("◌ " + compact(post.comments));
             actions.addView(comments, actionParams());
@@ -315,19 +474,92 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             root.addView(bottom, p);
         }
 
+        void applyChromeVisibility() {
+            int visibility = chromeVisible ? View.VISIBLE : View.GONE;
+            if (topMeta != null) topMeta.setVisibility(visibility);
+            if (bottomInfo != null) bottomInfo.setVisibility(visibility);
+            if (mediaControl != null) mediaControl.setVisibility(visibility);
+            if (playerView != null) {
+                if (chromeVisible) playerView.showController();
+                else playerView.hideController();
+            }
+        }
+
         void releasePlayer() {
             if (boundPosition >= 0) players.remove(boundPosition);
+            if (playerView != null) {
+                try { playerView.setPlayer(null); } catch (Exception ignored) {}
+            }
             if (player != null) {
+                try { player.setVideoTextureView(null); } catch (Exception ignored) {}
+                try { player.stop(); } catch (Exception ignored) {}
                 try { player.release(); } catch (Exception ignored) {}
                 player = null;
             }
+            playerView = null;
             boundPosition = -1;
         }
     }
 
+    private RequestListener<GifDrawable> loopingGifListener(RedditPost post) {
+        return new RequestListener<GifDrawable>() {
+            @Override
+            public boolean onLoadFailed(
+                    @Nullable GlideException e,
+                    Object model,
+                    Target<GifDrawable> target,
+                    boolean isFirstResource) {
+                listener.onMediaFailed(post);
+                return false;
+            }
+
+            @Override
+            public boolean onResourceReady(
+                    GifDrawable resource,
+                    Object model,
+                    Target<GifDrawable> target,
+                    DataSource dataSource,
+                    boolean isFirstResource) {
+                resource.setLoopCount(GifDrawable.LOOP_FOREVER);
+                resource.start();
+                listener.onMediaReady(post);
+                return false;
+            }
+        };
+    }
+
+    private RequestListener<Drawable> imageLoadListener(RedditPost post) {
+        return new RequestListener<Drawable>() {
+            @Override
+            public boolean onLoadFailed(
+                    @Nullable GlideException e,
+                    Object model,
+                    Target<Drawable> target,
+                    boolean isFirstResource) {
+                listener.onMediaFailed(post);
+                return false;
+            }
+
+            @Override
+            public boolean onResourceReady(
+                    Drawable resource,
+                    Object model,
+                    Target<Drawable> target,
+                    DataSource dataSource,
+                    boolean isFirstResource) {
+                listener.onMediaReady(post);
+                return false;
+            }
+        };
+    }
+
     private final class GalleryAdapter extends RecyclerView.Adapter<GalleryHolder> {
+        private final RedditPost post;
         private final List<String> urls;
-        GalleryAdapter(List<String> urls) { this.urls = urls; }
+        GalleryAdapter(RedditPost post, List<String> urls) {
+            this.post = post;
+            this.urls = urls;
+        }
 
         @NonNull
         @Override
@@ -342,10 +574,71 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
         @Override
         public void onBindViewHolder(@NonNull GalleryHolder holder, int position) {
-            Glide.with(holder.image).load(urls.get(position)).fitCenter().into(holder.image);
+            if (position == 0) {
+                Glide.with(holder.image).load(urls.get(position)).fitCenter()
+                        .listener(imageLoadListener(post)).into(holder.image);
+            } else {
+                Glide.with(holder.image).load(urls.get(position)).fitCenter().into(holder.image);
+            }
         }
 
         @Override public int getItemCount() { return urls.size(); }
+    }
+
+    private final class TapFrameLayout extends FrameLayout {
+        private float downX;
+        private float downY;
+        private long downAt;
+        private boolean downOnActionControl;
+
+        TapFrameLayout(Context context) {
+            super(context);
+        }
+
+        @Override
+        public boolean dispatchTouchEvent(MotionEvent event) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                downX = event.getX();
+                downY = event.getY();
+                downAt = event.getEventTime();
+                downOnActionControl = isActionControlAt(event.getRawX(), event.getRawY());
+            }
+            boolean handled = super.dispatchTouchEvent(event);
+            if (event.getActionMasked() == MotionEvent.ACTION_UP && !downOnActionControl) {
+                float dx = Math.abs(event.getX() - downX);
+                float dy = Math.abs(event.getY() - downY);
+                long elapsed = event.getEventTime() - downAt;
+                if (dx <= dp(24) && dy <= dp(24) && elapsed <= 600) {
+                    // Overlay views remain attached/preloaded; this only toggles
+                    // their visibility. The same tap path hides and reveals them.
+                    listener.onToggleChrome();
+                }
+            }
+            return handled;
+        }
+
+        private boolean isActionControlAt(float rawX, float rawY) {
+            return hitActionControl(this, Math.round(rawX), Math.round(rawY));
+        }
+
+        private boolean hitActionControl(View view, int rawX, int rawY) {
+            if (view == null || view.getVisibility() != View.VISIBLE) return false;
+
+            // Protect app action buttons and Media3 controller buttons from the
+            // background overlay toggle. Their normal click behavior wins.
+            if (view instanceof Button || view instanceof android.widget.ImageButton) {
+                Rect bounds = new Rect();
+                return view.getGlobalVisibleRect(bounds) && bounds.contains(rawX, rawY);
+            }
+
+            if (view instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) view;
+                for (int i = group.getChildCount() - 1; i >= 0; i--) {
+                    if (hitActionControl(group.getChildAt(i), rawX, rawY)) return true;
+                }
+            }
+            return false;
+        }
     }
 
     static final class GalleryHolder extends RecyclerView.ViewHolder {

@@ -24,12 +24,13 @@ public final class RedditPost {
     public final boolean nsfw;
     public final MediaKind mediaKind;
     public final List<String> imageUrls;
-    public final String videoUrl;
+    public String videoUrl;
     public final String posterUrl;
     public final int mediaWidth;
     public final int mediaHeight;
+    public String searchMetadata = "";
 
-    private RedditPost(
+    RedditPost(
             String id,
             String title,
             String author,
@@ -81,7 +82,7 @@ public final class RedditPost {
         }
         if (media == null) return null;
 
-        return new RedditPost(
+        RedditPost post = new RedditPost(
                 data.optString("name", ""),
                 decode(data.optString("title", "")),
                 data.optString("author", ""),
@@ -100,6 +101,132 @@ public final class RedditPost {
                 media.width,
                 media.height
         );
+        post.searchMetadata = decode(data.optString("link_flair_text", "")) + " "
+                + decode(data.optString("author_flair_text", "")) + " "
+                + decode(data.optString("selftext", "")) + " "
+                + data.optString("domain", "") + " "
+                + data.optString("post_hint", "") + " "
+                + data.optString("subreddit_name_prefixed", "");
+        return post;
+    }
+
+    public static RedditPost fromScrolller(JSONObject item) {
+        if (item == null) return null;
+        String redditPath = decode(item.optString("redditPath", ""));
+        String redditId = redditIdFromPath(redditPath);
+        if (redditId.isEmpty()) return null;
+
+        ArrayList<String> album = new ArrayList<>();
+        int width = 0;
+        int height = 0;
+        JSONArray albumContent = item.optJSONArray("albumContent");
+        if (albumContent != null) {
+            for (int i = 0; i < albumContent.length(); i++) {
+                JSONObject media = albumContent.optJSONObject(i);
+                JSONObject best = bestScrolllerSource(
+                        media != null ? media.optJSONArray("mediaSources") : null);
+                if (best == null) continue;
+                String url = decode(best.optString("url", ""));
+                if (url.isEmpty()) continue;
+                album.add(url);
+                if (width <= 0 || height <= 0) {
+                    width = best.optInt("width", 0);
+                    height = best.optInt("height", 0);
+                }
+            }
+        }
+
+        MediaKind kind;
+        String video = "";
+        String poster = "";
+        String sourceUrl = "";
+        if (album.size() > 1) {
+            kind = MediaKind.GALLERY;
+            sourceUrl = album.get(0);
+            poster = album.get(0);
+        } else {
+            JSONObject best = bestScrolllerSource(item.optJSONArray("mediaSources"));
+            if (best == null && album.size() == 1) {
+                sourceUrl = album.get(0);
+                width = Math.max(width, 0);
+                height = Math.max(height, 0);
+            } else if (best != null) {
+                sourceUrl = decode(best.optString("url", ""));
+                width = best.optInt("width", width);
+                height = best.optInt("height", height);
+            }
+            if (sourceUrl.isEmpty()) return null;
+            String lower = sourceUrl.toLowerCase();
+            boolean stream = lower.matches(".*\\.(mp4|webm|m3u8)(\\?.*)?$");
+            if (stream) {
+                kind = item.optBoolean("hasAudio", false) ? MediaKind.VIDEO : MediaKind.GIF;
+                video = sourceUrl;
+                poster = "";
+                album.clear();
+            } else if (lower.matches(".*\\.gif(\\?.*)?$")) {
+                kind = MediaKind.GIF;
+                album.clear();
+                album.add(sourceUrl);
+                poster = sourceUrl;
+            } else if (lower.matches(".*\\.(jpe?g|png|webp)(\\?.*)?$")) {
+                kind = MediaKind.IMAGE;
+                album.clear();
+                album.add(sourceUrl);
+                poster = sourceUrl;
+            } else {
+                return null;
+            }
+        }
+
+        return new RedditPost(
+                "t3_" + redditId,
+                decode(item.optString("title", "")),
+                item.optString("username", ""),
+                item.optString("subredditTitle", ""),
+                redditPath,
+                sourceUrl,
+                0,
+                item.optInt("commentsCount", 0),
+                0L,
+                false,
+                item.optBoolean("isNsfw", false),
+                kind,
+                album,
+                video,
+                poster,
+                width,
+                height);
+    }
+
+    private static JSONObject bestScrolllerSource(JSONArray sources) {
+        if (sources == null) return null;
+        JSONObject best = null;
+        long bestArea = -1L;
+        boolean bestOptimized = true;
+        for (int i = 0; i < sources.length(); i++) {
+            JSONObject source = sources.optJSONObject(i);
+            if (source == null || source.optString("url", "").isEmpty()) continue;
+            long area = (long) Math.max(0, source.optInt("width", 0))
+                    * Math.max(0, source.optInt("height", 0));
+            boolean optimized = source.optBoolean("isOptimized", false);
+            if (best == null || area > bestArea || (area == bestArea && bestOptimized && !optimized)) {
+                best = source;
+                bestArea = area;
+                bestOptimized = optimized;
+            }
+        }
+        return best;
+    }
+
+    private static String redditIdFromPath(String path) {
+        if (path == null || path.isEmpty()) return "";
+        String marker = "/comments/";
+        int at = path.indexOf(marker);
+        if (at < 0) return "";
+        String tail = path.substring(at + marker.length());
+        int slash = tail.indexOf('/');
+        if (slash >= 0) tail = tail.substring(0, slash);
+        return tail.replaceAll("[^A-Za-z0-9].*$", "");
     }
 
     private static ParsedMedia parseMedia(JSONObject d) {
@@ -186,6 +313,21 @@ public final class RedditPost {
             }
         }
 
+        // Reddit-hosted reddit_video_preview was already preferred above.
+        // Keep otherwise-unresolved RedGIFs posts so HD media can be resolved lazily.
+        if (isRedgifs(direct, domain)) {
+            String redgifsId = extractRedgifsId(direct);
+            if (!redgifsId.isEmpty()) {
+                return new ParsedMedia(
+                        MediaKind.GIF,
+                        new ArrayList<>(),
+                        "redgifs:" + redgifsId,
+                        previewImage(d),
+                        previewWidth,
+                        previewHeight);
+            }
+        }
+
         return null;
     }
 
@@ -209,6 +351,36 @@ public final class RedditPost {
     private static int previewHeight(JSONObject d) {
         JSONObject source = previewSource(d);
         return source != null ? source.optInt("height", 0) : 0;
+    }
+
+    private static boolean isRedgifs(String url, String domain) {
+        String u = url == null ? "" : url.toLowerCase();
+        String d = domain == null ? "" : domain.toLowerCase();
+        return d.contains("redgifs.com") || u.contains("redgifs.com/");
+    }
+
+    private static String extractRedgifsId(String url) {
+        if (url == null || url.isEmpty()) return "";
+        String clean = url;
+        int cut = clean.indexOf('?');
+        if (cut >= 0) clean = clean.substring(0, cut);
+        cut = clean.indexOf('#');
+        if (cut >= 0) clean = clean.substring(0, cut);
+
+        String lower = clean.toLowerCase();
+        String[] markers = {"/watch/", "/ifr/", "/i/"};
+        for (String marker : markers) {
+            int at = lower.indexOf(marker);
+            if (at < 0) continue;
+            String tail = clean.substring(at + marker.length());
+            int slash = tail.indexOf('/');
+            if (slash >= 0) tail = tail.substring(0, slash);
+            int dot = tail.indexOf('.');
+            if (dot >= 0) tail = tail.substring(0, dot);
+            tail = tail.replaceAll("[^A-Za-z0-9].*$", "");
+            if (!tail.isEmpty()) return tail;
+        }
+        return "";
     }
 
     private static int positive(int first, int fallback) {
