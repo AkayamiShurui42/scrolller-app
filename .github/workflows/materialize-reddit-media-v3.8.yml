@@ -1,0 +1,112 @@
+name: Materialize Reddit Media v3.8 Baseline
+
+on:
+  push:
+    branches:
+      - reddit-native-redview-v3.8
+    paths:
+      - '.github/workflows/materialize-reddit-media-v3.8.yml'
+      - 'android/patches/**'
+      - 'android/app/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reddit-media-v3.8-materialize-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Apply final v3.7.5 source stack once
+        working-directory: android
+        run: |
+          python3 patches/apply_v3_3.py
+          python3 patches/apply_v3_4.py
+          python3 patches/apply_v3_4_stream.py
+          python3 patches/apply_v3_5.py
+          python3 patches/apply_v3_5_1_loading.py
+          python3 patches/apply_v3_5_2_texture_surface.py
+          python3 patches/apply_v3_5_3_back_dispatcher.py
+          python3 patches/apply_v3_6_read_hide.py
+          python3 patches/apply_v3_6_favorites_protection.py
+          python3 patches/apply_v3_6_1_stable_pager.py
+          python3 patches/apply_v3_6_1_immediate_mark.py
+          python3 patches/apply_v3_6_2_loading_ready_hidden_manage.py
+          python3 patches/apply_v3_6_3_persistent_fullscreen_overlay.py
+          python3 patches/apply_v3_6_4_single_owner_overlay.py
+          python3 patches/apply_v3_6_5_preloaded_tap_toggle_overlay.py
+          python3 patches/apply_v3_6_6_search_subscribe.py
+          python3 patches/apply_v3_6_7_reservoir.py
+          python3 patches/apply_v3_6_7_redgifs_post.py
+          python3 patches/apply_v3_6_7_redgifs_resolver.py
+          python3 patches/apply_v3_6_7_hq_player.py
+          python3 patches/apply_v3_6_7_pager_media.py
+          python3 patches/apply_v3_6_7_grid_media.py
+          python3 patches/apply_v3_6_8_scrolller_source.py
+          python3 patches/apply_v3_6_9_unread_content_filters.py
+          python3 patches/apply_v3_6_9_filters_saved_state.py
+          python3 patches/apply_v3_6_9_saved_immediate_performance.py
+          python3 patches/apply_v3_7_3_search_scopes_compatible.py
+          python3 patches/apply_v3_7_0_historical_access.py
+          python3 patches/apply_v3_7_1_quality_crawl.py
+          python3 patches/apply_v3_7_1_import_fix.py
+          python3 patches/apply_v3_7_2_quality_browse.py
+          python3 patches/apply_v3_7_3_feed_search_stability.py
+          python3 patches/apply_v3_7_3_generated_structure_fix.py
+          python3 patches/apply_v3_7_3_generated_append_fix.py
+          python3 patches/apply_v3_7_4_final.py
+          python3 patches/apply_v3_7_5_subreddit_search.py
+          python3 patches/apply_v3_7_5_category_folders.py
+          python3 patches/apply_v3_7_5_search_index_home_random_final.py
+          python3 patches/apply_v3_7_5_generated_structure_cleanup.py
+          python3 patches/apply_v3_7_5_generated_method_reconstruction.py
+          python3 patches/apply_v3_7_5_restore_read_hide_helpers.py
+          python3 patches/apply_v3_7_5_runtime_reliability_custom_categories.py
+          python3 patches/apply_v3_7_5_runtime_structure_fix.py
+
+      - name: Verify materialized source compiles
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Prepare stable debug key and compile
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+          cd android
+          gradle wrapper --gradle-version 8.11.1
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Package generated baseline
+        run: |
+          rm -rf android/app/build android/.gradle android/gradle android/gradlew android/gradlew.bat android/app/scrolller-debug.keystore
+          tar -czf reddit-media-v3.8-materialized-baseline.tar.gz \
+            android/app/src \
+            android/app/build.gradle \
+            android/app/proguard-rules.pro
+
+      - name: Upload generated baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-media-v3.8-materialized-baseline
+          path: reddit-media-v3.8-materialized-baseline.tar.gz
+          if-no-files-found: error
+          retention-days: 14
