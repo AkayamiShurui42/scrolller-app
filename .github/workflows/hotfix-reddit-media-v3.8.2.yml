@@ -88,6 +88,9 @@ jobs:
                   android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java \
                   android/app/build.gradle
           git diff --cached --quiet || git commit -m 'fix: Reddit Media v3.8.2 rate limit and swipe stability [v382-migrated]'
+          # Gradle can leave tracked wrapper metadata changed. Discard only those
+          # unstaged tracked changes while preserving the committed source and dist APK.
+          git reset --hard HEAD
           git pull --rebase origin reddit-native-redview-v3.8
           git push origin HEAD:reddit-native-redview-v3.8
 
