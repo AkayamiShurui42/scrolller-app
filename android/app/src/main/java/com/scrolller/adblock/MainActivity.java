@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -20,6 +21,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -47,6 +49,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -55,29 +58,6 @@ import java.util.Set;
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
-            {"SFW", "Animals", "Cute & social", "aww,AnimalsBeingBros,AnimalsBeingDerps,Eyebleach,rarepuppers"},
-            {"SFW", "Animals", "Wildlife", "WildlifePhotography,wildlife,NatureIsFuckingLit"},
-            {"SFW", "Art & illustration", "General art", "Art,ArtPorn,Illustration"},
-            {"SFW", "Art & illustration", "Imaginary worlds", "ImaginaryLandscapes,ImaginaryCharacters,ImaginaryTechnology,ImaginaryMonsters"},
-            {"SFW", "Art & illustration", "Street & design", "Graffiti,DesignPorn"},
-            {"SFW", "Photography", "General photography", "itookapicture,ExposurePorn,photocritique"},
-            {"SFW", "Photography", "Landscapes", "EarthPorn,landscapephotography"},
-            {"SFW", "Photography", "Space", "astrophotography,spaceporn"},
-            {"SFW", "Nature", "Earth & weather", "EarthPorn,WeatherGifs,waterporn"},
-            {"SFW", "Nature", "Macro & science", "MacroPorn,chemicalreactiongifs,physicsgifs"},
-            {"SFW", "Architecture & places", "Cities", "CityPorn,urbanexploration"},
-            {"SFW", "Architecture & places", "Buildings", "ArchitecturePorn,AbandonedPorn"},
-            {"SFW", "Architecture & places", "Interiors", "CozyPlaces,RoomPorn"},
-            {"SFW", "Wallpapers", "Desktop", "wallpapers,WidescreenWallpaper,wallpaper"},
-            {"SFW", "Wallpapers", "Mobile & AMOLED", "MobileWallpaper,Amoledbackgrounds"},
-            {"SFW", "Food", "Food photography", "food,FoodPorn"},
-            {"SFW", "Food", "Cooking & baking", "Breadit,slowcooking,Pizza"},
-            {"SFW", "Memes & humor", "General", "memes,funny,wholesomememes"},
-            {"SFW", "Technology", "Setups & hardware", "battlestations,MechanicalKeyboards,pcmasterrace"},
-            {"SFW", "Gaming", "Games & retro", "gaming,retrogaming,gamingphotography"},
-            {"SFW", "Vehicles", "Cars", "carporn,Autos"},
-            {"SFW", "Vehicles", "Motorcycles", "motorcycles"},
-
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
             {"NSFW", "Adult", "GIF & video", "nsfw_gif,NSFW_GIF"},
             {"NSFW", "Adult", "Couples", "couplesgonewild"},
@@ -88,18 +68,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             {"NSFW", "Adult", "Artistic", "NSFWart,ArtisticNSFW"}
     };
     private static final String[] QUALITY_SEED_SUBREDDITS = {
-            "EarthPorn",
-            "itookapicture",
-            "astrophotography",
-            "WildlifePhotography",
-            "ExposurePorn",
-            "CityPorn",
-            "WidescreenWallpaper",
-            "wallpapers",
-            "wallpaper",
-            "ImaginaryLandscapes",
-            "ArchitecturePorn",
-            "spaceporn"
+            "NSFW", "gonewild", "RealGirls", "nsfw_gif", "couplesgonewild",
+            "cosplaygirls", "lingerie", "gonewildcurvy", "petitegonewild", "NSFWart"
     };
     private static final String[] QUALITY_TIME_WINDOWS = {"all", "year", "month"};
 
@@ -185,6 +155,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private ProgressBar progress;
     private ScrollView accountView;
     private Button browserBack;
+    private Button compactMenuButton;
+    private final LinkedHashMap<String, ArrayList<String>> subredditPresets = new LinkedHashMap<>();
+    private long fullscreenVisitStartedAtMs = 0L;
 
     private RedditSessionEngine engine;
     private SharedPreferences prefs;
@@ -276,6 +249,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         });
 
         prefs = getSharedPreferences("native-redview", MODE_PRIVATE);
+        loadSubredditPresets();
         sort = "random";
         topTime = prefs.getString("topTime", "day");
         media = prefs.getString("media", "all");
@@ -372,7 +346,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
         pager = new ViewPager2(this);
         pager.setOrientation(ViewPager2.ORIENTATION_VERTICAL);
-        pager.setOffscreenPageLimit(1);
+        pager.setOffscreenPageLimit(3);
+        if (pager.getChildCount() > 0 && pager.getChildAt(0) instanceof RecyclerView) {
+            RecyclerView pagerRecycler = (RecyclerView) pager.getChildAt(0);
+            pagerRecycler.setItemAnimator(null);
+            pagerRecycler.setItemViewCacheSize(8);
+        }
         appLayer.addView(pager, match());
 
         postAdapter = new PostPagerAdapter(this, this);
@@ -592,7 +571,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
         updateChrome();
         applyLayoutVisibility();
-    }
+    
+        installCompactNavigation();
+}
 
     private void applySystemInsets(int top, int bottom) {
         systemTopPx = Math.max(0, top);
@@ -623,7 +604,16 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         browserBack.setLayoutParams(backParams);
 
         postAdapter.setSystemInsets(systemTopPx, systemBottomPx);
-    }
+    
+        if (topBar != null) topBar.setVisibility(View.GONE);
+        if (bottomBar != null) bottomBar.setVisibility(View.GONE);
+        if (gridView != null) gridView.setPadding(0, systemTopPx + dp(8), 0, systemBottomPx + dp(8));
+        if (compactMenuButton != null && compactMenuButton.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams menuParams = (FrameLayout.LayoutParams) compactMenuButton.getLayoutParams();
+            menuParams.bottomMargin = systemBottomPx + dp(14);
+            compactMenuButton.setLayoutParams(menuParams);
+        }
+}
 
     private void onSessionReady(String url) {
         if (initialized || browserPurpose != BrowserPurpose.NONE) return;
@@ -1192,6 +1182,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private String listingPath(String cursor) {
+        if (context.equals("multi")) return multiListingPath(cursor);
+
         String remoteSort = sort;
         if (remoteSort.equals("random") || remoteSort.equals("oldest")) {
             remoteSort = "new";
@@ -1224,6 +1216,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private boolean isContentBlocked(RedditPost post) {
+        if (post != null && !post.nsfw) return true;
+
         if (post == null) return false;
 
         String title = post.title == null ? "" : post.title;
@@ -1321,6 +1315,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void replacePosts(List<RedditPost> items) {
+        if (items != null) {
+            ArrayList<RedditPost> nsfwOnly = new ArrayList<>();
+            for (RedditPost candidate : items) {
+                if (candidate != null && candidate.nsfw) nsfwOnly.add(candidate);
+            }
+            items = nsfwOnly;
+        }
+
         lastFullscreenPostId = "";
         mediaReadyPostIds.clear();
         mediaFailedPostIds.clear();
@@ -1379,116 +1381,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
     }
 
-    private void showQualityBrowseSheet() {
-        BottomSheetDialog dialog = new BottomSheetDialog(this);
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout body = sheetBody("Browse Quality collection");
-        scroll.addView(body);
-
-        EditText localSearch = new EditText(this);
-        localSearch.setHint("Search title, r/subreddit, or u/author");
-        localSearch.setText(qualityQuery);
-        localSearch.setTextColor(Color.WHITE);
-        localSearch.setHintTextColor(0xFF8E8E8E);
-        localSearch.setTextSize(14);
-        localSearch.setSingleLine(true);
-        localSearch.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        localSearch.setPadding(dp(12), 0, dp(12), 0);
-        localSearch.setBackground(rounded(0xFF1B1B1B, 13));
-        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        searchParams.topMargin = dp(6);
-        body.addView(localSearch, searchParams);
-
-        LinearLayout searchActions = new LinearLayout(this);
-        searchActions.setOrientation(LinearLayout.HORIZONTAL);
-        searchActions.setGravity(Gravity.CENTER_VERTICAL);
-        Button applySearch = sheetButton("Apply search");
-        Button clearSearch = sheetButton("Clear");
-        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, dp(46), 1f);
-        half.topMargin = dp(7);
-        half.rightMargin = dp(4);
-        searchActions.addView(applySearch, half);
-        LinearLayout.LayoutParams halfRight = new LinearLayout.LayoutParams(0, dp(46), 1f);
-        halfRight.topMargin = dp(7);
-        halfRight.leftMargin = dp(4);
-        searchActions.addView(clearSearch, halfRight);
-        body.addView(searchActions, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        Runnable apply = () -> {
-            qualityQuery = localSearch.getText().toString().trim();
-            dialog.dismiss();
-            renderQualityCatalog();
-        };
-        applySearch.setOnClickListener(v -> apply.run());
-        localSearch.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                apply.run();
-                return true;
-            }
-            return false;
-        });
-        clearSearch.setOnClickListener(v -> {
-            qualityQuery = "";
-            localSearch.setText("");
-            dialog.dismiss();
-            renderQualityCatalog();
-        });
-
-        TextView categoryTitle = sectionTitle("Categories");
-        LinearLayout.LayoutParams categoryTitleParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        categoryTitleParams.topMargin = dp(16);
-        body.addView(categoryTitle, categoryTitleParams);
-
-        addQualityCategoryButton(body, dialog, "all", "All quality");
-        addQualityCategoryButton(body, dialog, "ultra", "Ultra HD · 8 MP / 3840px+");
-        addQualityCategoryButton(body, dialog, "galleries", "Galleries");
-        addQualityCategoryButton(body, dialog, "images", "Single images");
-
-        LinkedHashMap<String, Integer> communityCounts = new LinkedHashMap<>();
-        LinkedHashMap<String, String> communityLabels = new LinkedHashMap<>();
-        for (RedditPost post : qualityCatalog.values()) {
-            if (!eligibleQualityUnread(post)) continue;
-            String community = post.subreddit == null ? "" : post.subreddit.trim();
-            if (community.isEmpty()) continue;
-            String key = community.toLowerCase(Locale.US);
-            communityCounts.put(key, communityCounts.getOrDefault(key, 0) + 1);
-            communityLabels.putIfAbsent(key, community);
-        }
-
-        ArrayList<String> communityKeys = new ArrayList<>(communityCounts.keySet());
-        communityKeys.sort((a, b) -> {
-            int countOrder = Integer.compare(
-                    communityCounts.getOrDefault(b, 0),
-                    communityCounts.getOrDefault(a, 0));
-            if (countOrder != 0) return countOrder;
-            return a.compareToIgnoreCase(b);
-        });
-
-        if (!communityKeys.isEmpty()) {
-            TextView communitiesTitle = sectionTitle("Communities · " + communityKeys.size());
-            LinearLayout.LayoutParams communitiesTitleParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            communitiesTitleParams.topMargin = dp(16);
-            body.addView(communitiesTitle, communitiesTitleParams);
-
-            for (String key : communityKeys) {
-                String display = communityLabels.getOrDefault(key, key);
-                int count = communityCounts.getOrDefault(key, 0);
-                addQualityCategoryButton(
-                        body,
-                        dialog,
-                        "subreddit:" + key,
-                        "r/" + display + " · " + count);
-            }
-        }
-
-        dialog.setContentView(scroll);
-        dialog.show();
-        localSearch.requestFocus();
+private void showQualityBrowseSheet() {
+        showPresetSubmenu();
     }
+
+
 
     private void addQualityCategoryButton(
             LinearLayout body,
@@ -1540,37 +1437,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         return haystack.contains(queryText);
     }
 
-    private void loadQualityCollection(boolean reset) {
-        if (!engine.isReady()) return;
-        if (reset) {
-            qualityCrawlGeneration++;
-            qualityCrawlRunning = false;
-            qualityCrawlDone = false;
-            qualityAuthorHits.clear();
-            replacePosts(new ArrayList<>());
-            pager.setCurrentItem(0, false);
-            setStatus("Loading high-resolution catalog…", true);
-        }
-        final int generation = qualityCrawlGeneration;
-
-        if (!qualityCatalogLoaded) {
-            qualityCatalogLoaded = true;
-            QualityCatalogStore.load(this, cached -> {
-                if (!qualityContextValid(generation)) return;
-                for (RedditPost post : cached) {
-                    if (post != null && post.id != null && !post.id.isEmpty()) {
-                        qualityCatalog.put(post.id, post);
-                    }
-                }
-                renderQualityCatalog();
-                startQualityCrawlIfNeeded(generation);
-            });
-            return;
-        }
-
-        renderQualityCatalog();
-        startQualityCrawlIfNeeded(generation);
+private void loadQualityCollection(boolean reset) {
+        context = "home";
+        sort = "random";
+        loadFeed(reset);
     }
+
+
 
     private boolean qualityContextValid(int generation) {
         return generation == qualityCrawlGeneration
@@ -2216,6 +2089,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void appendUniqueNow(List<RedditPost> incoming) {
+        if (incoming != null) {
+            ArrayList<RedditPost> nsfwOnly = new ArrayList<>();
+            for (RedditPost candidate : incoming) {
+                if (candidate != null && candidate.nsfw) nsfwOnly.add(candidate);
+            }
+            incoming = nsfwOnly;
+        }
+
         if (showingHiddenLibrary() || incoming == null || incoming.isEmpty()) return;
         boolean favoritesSaved = screen == Screen.FAVORITES && favoritesView.equals("saved");
         boolean randomFeed = screen == Screen.HOME && sort.equals("random");
@@ -2661,7 +2542,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         finishSearchUi(collected.size());
         startHiddenSearchLeadIns(generation);
         startCategoryMetadataLeadIns(generation);
-    }
+    
+        startSubredditNameLeadIns(generation);
+}
 
     private void fetchFavoritesSearchPage(
             int generation,
@@ -2722,24 +2605,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         });
     }
 
-    private boolean matchesLocalSearch(RedditPost post, String value) {
-        if (post == null) return false;
-        String normalizedQuery = normalizeLocalSearch(value);
-        if (normalizedQuery.isEmpty()) return true;
-        String haystack = normalizeLocalSearch(
-                (post.title == null ? "" : post.title) + " "
-                + (post.subreddit == null ? "" : post.subreddit) + " "
-                + (post.author == null ? "" : post.author) + " "
-                + (post.permalink == null ? "" : post.permalink) + " "
-                + (post.sourceUrl == null ? "" : post.sourceUrl) + " "
-                + (post.searchMetadata == null ? "" : post.searchMetadata) + " "
-                + categoryLabelsForSubreddit(post.subreddit));
-        String[] tokens = normalizedQuery.split(" ");
-        for (String token : tokens) {
-            if (!token.isEmpty() && !haystack.contains(token)) return false;
-        }
-        return true;
+private boolean matchesLocalSearch(RedditPost post, String value) {
+        if (post == null || !post.nsfw) return false;
+        String normalized = FuzzySearch.normalize(value);
+        if (normalized.isEmpty()) return true;
+        return fuzzyPostSearchScore(post, value) >= FuzzySearch.thresholdFor(normalized.length());
     }
+
+
 
     private String normalizeLocalSearch(String value) {
         if (value == null) return "";
@@ -2748,31 +2621,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 .replaceAll("[^a-z0-9_]+", " ")
                 .trim();
     }
-
     private int localSearchRelevance(RedditPost post) {
-        String nq = normalizeLocalSearch(query);
-        String title = normalizeLocalSearch(post.title);
-        String community = normalizeLocalSearch(post.subreddit);
-        String author = normalizeLocalSearch(post.author);
-        String metadata = normalizeLocalSearch(post.searchMetadata);
-        String categories = normalizeLocalSearch(categoryLabelsForSubreddit(post.subreddit));
-        int score = 0;
-        if (!nq.isEmpty() && title.contains(nq)) score += 240;
-        if (!nq.isEmpty() && community.equals(nq)) score += 220;
-        if (!nq.isEmpty() && author.equals(nq)) score += 180;
-        if (!nq.isEmpty() && metadata.contains(nq)) score += 150;
-        if (!nq.isEmpty() && categories.contains(nq)) score += 140;
-        for (String token : nq.split(" ")) {
-            if (token.isEmpty()) continue;
-            if (title.contains(token)) score += 32;
-            if (community.contains(token)) score += 20;
-            if (author.contains(token)) score += 14;
-            if (metadata.contains(token)) score += 12;
-            if (categories.contains(token)) score += 10;
-        }
-        score += Math.min(80, Math.max(0, post.score) / 100);
-        return score;
-    }
+    return fuzzyPostSearchScore(post, query);
+}
+
+
 
     private double localHotScore(RedditPost post) {
         long now = System.currentTimeMillis() / 1000L;
@@ -3389,86 +3242,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
     }
 
-    private void showCategoryRoot() {
-        BottomSheetDialog dialog = new BottomSheetDialog(this);
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout body = sheetBody("Categories");
-        scroll.addView(body);
-
-        Button addCategory = sheetButton("＋ Add category · pick at least two subreddits");
-        body.addView(addCategory, sectionButtonParams());
-        addCategory.setOnClickListener(v -> {
-            dialog.dismiss();
-            showAddCustomCategorySheet();
-        });
-
-        ArrayList<String> customNames = customCategoryNames();
-        if (!customNames.isEmpty()) {
-            TextView mineTitle = sectionTitle("My categories");
-            LinearLayout.LayoutParams mineParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            mineParams.topMargin = dp(16);
-            body.addView(mineTitle, mineParams);
-            for (String name : customNames) {
-                String[] communities = customCategoryCommunities(name);
-                Button mine = sheetButton(name + " · " + communities.length + " communities");
-                body.addView(mine, sectionButtonParams());
-                mine.setOnClickListener(v -> {
-                    dialog.dismiss();
-                    showCustomCategory(name);
-                });
-            }
-        }
-
-        EditText search = new EditText(this);
-        search.setSingleLine(true);
-        search.setHint("Search categories, subcategories, or communities");
-        search.setTextColor(Color.WHITE);
-        search.setHintTextColor(0xFF8E8E8E);
-        search.setTextSize(14);
-        search.setPadding(dp(12), 0, dp(12), 0);
-        search.setBackground(rounded(0xE51A1A1A, 14));
-        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
-        searchParams.topMargin = dp(12);
-        body.addView(search, searchParams);
-
-        Button find = sheetButton("Search category folders");
-        body.addView(find, sectionButtonParams());
-        find.setOnClickListener(v -> {
-            String term = search.getText().toString().trim();
-            if (term.isEmpty()) {
-                search.requestFocus();
-                return;
-            }
-            dialog.dismiss();
-            showCategoryMatches(term);
-        });
-
-        TextView modeTitle = sectionTitle("Browse built-in categories");
-        LinearLayout.LayoutParams mtp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        mtp.topMargin = dp(16);
-        body.addView(modeTitle, mtp);
-
-        Button sfw = sheetButton("SFW folders");
-        Button nsfw = sheetButton("NSFW folders");
-        body.addView(sfw, sectionButtonParams());
-        body.addView(nsfw, sectionButtonParams());
-        sfw.setOnClickListener(v -> {
-            dialog.dismiss();
-            showCategorySafety("SFW");
-        });
-        nsfw.setOnClickListener(v -> {
-            dialog.dismiss();
-            showCategorySafety("NSFW");
-        });
-
-        dialog.setContentView(scroll);
-        dialog.show();
+private void showCategoryRoot() {
+        showCategorySafety("NSFW");
     }
+
+
 
     private JSONObject customCategoryStore() {
         try {
@@ -4185,45 +3963,57 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         restorePendingPosition();
     }
 
-    private void setFullscreenReadBaseline(int position) {
+private void setFullscreenReadBaseline(int position) {
         RedditPost current = postAdapter.getPost(position);
         if (current == null || current.id == null || current.id.isEmpty()) {
             lastFullscreenPostId = "";
+            fullscreenVisitStartedAtMs = 0L;
             return;
         }
         lastFullscreenPostId = current.id;
+        fullscreenVisitStartedAtMs = SystemClock.elapsedRealtime();
     }
 
-    private void trackFullscreenVisit(int position) {
+
+
+private void trackFullscreenVisit(int position) {
         RedditPost current = postAdapter.getPost(position);
         if (current == null || current.id == null || current.id.isEmpty()) return;
         String currentId = current.id;
+        long now = SystemClock.elapsedRealtime();
 
         if (lastFullscreenPostId.isEmpty()) {
             lastFullscreenPostId = currentId;
+            fullscreenVisitStartedAtMs = now;
             return;
         }
         if (lastFullscreenPostId.equals(currentId)) return;
 
         RedditPost previous = null;
-        for (RedditPost post : postAdapter.getPosts()) {
-            if (lastFullscreenPostId.equals(post.id)) {
-                previous = post;
+        for (RedditPost candidate : postAdapter.getPosts()) {
+            if (candidate != null && lastFullscreenPostId.equals(candidate.id)) {
+                previous = candidate;
                 break;
             }
         }
-        if (previous != null && previous.id != null && !previous.id.isEmpty()
-                && mediaReadyPostIds.contains(previous.id)
+        long dwellMs = fullscreenVisitStartedAtMs > 0L ? now - fullscreenVisitStartedAtMs : 0L;
+        boolean actuallyViewed = previous != null && (
+                mediaReadyPostIds.contains(previous.id)
+                        || mediaFailedPostIds.contains(previous.id)
+                        || dwellMs >= 350L);
+        if (actuallyViewed
+                && previous.id != null && !previous.id.isEmpty()
                 && !previous.saved
                 && !savedPostIds.contains(previous.id)
                 && !hiddenPosts.containsKey(previous.id)) {
             hiddenPosts.put(previous.id, previous);
             saveReadHideState();
         }
-
-        // Read state is persistent, but the live pager collection stays immutable.
         lastFullscreenPostId = currentId;
+        fullscreenVisitStartedAtMs = now;
     }
+
+
 
     private void restoreHiddenPost(RedditPost post) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
@@ -4384,17 +4174,21 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         layoutButton.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
         applySystemInsets(systemTopPx, systemBottomPx);
         setFullscreenChrome(layoutMode.equals("grid") || fullscreenChromeVisible);
+    
+        if (topBar != null) topBar.setVisibility(View.GONE);
+        if (bottomBar != null) bottomBar.setVisibility(View.GONE);
+        if (compactMenuButton != null) compactMenuButton.setVisibility(View.VISIBLE);
+}
+
+private void setFullscreenChrome(boolean visible) {
+        fullscreenChromeVisible = visible;
+        if (topBar != null) topBar.setVisibility(View.GONE);
+        if (bottomBar != null) bottomBar.setVisibility(View.GONE);
+        if (compactMenuButton != null) compactMenuButton.setVisibility(View.VISIBLE);
+        if (postAdapter != null) postAdapter.setChromeVisible(visible);
     }
 
-    private void setFullscreenChrome(boolean visible) {
-        if (topBar == null || bottomBar == null || postAdapter == null) return;
-        boolean fullscreen = layoutMode.equals("fullscreen") && screen != Screen.ACCOUNT;
-        fullscreenChromeVisible = fullscreen ? visible : true;
-        boolean show = !fullscreen || fullscreenChromeVisible;
-        topBar.setVisibility(show ? View.VISIBLE : View.GONE);
-        bottomBar.setVisibility(show ? View.VISIBLE : View.GONE);
-        postAdapter.setChromeVisible(show);
-    }
+
 
     private void toggleFullscreenChrome() {
         if (!layoutMode.equals("fullscreen") || screen == Screen.ACCOUNT) return;
@@ -4827,5 +4621,468 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 .setNegativeButton("Stay", null)
                 .setPositiveButton("Exit", (dialog, which) -> moveTaskToBack(true))
                 .show();
+    }
+
+
+private void installCompactNavigation() {
+        if (compactMenuButton != null) return;
+        if (topBar != null) topBar.setVisibility(View.GONE);
+        if (bottomBar != null) bottomBar.setVisibility(View.GONE);
+        compactMenuButton = new Button(this);
+        compactMenuButton.setText("☰");
+        compactMenuButton.setTextColor(Color.WHITE);
+        compactMenuButton.setTextSize(20);
+        compactMenuButton.setMinWidth(0);
+        compactMenuButton.setMinHeight(0);
+        compactMenuButton.setPadding(0, 0, 0, 0);
+        compactMenuButton.setBackground(rounded(0xCC111111, 999));
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END | Gravity.BOTTOM);
+        p.rightMargin = dp(12);
+        p.bottomMargin = systemBottomPx + dp(14);
+        appLayer.addView(compactMenuButton, p);
+        compactMenuButton.setOnClickListener(v -> showCompactMainMenu());
+    }
+
+    private void showCompactMainMenu() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = sheetBody("Menu · NSFW only");
+        scroll.addView(body);
+
+        String current = context.equals("subreddit") ? "r/" + subreddit
+                : context.equals("multi") ? "Multi-subreddit preset"
+                : screen == Screen.SEARCH ? "Search"
+                : screen == Screen.FAVORITES ? "Library"
+                : "Home";
+        TextView where = new TextView(this);
+        where.setText(current);
+        where.setTextColor(0xFFBDBDBD);
+        where.setTextSize(12);
+        where.setPadding(dp(14), 0, dp(14), dp(10));
+        body.addView(where);
+
+        Button browse = sheetButton("Browse  ›");
+        Button search = sheetButton("Search  ›");
+        Button presets = sheetButton("Multi-subreddit presets  ›");
+        Button library = sheetButton("Saved & hidden  ›");
+        Button display = sheetButton("Display & filters  ›");
+        Button account = sheetButton("Account  ›");
+        body.addView(browse, sectionButtonParams());
+        body.addView(search, sectionButtonParams());
+        body.addView(presets, sectionButtonParams());
+        body.addView(library, sectionButtonParams());
+        body.addView(display, sectionButtonParams());
+        body.addView(account, sectionButtonParams());
+        browse.setOnClickListener(v -> { dialog.dismiss(); showBrowseSubmenu(); });
+        search.setOnClickListener(v -> { dialog.dismiss(); showSearchSubmenu(); });
+        presets.setOnClickListener(v -> { dialog.dismiss(); showPresetSubmenu(); });
+        library.setOnClickListener(v -> { dialog.dismiss(); showLibrarySubmenu(); });
+        display.setOnClickListener(v -> { dialog.dismiss(); showDisplaySubmenu(); });
+        account.setOnClickListener(v -> { dialog.dismiss(); showAccount(); });
+
+        dialog.setContentView(scroll);
+        dialog.show();
+    }
+
+    private void showBrowseSubmenu() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = sheetBody("Browse");
+        scroll.addView(body);
+        Button home = sheetButton("Home");
+        Button subredditButton = sheetButton("Open subreddit…");
+        Button categories = sheetButton("NSFW categories…");
+        body.addView(home, sectionButtonParams());
+        body.addView(subredditButton, sectionButtonParams());
+        body.addView(categories, sectionButtonParams());
+        home.setOnClickListener(v -> { dialog.dismiss(); navigateHome("home", true); });
+        subredditButton.setOnClickListener(v -> { dialog.dismiss(); showOpenSubredditSheet(); });
+        categories.setOnClickListener(v -> { dialog.dismiss(); showCategoryRoot(); });
+        dialog.setContentView(scroll);
+        dialog.show();
+    }
+
+    private void showOpenSubredditSheet() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout body = sheetBody("Open subreddit · NSFW posts only");
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("Subreddit name");
+        input.setTextColor(Color.WHITE);
+        input.setHintTextColor(0xFF888888);
+        body.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+        Button open = sheetButton("Open");
+        body.addView(open, sectionButtonParams());
+        open.setOnClickListener(v -> {
+            String value = cleanSubredditName(input.getText().toString());
+            if (value.isEmpty()) return;
+            dialog.dismiss();
+            openSubredditFeed(value);
+        });
+        dialog.setContentView(body);
+        dialog.show();
+    }
+
+    private void showSearchSubmenu() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout body = sheetBody("Fuzzy search · NSFW only");
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("Title, subreddit, creator, flair…");
+        input.setTextColor(Color.WHITE);
+        input.setHintTextColor(0xFF888888);
+        body.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+        Button global = sheetButton("Search everywhere");
+        body.addView(global, sectionButtonParams());
+        global.setOnClickListener(v -> {
+            String value = input.getText().toString().trim();
+            if (value.isEmpty()) return;
+            dialog.dismiss();
+            runMenuSearch(value, "global", "");
+        });
+        if (context.equals("subreddit") && subreddit != null && !subreddit.isEmpty()) {
+            Button current = sheetButton("Search current r/" + subreddit);
+            body.addView(current, sectionButtonParams());
+            current.setOnClickListener(v -> {
+                String value = input.getText().toString().trim();
+                if (value.isEmpty()) return;
+                dialog.dismiss();
+                runMenuSearch(value, "subreddit", subreddit);
+            });
+        }
+        Button openSub = sheetButton("Find / change subreddit…");
+        body.addView(openSub, sectionButtonParams());
+        openSub.setOnClickListener(v -> { dialog.dismiss(); showOpenSubredditSheet(); });
+        dialog.setContentView(body);
+        dialog.show();
+    }
+
+    private void runMenuSearch(String value, String scope, String scopeSubreddit) {
+        openSearchScreen();
+        searchScope = scope;
+        searchSubreddit = scopeSubreddit == null ? "" : scopeSubreddit;
+        prefs.edit().putString("searchScope", searchScope)
+                .putString("searchSubreddit", searchSubreddit).apply();
+        searchInput.setText(value);
+        beginSearch();
+    }
+
+    private void showPresetSubmenu() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = sheetBody("Multi-subreddit presets");
+        scroll.addView(body);
+        Button create = sheetButton("＋ New preset");
+        body.addView(create, sectionButtonParams());
+        create.setOnClickListener(v -> { dialog.dismiss(); showCreatePresetSheet(); });
+
+        if (subredditPresets.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText("No presets yet. Select two or more subreddits and save the group for later.");
+            empty.setTextColor(0xFFAAAAAA);
+            empty.setPadding(dp(14), dp(18), dp(14), dp(18));
+            body.addView(empty);
+        } else {
+            for (Map.Entry<String, ArrayList<String>> entry : subredditPresets.entrySet()) {
+                String name = entry.getKey();
+                ArrayList<String> communities = new ArrayList<>(entry.getValue());
+                Button open = sheetButton(name + " · " + communities.size() + " subreddits");
+                body.addView(open, sectionButtonParams());
+                open.setOnClickListener(v -> {
+                    dialog.dismiss();
+                    openMultiSubredditFeed(name, communities);
+                });
+                Button remove = sheetButton("Remove preset: " + name);
+                remove.setTextColor(0xFFFF9A9A);
+                body.addView(remove, sectionButtonParams());
+                remove.setOnClickListener(v -> {
+                    subredditPresets.remove(name);
+                    saveSubredditPresets();
+                    dialog.dismiss();
+                    showPresetSubmenu();
+                });
+            }
+        }
+        dialog.setContentView(scroll);
+        dialog.show();
+    }
+
+    private void showCreatePresetSheet() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = sheetBody("New multi-subreddit preset");
+        scroll.addView(body);
+
+        EditText name = new EditText(this);
+        name.setSingleLine(true);
+        name.setHint("Preset name");
+        name.setTextColor(Color.WHITE);
+        name.setHintTextColor(0xFF888888);
+        body.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+
+        LinkedHashSet<String> selected = new LinkedHashSet<>();
+        TextView count = new TextView(this);
+        count.setText("0 selected · minimum 2");
+        count.setTextColor(0xFFBDBDBD);
+        count.setPadding(dp(14), dp(8), dp(14), dp(8));
+        body.addView(count);
+
+        EditText custom = new EditText(this);
+        custom.setSingleLine(true);
+        custom.setHint("Add subreddit name");
+        custom.setTextColor(Color.WHITE);
+        custom.setHintTextColor(0xFF888888);
+        body.addView(custom, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        Button addCustom = sheetButton("Add subreddit");
+        body.addView(addCustom, sectionButtonParams());
+        LinearLayout customList = new LinearLayout(this);
+        customList.setOrientation(LinearLayout.VERTICAL);
+        body.addView(customList);
+        addCustom.setOnClickListener(v -> {
+            String clean = cleanSubredditName(custom.getText().toString());
+            if (clean.isEmpty()) return;
+            String key = clean.toLowerCase(Locale.US);
+            boolean exists = false;
+            for (String item : selected) if (item.equalsIgnoreCase(clean)) { exists = true; break; }
+            if (!exists) {
+                selected.add(clean);
+                CheckBox cb = new CheckBox(this);
+                cb.setText("r/" + clean);
+                cb.setTextColor(Color.WHITE);
+                cb.setChecked(true);
+                customList.addView(cb, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+                cb.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                    if (isChecked) selected.add(clean); else selected.removeIf(s -> s.equalsIgnoreCase(clean));
+                    count.setText(selected.size() + " selected · minimum 2");
+                });
+            }
+            custom.setText("");
+            count.setText(selected.size() + " selected · minimum 2");
+        });
+
+        TextView knownTitle = new TextView(this);
+        knownTitle.setText("Known / subscribed communities");
+        knownTitle.setTextColor(Color.WHITE);
+        knownTitle.setTextSize(14);
+        knownTitle.setPadding(dp(14), dp(18), dp(14), dp(8));
+        body.addView(knownTitle);
+        for (String community : knownNsfwSubreddits()) {
+            CheckBox cb = new CheckBox(this);
+            cb.setText("r/" + community);
+            cb.setTextColor(Color.WHITE);
+            cb.setChecked(false);
+            body.addView(cb, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+            cb.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                if (isChecked) selected.add(community); else selected.remove(community);
+                count.setText(selected.size() + " selected · minimum 2");
+            });
+        }
+
+        Button save = sheetButton("Save preset");
+        body.addView(save, sectionButtonParams());
+        save.setOnClickListener(v -> {
+            String presetName = name.getText().toString().trim();
+            if (presetName.isEmpty()) {
+                android.widget.Toast.makeText(this, "Enter a preset name", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (selected.size() < 2) {
+                android.widget.Toast.makeText(this, "Select at least two subreddits", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            subredditPresets.put(presetName, new ArrayList<>(selected));
+            saveSubredditPresets();
+            dialog.dismiss();
+            openMultiSubredditFeed(presetName, new ArrayList<>(selected));
+        });
+
+        dialog.setContentView(scroll);
+        dialog.show();
+    }
+
+    private void loadSubredditPresets() {
+        subredditPresets.clear();
+        if (prefs == null) return;
+        String raw = prefs.getString("subredditPresetsV1", "");
+        if (raw == null || raw.isEmpty()) return;
+        try {
+            JSONObject root = new JSONObject(raw);
+            JSONArray names = root.names();
+            if (names == null) return;
+            for (int i = 0; i < names.length(); i++) {
+                String name = names.optString(i, "");
+                JSONArray array = root.optJSONArray(name);
+                if (name.isEmpty() || array == null) continue;
+                ArrayList<String> values = new ArrayList<>();
+                for (int j = 0; j < array.length(); j++) {
+                    String clean = cleanSubredditName(array.optString(j, ""));
+                    if (!clean.isEmpty() && !values.contains(clean)) values.add(clean);
+                }
+                if (values.size() >= 2) subredditPresets.put(name, values);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void saveSubredditPresets() {
+        if (prefs == null) return;
+        try {
+            JSONObject root = new JSONObject();
+            for (Map.Entry<String, ArrayList<String>> entry : subredditPresets.entrySet()) {
+                JSONArray array = new JSONArray();
+                for (String community : entry.getValue()) array.put(community);
+                root.put(entry.getKey(), array);
+            }
+            prefs.edit().putString("subredditPresetsV1", root.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private void openMultiSubredditFeed(String presetName, List<String> communities) {
+        LinkedHashSet<String> clean = new LinkedHashSet<>();
+        if (communities != null) {
+            for (String community : communities) {
+                String value = cleanSubredditName(community);
+                if (!value.isEmpty()) clean.add(value);
+            }
+        }
+        if (clean.size() < 2) return;
+        pushCurrentState();
+        sort = "random";
+        screen = Screen.HOME;
+        context = "multi";
+        subreddit = String.join("+", clean);
+        query = "";
+        profileUser = "";
+        accountView.setVisibility(View.GONE);
+        applyLayoutVisibility();
+        updateChrome();
+        setStatus((presetName == null || presetName.isEmpty() ? "Preset" : presetName)
+                + " · " + clean.size() + " subreddits · NSFW only", true);
+        loadFeed(true);
+    }
+
+    private String multiListingPath(String cursor) {
+        String remoteSort = sort;
+        if (remoteSort.equals("random") || remoteSort.equals("oldest")) remoteSort = "new";
+        StringBuilder joined = new StringBuilder();
+        String[] parts = subreddit == null ? new String[0] : subreddit.split("\\+");
+        for (String part : parts) {
+            String clean = cleanSubredditName(part);
+            if (clean.isEmpty()) continue;
+            if (joined.length() > 0) joined.append('+');
+            joined.append(clean);
+        }
+        if (joined.length() == 0) return "/r/NSFW/new.json?limit=50&raw_json=1&show=all";
+        String path = "/r/" + joined + "/" + remoteSort + ".json?limit=50&raw_json=1&show=all";
+        if (remoteSort.equals("top")) path += "&t=" + enc(topTime);
+        if (cursor != null && !cursor.isEmpty()) path += "&after=" + enc(cursor);
+        return path;
+    }
+
+    private ArrayList<String> knownNsfwSubreddits() {
+        LinkedHashMap<String, String> names = new LinkedHashMap<>();
+        for (String[] row : CURATED_CATEGORY_ROWS) {
+            if (row.length < 4 || !"NSFW".equals(row[0])) continue;
+            for (String raw : row[3].split(",")) {
+                String clean = cleanSubredditName(raw);
+                if (!clean.isEmpty()) names.putIfAbsent(clean.toLowerCase(Locale.US), clean);
+            }
+        }
+        for (ArrayList<String> preset : subredditPresets.values()) {
+            for (String raw : preset) {
+                String clean = cleanSubredditName(raw);
+                if (!clean.isEmpty()) names.putIfAbsent(clean.toLowerCase(Locale.US), clean);
+            }
+        }
+        for (Subscription sub : subscriptions) {
+            if (sub == null) continue;
+            String clean = cleanSubredditName(sub.name);
+            if (!clean.isEmpty()) names.putIfAbsent(clean.toLowerCase(Locale.US), clean);
+        }
+        ArrayList<String> result = new ArrayList<>(names.values());
+        result.sort(String.CASE_INSENSITIVE_ORDER);
+        return result;
+    }
+
+    private int fuzzyPostSearchScore(RedditPost post, String value) {
+        if (post == null || !post.nsfw) return 0;
+        int subredditScore = FuzzySearch.score(value, post.subreddit);
+        int titleScore = FuzzySearch.score(value, post.title);
+        int authorScore = FuzzySearch.score(value, post.author);
+        int metadataScore = FuzzySearch.score(value, post.searchMetadata);
+        int urlScore = Math.max(FuzzySearch.score(value, post.permalink), FuzzySearch.score(value, post.sourceUrl));
+        int best = Math.max(titleScore, Math.max(authorScore, Math.max(metadataScore, urlScore)));
+        if (subredditScore > 0) best = Math.max(best, Math.min(1000, subredditScore + 90));
+        return best;
+    }
+
+    private void startSubredditNameLeadIns(int generation) {
+        if (!searchStillValid(generation)) return;
+        if (!(searchScope.equals("global") || searchScope.equals("subscribed"))) return;
+        String normalized = FuzzySearch.normalize(query);
+        if (normalized.isEmpty()) return;
+        ArrayList<String> candidates = knownNsfwSubreddits();
+        candidates.removeIf(name -> FuzzySearch.score(query, name) < FuzzySearch.thresholdFor(normalized.length()));
+        candidates.sort((a, b) -> Integer.compare(FuzzySearch.score(query, b), FuzzySearch.score(query, a)));
+        if (candidates.size() > 6) candidates = new ArrayList<>(candidates.subList(0, 6));
+        fetchSubredditNameLeadIn(generation, candidates, 0);
+    }
+
+    private void fetchSubredditNameLeadIn(int generation, ArrayList<String> candidates, int index) {
+        if (!searchStillValid(generation) || index >= candidates.size()) return;
+        String community = candidates.get(index);
+        String path = "/r/" + enc(community) + "/new.json?limit=50&raw_json=1&show=all";
+        engine.get(path, result -> {
+            if (!searchStillValid(generation)) return;
+            ArrayList<RedditPost> additions = new ArrayList<>();
+            if (result.ok) {
+                JSONObject rootJson = result.jsonObject();
+                JSONObject data = rootJson != null ? rootJson.optJSONObject("data") : null;
+                JSONArray children = data != null ? data.optJSONArray("children") : null;
+                if (children != null) {
+                    for (int i = 0; i < children.length(); i++) {
+                        RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
+                        if (post == null || !post.nsfw || !matchesMedia(post) || isContentBlocked(post)) continue;
+                        additions.add(post);
+                    }
+                }
+            }
+            if (!additions.isEmpty()) appendUnique(additions);
+            if (appLayer != null) appLayer.postDelayed(
+                    () -> fetchSubredditNameLeadIn(generation, candidates, index + 1), 120L);
+        });
+    }
+
+    private void showLibrarySubmenu() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout body = sheetBody("Saved & hidden");
+        Button saved = sheetButton("Saved posts");
+        Button hidden = sheetButton("Read / hidden posts");
+        body.addView(saved, sectionButtonParams());
+        body.addView(hidden, sectionButtonParams());
+        saved.setOnClickListener(v -> { dialog.dismiss(); loadFavorites(); });
+        hidden.setOnClickListener(v -> {
+            dialog.dismiss();
+            loadFavorites();
+            favoritesView = "hidden";
+            loadHiddenPostsView();
+        });
+        dialog.setContentView(body);
+        dialog.show();
+    }
+
+    private void showDisplaySubmenu() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout body = sheetBody("Display & filters");
+        Button sortMenu = sheetButton("Sort…");
+        Button mediaMenu = sheetButton("Media filter…");
+        Button layoutMenu = sheetButton("Layout…");
+        body.addView(sortMenu, sectionButtonParams());
+        body.addView(mediaMenu, sectionButtonParams());
+        body.addView(layoutMenu, sectionButtonParams());
+        sortMenu.setOnClickListener(v -> { dialog.dismiss(); showSortSheet(); });
+        mediaMenu.setOnClickListener(v -> { dialog.dismiss(); showMediaSheet(); });
+        layoutMenu.setOnClickListener(v -> { dialog.dismiss(); showLayoutSheet(); });
+        dialog.setContentView(body);
+        dialog.show();
     }
 }

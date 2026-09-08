@@ -138,14 +138,17 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         notifyDataSetChanged();
     }
 
-    public void setActivePosition(int position) {
+public void setActivePosition(int position) {
         activePosition = position;
         for (Map.Entry<Integer, ExoPlayer> entry : players.entrySet()) {
             boolean active = entry.getKey() == position;
             entry.getValue().setPlayWhenReady(active);
             if (!active) entry.getValue().pause();
         }
+        warmAdjacentMedia(position);
     }
+
+
 
     public void releaseAll() {
         for (ExoPlayer player : players.values()) {
@@ -296,7 +299,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
                 mediaControl = mute;
                 FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(
                         dp(74), dp(36), Gravity.TOP | Gravity.END);
-                mp.topMargin = topInsetPx + dp(102);
+                mp.topMargin = topInsetPx + dp(12);
                 mp.rightMargin = dp(10);
                 root.addView(mute, mp);
                 mute.setOnClickListener(v -> {
@@ -326,7 +329,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
                 mediaControl = playPause;
                 FrameLayout.LayoutParams gp = new FrameLayout.LayoutParams(
                         dp(74), dp(36), Gravity.TOP | Gravity.END);
-                gp.topMargin = topInsetPx + dp(102);
+                gp.topMargin = topInsetPx + dp(12);
                 gp.rightMargin = dp(10);
                 root.addView(playPause, gp);
                 playPause.setOnClickListener(v -> {
@@ -355,7 +358,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
                 mediaControl = badge;
                 FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT, dp(32), Gravity.TOP | Gravity.END);
-                bp.topMargin = topInsetPx + dp(102);
+                bp.topMargin = topInsetPx + dp(12);
                 bp.rightMargin = dp(10);
                 root.addView(badge, bp);
                 return;
@@ -375,7 +378,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             topMeta = meta;
             meta.setOrientation(LinearLayout.HORIZONTAL);
             meta.setGravity(Gravity.CENTER_VERTICAL);
-            meta.setPadding(dp(10), topInsetPx + dp(98), dp(10), dp(8));
+            meta.setPadding(dp(10), topInsetPx + dp(8), dp(10), dp(8));
             meta.setBackground(new GradientDrawable(
                     GradientDrawable.Orientation.TOP_BOTTOM,
                     new int[]{0xD9000000, 0x78000000, 0x00000000}));
@@ -403,7 +406,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             }
 
             FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, topInsetPx + dp(150), Gravity.TOP);
+                    ViewGroup.LayoutParams.MATCH_PARENT, topInsetPx + dp(64), Gravity.TOP);
             root.addView(meta, p);
         }
 
@@ -412,7 +415,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             bottomInfo = bottom;
             bottom.setOrientation(LinearLayout.VERTICAL);
             bottom.setGravity(Gravity.BOTTOM);
-            bottom.setPadding(dp(11), dp(70), dp(11), bottomInsetPx + dp(70));
+            bottom.setPadding(dp(11), dp(70), dp(11), bottomInsetPx + dp(18));
             bottom.setBackground(new GradientDrawable(
                     GradientDrawable.Orientation.TOP_BOTTOM,
                     new int[]{0x00000000, 0x66000000, 0xD9000000, 0xFF000000}));
@@ -700,5 +703,22 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         if (Math.abs(n) >= 1_000_000) return String.format("%.1fm", n / 1_000_000f);
         if (Math.abs(n) >= 1_000) return String.format("%.1fk", n / 1_000f);
         return String.valueOf(n);
+    }
+
+
+private void warmAdjacentMedia(int center) {
+        int start = Math.max(0, center - 3);
+        int end = Math.min(posts.size() - 1, center + 3);
+        for (int i = start; i <= end; i++) {
+            RedditPost post = posts.get(i);
+            if (post == null) continue;
+            String preview = post.posterUrl;
+            if ((preview == null || preview.isEmpty()) && post.imageUrls != null && !post.imageUrls.isEmpty()) {
+                preview = post.imageUrls.get(0);
+            }
+            if (preview != null && !preview.isEmpty()) {
+                Glide.with(context).load(preview).preload();
+            }
+        }
     }
 }
