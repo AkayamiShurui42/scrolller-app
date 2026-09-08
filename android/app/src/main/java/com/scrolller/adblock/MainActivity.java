@@ -346,11 +346,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
         pager = new ViewPager2(this);
         pager.setOrientation(ViewPager2.ORIENTATION_VERTICAL);
-        pager.setOffscreenPageLimit(3);
+        pager.setOffscreenPageLimit(1);
         if (pager.getChildCount() > 0 && pager.getChildAt(0) instanceof RecyclerView) {
             RecyclerView pagerRecycler = (RecyclerView) pager.getChildAt(0);
             pagerRecycler.setItemAnimator(null);
-            pagerRecycler.setItemViewCacheSize(8);
+            pagerRecycler.setItemViewCacheSize(4);
         }
         appLayer.addView(pager, match());
 
@@ -997,8 +997,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             boolean topAll = sort.equals("top") && topTime.equals("all");
             boolean random = sort.equals("random");
             boolean oldest = sort.equals("oldest");
-            int target = oldest ? 350 : random ? 120 : 30;
-            int pageLimit = topAll ? 12 : oldest ? 5 : random ? 3 : 4;
+            boolean multi = context.equals("multi");
+            int target = multi ? 100 : oldest ? 350 : random ? 120 : 30;
+            int pageLimit = multi ? 1 : topAll ? 12 : oldest ? 5 : random ? 3 : 4;
             boolean canContinue = !next.isEmpty()
                     && !feedSeenCursors.contains(next)
                     && page + 1 < pageLimit;
@@ -4972,7 +4973,7 @@ private void installCompactNavigation() {
             joined.append(clean);
         }
         if (joined.length() == 0) return "/r/NSFW/new.json?limit=50&raw_json=1&show=all";
-        String path = "/r/" + joined + "/" + remoteSort + ".json?limit=50&raw_json=1&show=all";
+        String path = "/r/" + joined + "/" + remoteSort + ".json?limit=100&raw_json=1&show=all";
         if (remoteSort.equals("top")) path += "&t=" + enc(topTime);
         if (cursor != null && !cursor.isEmpty()) path += "&after=" + enc(cursor);
         return path;

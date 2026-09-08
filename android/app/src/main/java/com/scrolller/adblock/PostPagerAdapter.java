@@ -100,7 +100,9 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
     public void setMuted(boolean muted) {
         this.muted = muted;
-        for (ExoPlayer player : players.values()) player.setVolume(muted ? 0f : 1f);
+        for (ExoPlayer player : new ArrayList<>(players.values())) {
+            try { player.setVolume(muted ? 0f : 1f); } catch (RuntimeException ignored) {}
+        }
     }
 
     public boolean isMuted() { return muted; }
@@ -140,10 +142,12 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
 public void setActivePosition(int position) {
         activePosition = position;
-        for (Map.Entry<Integer, ExoPlayer> entry : players.entrySet()) {
-            boolean active = entry.getKey() == position;
-            entry.getValue().setPlayWhenReady(active);
-            if (!active) entry.getValue().pause();
+        for (Map.Entry<Integer, ExoPlayer> entry : new ArrayList<>(players.entrySet())) {
+            try {
+                boolean active = entry.getKey() == position;
+                entry.getValue().setPlayWhenReady(active);
+                if (!active) entry.getValue().pause();
+            } catch (RuntimeException ignored) {}
         }
         warmAdjacentMedia(position);
     }
@@ -246,7 +250,7 @@ public void setActivePosition(int position) {
                     @Override
                     public void onResolved(String url) {
                         if (post.videoUrl.equals(unresolved)) post.videoUrl = url;
-                        if (boundPosition == position) bind(post, position);
+                        if (boundPosition == position && position >= 0 && position < posts.size() && posts.get(position) == post) bind(post, position);
                     }
 
                     @Override
@@ -274,26 +278,41 @@ public void setActivePosition(int position) {
                 playerView.setBackgroundColor(Color.TRANSPARENT);
                 root.addView(playerView, fullParams());
 
-                player = HighQualityPlayerFactory.create(context, post.videoUrl);
-                player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
-                player.setMediaItem(MediaItem.fromUri(post.videoUrl));
-                player.addListener(new Player.Listener() {
-                    @Override
-                    public void onPlaybackStateChanged(int state) {
-                        if (state == Player.STATE_READY) listener.onMediaReady(post);
-                    }
+                try {
+                    player = HighQualityPlayerFactory.create(context, post.videoUrl);
+                    player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
+                    player.setMediaItem(MediaItem.fromUri(post.videoUrl));
+                    player.addListener(new Player.Listener() {
+                        @Override
+                        public void onPlaybackStateChanged(int state) {
+                            if (state == Player.STATE_READY) listener.onMediaReady(post);
+                        }
 
-                    @Override
-                    public void onPlayerError(PlaybackException error) {
-                        listener.onMediaFailed(post);
+                        @Override
+                        public void onPlayerError(PlaybackException error) {
+                            listener.onMediaFailed(post);
+                        }
+                    });
+                    player.setVolume(muted ? 0f : 1f);
+                    player.setPlayWhenReady(position == activePosition);
+                    player.prepare();
+                    playerView.setPlayer(player);
+                    players.put(position, player);
+                    playerView.setOnClickListener(null);
+                } catch (RuntimeException playerError) {
+                    if (playerView != null) {
+                        try { playerView.setPlayer(null); } catch (Exception ignored) {}
+                        try { root.removeView(playerView); } catch (Exception ignored) {}
                     }
-                });
-                player.setVolume(muted ? 0f : 1f);
-                player.setPlayWhenReady(position == activePosition);
-                player.prepare();
-                playerView.setPlayer(player);
-                players.put(position, player);
-                playerView.setOnClickListener(null);
+                    if (player != null) {
+                        try { player.release(); } catch (Exception ignored) {}
+                    }
+                    players.remove(position);
+                    player = null;
+                    playerView = null;
+                    listener.onMediaFailed(post);
+                    return;
+                }
 
                 Button mute = pillButton(muted ? "Muted" : "Sound");
                 mediaControl = mute;
@@ -707,8 +726,8 @@ public void setActivePosition(int position) {
 
 
 private void warmAdjacentMedia(int center) {
-        int start = Math.max(0, center - 3);
-        int end = Math.min(posts.size() - 1, center + 3);
+        int start = Math.max(0, center - 2);
+        int end = Math.min(posts.size() - 1, center + 2);
         for (int i = start; i <= end; i++) {
             RedditPost post = posts.get(i);
             if (post == null) continue;
@@ -717,7 +736,7 @@ private void warmAdjacentMedia(int center) {
                 preview = post.imageUrls.get(0);
             }
             if (preview != null && !preview.isEmpty()) {
-                Glide.with(context).load(preview).preload();
+                Glide.with(context.getApplicationContext()).load(preview).preload();
             }
         }
     }
