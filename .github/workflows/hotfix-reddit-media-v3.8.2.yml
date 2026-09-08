@@ -1,0 +1,99 @@
+name: Hotfix Reddit Media v3.8.2
+
+on:
+  push:
+    branches:
+      - reddit-native-redview-v3.8
+    paths:
+      - 'android/tools/hotfix_v3_8_2.py'
+      - '.github/workflows/hotfix-reddit-media-v3.8.2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reddit-media-v3.8.2-hotfix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  migrate-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: reddit-native-redview-v3.8
+
+      - name: Apply one-time v3.8.2 hotfix
+        working-directory: android
+        run: python3 tools/hotfix_v3_8_2.py
+
+      - name: Validate v3.8.2 invariants
+        run: |
+          grep -q 'versionCode 36' android/app/build.gradle
+          grep -q 'versionName "3.8.2"' android/app/build.gradle
+          grep -q 'setOffscreenPageLimit(1)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'setItemViewCacheSize(4)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'boolean multi = context.equals("multi")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'int pageLimit = multi ? 1' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'limit=100&raw_json=1&show=all' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'new ArrayList<>(players.entrySet())' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          grep -q 'context.getApplicationContext()' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          grep -q 'MAX_429_RETRIES = 2' android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
+          grep -q 'MIN_REQUEST_GAP_MS = 900L' android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Prepare stable debug key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+
+      - name: Compile hotfixed app
+        working-directory: android
+        run: |
+          gradle wrapper --gradle-version 8.11.1
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify and stage APK
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
+          mkdir -p dist
+          cp "$APK" dist/Reddit-Media-v3.8.2-debug.apk
+
+      - name: Commit ordinary v3.8.2 source
+        run: |
+          rm -f android/app/scrolller-debug.keystore
+          rm -rf android/app/build android/.gradle android/gradle android/gradlew android/gradlew.bat
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android/app/src/main/java/com/scrolller/adblock/MainActivity.java \
+                  android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java \
+                  android/app/build.gradle
+          git diff --cached --quiet || git commit -m 'fix: Reddit Media v3.8.2 rate limit and swipe stability [v382-migrated]'
+          git push origin HEAD:reddit-native-redview-v3.8
+
+      - name: Upload v3.8.2 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: reddit-media-v3.8.2-debug-apk
+          path: dist/Reddit-Media-v3.8.2-debug.apk
+          if-no-files-found: error
+          retention-days: 30
