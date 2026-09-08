@@ -88,6 +88,7 @@ jobs:
                   android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java \
                   android/app/build.gradle
           git diff --cached --quiet || git commit -m 'fix: Reddit Media v3.8.2 rate limit and swipe stability [v382-migrated]'
+          git pull --rebase origin reddit-native-redview-v3.8
           git push origin HEAD:reddit-native-redview-v3.8
 
       - name: Upload v3.8.2 APK
