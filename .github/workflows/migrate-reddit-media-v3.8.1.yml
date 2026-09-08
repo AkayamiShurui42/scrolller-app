@@ -31,18 +31,20 @@ jobs:
           python3 tools/migrate_v3_8_1.py
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           p = Path('app/src/main/java/com/scrolller/adblock/MainActivity.java')
           s = p.read_text()
-          old = '''    private int localSearchRelevance(RedditPost post, String value) {
-              return fuzzyPostSearchScore(post, value);
-          }'''
-          new = '''    private int localSearchRelevance(RedditPost post) {
+          pattern = re.compile(
+              r'(?ms)^\s*private\s+int\s+localSearchRelevance\s*\(\s*RedditPost\s+post\s*,\s*String\s+value\s*\)\s*\{.*?^\s*\}'
+          )
+          replacement = '''    private int localSearchRelevance(RedditPost post) {
               return fuzzyPostSearchScore(post, query);
           }'''
-          if old not in s:
-              raise SystemExit('Expected generated localSearchRelevance signature not found')
-          p.write_text(s.replace(old, new, 1))
+          s, count = pattern.subn(replacement, s, count=1)
+          if count != 1:
+              raise SystemExit(f'Expected one generated localSearchRelevance method, replaced {count}')
+          p.write_text(s)
 
           p = Path('app/build.gradle')
           s = p.read_text().replace('versionCode 34', 'versionCode 35').replace('versionName "3.8.0"', 'versionName "3.8.1"')
