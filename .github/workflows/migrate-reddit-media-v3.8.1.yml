@@ -31,6 +31,19 @@ jobs:
           python3 tools/migrate_v3_8_1.py
           python3 - <<'PY'
           from pathlib import Path
+
+          p = Path('app/src/main/java/com/scrolller/adblock/MainActivity.java')
+          s = p.read_text()
+          old = '''    private int localSearchRelevance(RedditPost post, String value) {
+              return fuzzyPostSearchScore(post, value);
+          }'''
+          new = '''    private int localSearchRelevance(RedditPost post) {
+              return fuzzyPostSearchScore(post, query);
+          }'''
+          if old not in s:
+              raise SystemExit('Expected generated localSearchRelevance signature not found')
+          p.write_text(s.replace(old, new, 1))
+
           p = Path('app/build.gradle')
           s = p.read_text().replace('versionCode 34', 'versionCode 35').replace('versionName "3.8.0"', 'versionName "3.8.1"')
           p.write_text(s)
@@ -51,6 +64,7 @@ jobs:
           grep -q 'context.equals("multi")' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'startSubredditNameLeadIns' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'FuzzySearch.thresholdFor' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'private int localSearchRelevance(RedditPost post)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q '!post.nsfw' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'dwellMs >= 350L' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'setOffscreenPageLimit(3)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
