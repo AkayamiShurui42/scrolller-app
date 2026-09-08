@@ -250,7 +250,12 @@ public void setActivePosition(int position) {
                     @Override
                     public void onResolved(String url) {
                         if (post.videoUrl.equals(unresolved)) post.videoUrl = url;
-                        if (boundPosition == position && position >= 0 && position < posts.size() && posts.get(position) == post) bind(post, position);
+                        if (boundPosition == position
+                                && position >= 0
+                                && position < posts.size()
+                                && posts.get(position) == post) {
+                            attachResolvedRedgifsVideo(post, position, url);
+                        }
                     }
 
                     @Override
@@ -390,6 +395,73 @@ public void setActivePosition(int position) {
             String url = !post.imageUrls.isEmpty() ? post.imageUrls.get(0) : post.posterUrl;
             Glide.with(image).load(url).fitCenter().listener(imageLoadListener(post)).into(image);
             image.setOnClickListener(null);
+        }
+
+        private void attachResolvedRedgifsVideo(RedditPost post, int position, String url) {
+            if (player != null || playerView != null || url == null || url.isEmpty()) return;
+            if (boundPosition != position || position < 0 || position >= posts.size()
+                    || posts.get(position) != post) return;
+
+            PlayerView nextView = (PlayerView) android.view.LayoutInflater.from(context)
+                    .inflate(R.layout.view_texture_player, root, false);
+            nextView.setKeepContentOnPlayerReset(true);
+            nextView.setShutterBackgroundColor(Color.TRANSPARENT);
+            nextView.setBackgroundColor(Color.TRANSPARENT);
+
+            // The poster stays mounted as the background. Put the player above it
+            // but below metadata/action overlays so the holder itself never rebinds.
+            int mediaIndex = Math.min(1, root.getChildCount());
+            root.addView(nextView, mediaIndex, fullParams());
+            playerView = nextView;
+
+            try {
+                player = HighQualityPlayerFactory.create(context, url);
+                player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
+                player.setMediaItem(MediaItem.fromUri(url));
+                player.addListener(new Player.Listener() {
+                    @Override
+                    public void onPlaybackStateChanged(int state) {
+                        if (state == Player.STATE_READY) listener.onMediaReady(post);
+                    }
+
+                    @Override
+                    public void onPlayerError(PlaybackException error) {
+                        listener.onMediaFailed(post);
+                    }
+                });
+                player.setVolume(muted ? 0f : 1f);
+                player.setPlayWhenReady(position == activePosition);
+                player.prepare();
+                nextView.setPlayer(player);
+                players.put(position, player);
+                nextView.setOnClickListener(null);
+            } catch (RuntimeException playerError) {
+                try { nextView.setPlayer(null); } catch (Exception ignored) {}
+                try { root.removeView(nextView); } catch (Exception ignored) {}
+                if (player != null) {
+                    try { player.release(); } catch (Exception ignored) {}
+                }
+                players.remove(position);
+                player = null;
+                playerView = null;
+                listener.onMediaFailed(post);
+                return;
+            }
+
+            Button mute = pillButton(muted ? "Muted" : "Sound");
+            mediaControl = mute;
+            FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(
+                    dp(74), dp(36), Gravity.TOP | Gravity.END);
+            mp.topMargin = topInsetPx + dp(12);
+            mp.rightMargin = dp(10);
+            root.addView(mute, mp);
+            mute.setOnClickListener(v -> {
+                muted = !muted;
+                setMuted(muted);
+                mute.setText(muted ? "Muted" : "Sound");
+                listener.onMutedChanged(muted);
+            });
+            applyChromeVisibility();
         }
 
         private void addTopMeta(RedditPost post) {

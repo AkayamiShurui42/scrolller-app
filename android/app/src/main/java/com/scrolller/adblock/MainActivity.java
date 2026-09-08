@@ -157,6 +157,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private Button browserBack;
     private Button compactMenuButton;
     private final LinkedHashMap<String, ArrayList<String>> subredditPresets = new LinkedHashMap<>();
+    private final ArrayList<String> multiSubredditRound = new ArrayList<>();
+    private final HashSet<String> multiSubredditSeenPostIds = new HashSet<>();
+    private int multiSubredditRoundIndex = 0;
+    private int multiSubredditGeneration = 0;
+    private int multiSubredditRequestsThisLoad = 0;
     private long fullscreenVisitStartedAtMs = 0L;
 
     private RedditSessionEngine engine;
@@ -894,6 +899,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (!engine.isReady()) return;
         if (loading && !reset) return;
 
+        if (screen == Screen.HOME && context.equals("multi")) {
+            loadMultiSubredditFair(reset);
+            return;
+        }
+
         if (reset) {
         if (screen == Screen.HOME
                 && context.equals("home")
@@ -1118,7 +1128,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             collected.sort((a, b) -> Long.compare(a.createdUtc, b.createdUtc));
         }
 
-        if (reset) replacePosts(collected);
+        if (reset && postAdapter.getItemCount() == 0) replacePosts(collected);
         else appendUnique(collected);
 
         if (postAdapter.getItemCount() == 0) {
@@ -5048,6 +5058,135 @@ private void installCompactNavigation() {
         setStatus((presetName == null || presetName.isEmpty() ? "Preset" : presetName)
                 + " · " + clean.size() + " subreddits · NSFW only", true);
         loadFeed(true);
+    }
+
+    private void loadMultiSubredditFair(boolean reset) {
+        if (!engine.isReady()) return;
+        if (loading && !reset) return;
+
+        if (reset) {
+            feedGeneration++;
+            multiSubredditGeneration++;
+            loading = false;
+            after = "";
+            multiSubredditRound.clear();
+            multiSubredditRoundIndex = 0;
+            multiSubredditSeenPostIds.clear();
+            feedSeenPostIds.clear();
+            feedSeenCursors.clear();
+            deferredAppends.clear();
+            deferredAppendScheduled = false;
+            replacePosts(new ArrayList<>());
+            pager.setCurrentItem(0, false);
+            setStatus("Preparing preset round…", true);
+        }
+
+        if (multiSubredditRoundIndex >= multiSubredditRound.size()) {
+            prepareMultiSubredditRound();
+        }
+        if (multiSubredditRound.isEmpty()) {
+            loading = false;
+            setStatus("This preset has no usable subreddits.", false);
+            return;
+        }
+
+        final int feedGen = feedGeneration;
+        final int multiGen = multiSubredditGeneration;
+        multiSubredditRequestsThisLoad = 0;
+        loading = true;
+        fetchMultiSubredditRoundNext(feedGen, multiGen);
+    }
+
+    private void prepareMultiSubredditRound() {
+        multiSubredditRound.clear();
+        multiSubredditRoundIndex = 0;
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (String community : multiCommunities()) {
+            String clean = cleanSubredditName(community);
+            if (!clean.isEmpty()) unique.add(clean);
+        }
+        multiSubredditRound.addAll(unique);
+        Collections.shuffle(multiSubredditRound);
+    }
+
+    private boolean multiSubredditContextValid(int feedGen, int multiGen) {
+        return feedGen == feedGeneration
+                && multiGen == multiSubredditGeneration
+                && screen == Screen.HOME
+                && context.equals("multi");
+    }
+
+    private void fetchMultiSubredditRoundNext(int feedGen, int multiGen) {
+        if (!multiSubredditContextValid(feedGen, multiGen)) return;
+
+        if (multiSubredditRoundIndex >= multiSubredditRound.size()) {
+            loading = false;
+            after = "multi-round-complete";
+            if (postAdapter.getItemCount() == 0) {
+                setStatus("No accessible NSFW media matched this preset round.", false);
+            } else {
+                hideStatus();
+            }
+            updateChrome();
+            restorePendingPosition();
+            return;
+        }
+
+        // Keep enough posts buffered for smooth swiping without making 200 network
+        // requests at once. The next chunk resumes at the next subreddit, so no
+        // subreddit can repeat until the entire preset round has been attempted.
+        if (multiSubredditRequestsThisLoad >= 12 && postAdapter.getItemCount() > 0) {
+            loading = false;
+            after = "multi-round-continue";
+            hideStatus();
+            updateChrome();
+            restorePendingPosition();
+            return;
+        }
+
+        final String target = multiSubredditRound.get(multiSubredditRoundIndex++);
+        multiSubredditRequestsThisLoad++;
+        engine.get(singlePresetListingPath(target), result -> {
+            if (!multiSubredditContextValid(feedGen, multiGen)) return;
+
+            if (result.ok) {
+                JSONObject rootJson = result.jsonObject();
+                JSONObject data = rootJson != null ? rootJson.optJSONObject("data") : null;
+                JSONArray children = data != null ? data.optJSONArray("children") : null;
+                ArrayList<RedditPost> candidates = new ArrayList<>();
+                if (children != null) {
+                    for (int i = 0; i < children.length(); i++) {
+                        RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
+                        if (post == null || !post.nsfw || !matchesMedia(post)) continue;
+                        if (post.id == null || post.id.isEmpty()) continue;
+                        if (hiddenPosts.containsKey(post.id)
+                                || isSavedForUnread(post)
+                                || isContentBlocked(post)) continue;
+                        String key = canonicalPostKey(post);
+                        if (key.isEmpty() || multiSubredditSeenPostIds.contains(key)) continue;
+                        candidates.add(post);
+                    }
+                }
+
+                if (!candidates.isEmpty()) {
+                    if (sort.equals("random")) Collections.shuffle(candidates);
+                    RedditPost selected = candidates.get(0);
+                    String key = canonicalPostKey(selected);
+                    if (!key.isEmpty()) {
+                        multiSubredditSeenPostIds.add(key);
+                        feedSeenPostIds.add(key);
+                    }
+                    ArrayList<RedditPost> one = new ArrayList<>();
+                    one.add(selected);
+                    appendUnique(one);
+                    hideStatus();
+                }
+            }
+
+            root.postDelayed(
+                    () -> fetchMultiSubredditRoundNext(feedGen, multiGen),
+                    180L);
+        });
     }
 
     private String multiListingPath(String cursor) {
