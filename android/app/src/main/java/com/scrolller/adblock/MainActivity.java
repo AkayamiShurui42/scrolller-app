@@ -955,6 +955,17 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     finishFeedCollection(generation, reset, collected);
                     return;
                 }
+                if (context.equals("multi") && result.status == 404) {
+                    after = "";
+                    setStatus("Preset route unavailable; retrying subreddits individually…", true);
+                    fetchMulti404Fallback(
+                            generation,
+                            reset,
+                            collected,
+                            multiCommunities(),
+                            0);
+                    return;
+                }
                 loading = false;
                 if (context.equals("subreddit") && subreddit != null && !subreddit.isEmpty()) {
                     setStatus("Live Reddit unavailable; loading historical r/" + subreddit + "…", true);
@@ -1013,6 +1024,84 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             }
 
             finishFeedCollection(generation, reset, collected);
+        });
+    }
+
+    private ArrayList<String> multiCommunities() {
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        String[] parts = subreddit == null ? new String[0] : subreddit.split("\\+");
+        for (String part : parts) {
+            String clean = cleanSubredditName(part);
+            if (!clean.isEmpty()) unique.add(clean);
+        }
+        return new ArrayList<>(unique);
+    }
+
+    private String singlePresetListingPath(String target) {
+        String remoteSort = sort;
+        if (remoteSort.equals("random") || remoteSort.equals("oldest")) remoteSort = "new";
+        String base = remoteSort.equals("best")
+                ? "/r/" + enc(target) + "/hot.json"
+                : "/r/" + enc(target) + "/" + remoteSort + ".json";
+        String path = base + "?limit=50&raw_json=1&show=all";
+        if (sort.equals("top")) path += "&t=" + enc(topTime);
+        return path;
+    }
+
+    private void fetchMulti404Fallback(
+            int generation,
+            boolean reset,
+            ArrayList<RedditPost> collected,
+            ArrayList<String> communities,
+            int index) {
+        if (generation != feedGeneration || screen != Screen.HOME || !context.equals("multi")) return;
+
+        if (index >= communities.size() || collected.size() >= 100) {
+            after = "";
+            boolean empty = collected.isEmpty();
+            finishFeedCollection(generation, reset, collected);
+            if (empty) setStatus("No accessible media matched this preset/filter.", false);
+            return;
+        }
+
+        String target = communities.get(index);
+        engine.get(singlePresetListingPath(target), result -> {
+            if (generation != feedGeneration || screen != Screen.HOME || !context.equals("multi")) return;
+
+            if (result.ok) {
+                JSONObject rootJson = result.jsonObject();
+                JSONObject data = rootJson != null ? rootJson.optJSONObject("data") : null;
+                JSONArray children = data != null ? data.optJSONArray("children") : null;
+                if (children != null) {
+                    for (int i = 0; i < children.length(); i++) {
+                        RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
+                        if (post == null || !matchesMedia(post)) continue;
+                        String key = canonicalPostKey(post);
+                        if (key.isEmpty() || !feedSeenPostIds.add(key)) continue;
+                        if (hiddenPosts.containsKey(post.id)
+                                || isSavedForUnread(post)
+                                || isContentBlocked(post)) continue;
+                        collected.add(post);
+                    }
+                }
+
+                // Show the first successful subreddit immediately while the remaining
+                // preset members continue through the serialized request queue.
+                if (reset && postAdapter.getItemCount() == 0 && !collected.isEmpty()) {
+                    replacePosts(new ArrayList<>(collected));
+                    hideStatus();
+                    updateChrome();
+                }
+            }
+
+            root.postDelayed(
+                    () -> fetchMulti404Fallback(
+                            generation,
+                            reset,
+                            collected,
+                            communities,
+                            index + 1),
+                    180L);
         });
     }
 
