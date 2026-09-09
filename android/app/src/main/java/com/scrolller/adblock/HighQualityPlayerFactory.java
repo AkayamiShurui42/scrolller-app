@@ -20,6 +20,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @UnstableApi
 final class HighQualityPlayerFactory {
@@ -28,6 +29,8 @@ final class HighQualityPlayerFactory {
     private static final Object CACHE_LOCK = new Object();
     private static final ExecutorService PRELOAD_EXECUTOR = Executors.newSingleThreadExecutor();
     private static final Set<String> PRELOADING = ConcurrentHashMap.newKeySet();
+    private static final AtomicInteger PRELOAD_GENERATION = new AtomicInteger();
+    private static volatile CacheWriter activeWriter;
     private static volatile SimpleCache sharedCache;
 
     private HighQualityPlayerFactory() {}
@@ -54,6 +57,14 @@ final class HighQualityPlayerFactory {
                 .build();
     }
 
+    static void cancelPendingPreloads() {
+        PRELOAD_GENERATION.incrementAndGet();
+        CacheWriter writer = activeWriter;
+        if (writer != null) {
+            try { writer.cancel(); } catch (RuntimeException ignored) {}
+        }
+    }
+
     static void preload(Context context, String mediaUrl, long requestedBytes) {
         if (mediaUrl == null || mediaUrl.isEmpty() || requestedBytes <= 0L) return;
         String lower = mediaUrl.toLowerCase();
@@ -66,8 +77,11 @@ final class HighQualityPlayerFactory {
         if (!PRELOADING.add(taskKey)) return;
 
         Context app = context.getApplicationContext();
+        final int generation = PRELOAD_GENERATION.get();
         PRELOAD_EXECUTOR.execute(() -> {
+            CacheWriter writer = null;
             try {
+                if (generation != PRELOAD_GENERATION.get()) return;
                 DataSpec spec = new DataSpec.Builder()
                         .setUri(mediaUrl)
                         .setPosition(0L)
@@ -75,10 +89,14 @@ final class HighQualityPlayerFactory {
                         .build();
                 CacheDataSource source = cachedDataSourceFactory(app, mediaUrl)
                         .createDataSourceForDownloading();
-                new CacheWriter(source, spec, null, null).cache();
+                writer = new CacheWriter(source, spec, null, null);
+                activeWriter = writer;
+                if (generation != PRELOAD_GENERATION.get()) return;
+                writer.cache();
             } catch (Exception ignored) {
                 // Preload is opportunistic. Playback still has the normal upstream path.
             } finally {
+                if (activeWriter == writer) activeWriter = null;
                 PRELOADING.remove(taskKey);
             }
         });
@@ -93,7 +111,7 @@ final class HighQualityPlayerFactory {
 
     private static DefaultHttpDataSource.Factory httpFactory(String mediaUrl) {
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-                .setUserAgent("Mozilla/5.0 (Linux; Android 16) RedditMedia/3.8.5")
+                .setUserAgent("Mozilla/5.0 (Linux; Android 16) RedditMedia/3.8.6")
                 .setAllowCrossProtocolRedirects(true);
 
         if (isRedgifsMedia(mediaUrl)) {

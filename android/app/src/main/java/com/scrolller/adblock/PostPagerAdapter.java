@@ -66,6 +66,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     private boolean muted = true;
     private boolean chromeVisible = false;
     private boolean hiddenMode = false;
+    private boolean pagerScrolling = false;
     private int topInsetPx = 0;
     private int bottomInsetPx = 0;
 
@@ -149,12 +150,30 @@ public void setActivePosition(int position) {
         activePosition = position;
         for (Map.Entry<Integer, ExoPlayer> entry : new ArrayList<>(players.entrySet())) {
             try {
-                boolean active = entry.getKey() == position;
+                boolean active = !pagerScrolling && entry.getKey() == position;
                 entry.getValue().setPlayWhenReady(active);
                 if (!active) entry.getValue().pause();
             } catch (RuntimeException ignored) {}
         }
-        warmAdjacentMedia(position);
+        if (!pagerScrolling) warmAdjacentMedia(position);
+    }
+
+    public void setPagerScrolling(boolean scrolling) {
+        if (pagerScrolling == scrolling) return;
+        pagerScrolling = scrolling;
+        if (scrolling) {
+            HighQualityPlayerFactory.cancelPendingPreloads();
+            for (ExoPlayer player : new ArrayList<>(players.values())) {
+                try {
+                    player.setPlayWhenReady(false);
+                    player.pause();
+                } catch (RuntimeException ignored) {}
+            }
+            return;
+        }
+        // Resume only after ViewPager2 is idle. This collapses a burst of
+        // intermediate onPageSelected callbacks into one preload/playback update.
+        setActivePosition(activePosition);
     }
 
 
@@ -192,12 +211,19 @@ public void setActivePosition(int position) {
     public void onViewAttachedToWindow(@NonNull PostHolder holder) {
         super.onViewAttachedToWindow(holder);
         if (!attachedHolders.contains(holder)) attachedHolders.add(holder);
+        if (holder.needsRebindAfterDetach) {
+            int position = holder.getBindingAdapterPosition();
+            if (position != RecyclerView.NO_POSITION && position >= 0 && position < posts.size()) {
+                holder.bind(posts.get(position), position);
+            }
+        }
         holder.applyChromeVisibility();
     }
 
     @Override
     public void onViewDetachedFromWindow(@NonNull PostHolder holder) {
         attachedHolders.remove(holder);
+        holder.releaseForDetach();
         super.onViewDetachedFromWindow(holder);
     }
 
@@ -218,6 +244,7 @@ public void setActivePosition(int position) {
         View bottomInfo;
         View mediaControl;
         int boundPosition = -1;
+        boolean needsRebindAfterDetach = false;
 
         PostHolder(FrameLayout root) {
             super(root);
@@ -226,6 +253,7 @@ public void setActivePosition(int position) {
 
         void bind(RedditPost post, int position) {
             releasePlayer();
+            needsRebindAfterDetach = false;
             boundPosition = position;
             topMeta = null;
             bottomInfo = null;
@@ -584,6 +612,14 @@ public void setActivePosition(int position) {
             }
         }
 
+        void releaseForDetach() {
+            // RecyclerView may keep a detached holder without recycling it. Holding
+            // its ExoPlayer in that state leaks decoder/buffer pressure across rapid
+            // swipes, so release immediately and rebuild only if the holder reattaches.
+            needsRebindAfterDetach = true;
+            releasePlayer();
+        }
+
         void releasePlayer() {
             if (boundPosition >= 0) players.remove(boundPosition);
             if (playerView != null) {
@@ -804,8 +840,8 @@ public void setActivePosition(int position) {
 
 private void warmAdjacentMedia(int center) {
         if (center < 0 || posts.isEmpty()) return;
-        int start = Math.max(0, center - 1);
-        int end = Math.min(posts.size() - 1, center + 4);
+        int start = Math.max(0, center);
+        int end = Math.min(posts.size() - 1, center + 3);
         Context app = context.getApplicationContext();
         for (int i = start; i <= end; i++) {
             RedditPost post = posts.get(i);
@@ -825,15 +861,11 @@ private void warmAdjacentMedia(int center) {
     }
 
     private void preloadUpcomingVideo(RedditPost post, int distance) {
-        if (post == null || distance < 1 || distance > 4) return;
+        if (post == null || distance < 1 || distance > 2) return;
         String video = post.videoUrl == null ? "" : post.videoUrl;
         final long bytes = distance == 1
                 ? 4L * 1024L * 1024L
-                : distance == 2
-                ? 2L * 1024L * 1024L
-                : distance == 3
-                ? 768L * 1024L
-                : 256L * 1024L;
+                : 2L * 1024L * 1024L;
 
         if (video.startsWith("redgifs:")) {
             final String unresolved = video;

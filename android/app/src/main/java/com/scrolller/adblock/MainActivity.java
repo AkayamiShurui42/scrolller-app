@@ -355,7 +355,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (pager.getChildCount() > 0 && pager.getChildAt(0) instanceof RecyclerView) {
             RecyclerView pagerRecycler = (RecyclerView) pager.getChildAt(0);
             pagerRecycler.setItemAnimator(null);
-            pagerRecycler.setItemViewCacheSize(4);
+            pagerRecycler.setItemViewCacheSize(0);
         }
         appLayer.addView(pager, match());
 
@@ -367,9 +367,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             @Override
             public void onPageScrollStateChanged(int state) {
                 if (state == ViewPager2.SCROLL_STATE_DRAGGING) {
+                    postAdapter.setPagerScrolling(true);
                     fullscreenUserGesture = true;
                     pendingUserFullscreenPosition = -1;
+                } else if (state == ViewPager2.SCROLL_STATE_SETTLING) {
+                    postAdapter.setPagerScrolling(true);
                 } else if (state == ViewPager2.SCROLL_STATE_IDLE) {
+                    postAdapter.setPagerScrolling(false);
                     if (fullscreenUserGesture && pendingUserFullscreenPosition >= 0
                             && layoutMode.equals("fullscreen")
                             && screen != Screen.ACCOUNT
