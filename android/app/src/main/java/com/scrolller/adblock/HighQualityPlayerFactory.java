@@ -111,7 +111,7 @@ final class HighQualityPlayerFactory {
 
     private static DefaultHttpDataSource.Factory httpFactory(String mediaUrl) {
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-                .setUserAgent("Mozilla/5.0 (Linux; Android 16) RedditMedia/3.8.6")
+                .setUserAgent("Mozilla/5.0 (Linux; Android 16) RedditMedia/3.8.8")
                 .setAllowCrossProtocolRedirects(true);
 
         if (isRedgifsMedia(mediaUrl)) {

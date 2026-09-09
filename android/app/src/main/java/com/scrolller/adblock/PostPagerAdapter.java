@@ -59,7 +59,16 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     private final Context context;
     private final Listener listener;
     private final ArrayList<RedditPost> posts = new ArrayList<>();
-    private final Map<Integer, ExoPlayer> players = new HashMap<>();
+    // A bounded two-player pool: one generic Reddit/Scrolller player and one
+    // RedGIFs player (which needs different request headers). Pages never own players.
+    private ExoPlayer defaultPlayer;
+    private ExoPlayer redgifsPlayer;
+    private ExoPlayer activePlayer;
+    private PostHolder activePlayerHolder;
+    private RedditPost defaultPlayerPost;
+    private RedditPost redgifsPlayerPost;
+    private String defaultPlayerUrl = "";
+    private String redgifsPlayerUrl = "";
     private final ArrayList<PostHolder> attachedHolders = new ArrayList<>();
     private final Set<String> warmingRedgifs = new HashSet<>();
     private int activePosition = 0;
@@ -106,8 +115,11 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
     public void setMuted(boolean muted) {
         this.muted = muted;
-        for (ExoPlayer player : new ArrayList<>(players.values())) {
-            try { player.setVolume(muted ? 0f : 1f); } catch (RuntimeException ignored) {}
+        if (defaultPlayer != null) {
+            try { defaultPlayer.setVolume(muted ? 0f : 1f); } catch (RuntimeException ignored) {}
+        }
+        if (redgifsPlayer != null) {
+            try { redgifsPlayer.setVolume(muted ? 0f : 1f); } catch (RuntimeException ignored) {}
         }
     }
 
@@ -148,13 +160,15 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
 public void setActivePosition(int position) {
         activePosition = position;
-        for (Map.Entry<Integer, ExoPlayer> entry : new ArrayList<>(players.entrySet())) {
-            try {
-                boolean active = !pagerScrolling && entry.getKey() == position;
-                entry.getValue().setPlayWhenReady(active);
-                if (!active) entry.getValue().pause();
-            } catch (RuntimeException ignored) {}
+        PostHolder target = null;
+        for (PostHolder holder : new ArrayList<>(attachedHolders)) {
+            if (holder.boundPosition == position) {
+                target = holder;
+                break;
+            }
         }
+        if (target != null) target.activateIfNeeded();
+        else pausePlayers();
         if (!pagerScrolling) warmAdjacentMedia(position);
     }
 
@@ -162,27 +176,132 @@ public void setActivePosition(int position) {
         if (pagerScrolling == scrolling) return;
         pagerScrolling = scrolling;
         if (scrolling) {
+            // CacheWriter is opportunistic and may be cancelled during touch input.
+            // The selected pooled player is NOT paused; onPageSelected hands playback
+            // directly to the new page while ViewPager2 is still settling.
             HighQualityPlayerFactory.cancelPendingPreloads();
-            for (ExoPlayer player : new ArrayList<>(players.values())) {
-                try {
-                    player.setPlayWhenReady(false);
-                    player.pause();
-                } catch (RuntimeException ignored) {}
-            }
             return;
         }
-        // Resume only after ViewPager2 is idle. This collapses a burst of
-        // intermediate onPageSelected callbacks into one preload/playback update.
-        setActivePosition(activePosition);
+        warmAdjacentMedia(activePosition);
     }
 
+    private boolean isRedgifsUrl(String url) {
+        if (url == null) return false;
+        String lower = url.toLowerCase();
+        return lower.contains("redgifs.com") || lower.contains("redgifsusercontent.com");
+    }
 
+    private ExoPlayer obtainPlayer(String url, boolean redgifs) {
+        ExoPlayer player = redgifs ? redgifsPlayer : defaultPlayer;
+        if (player != null) return player;
+        player = HighQualityPlayerFactory.create(context, url);
+        player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
+        final boolean familyRedgifs = redgifs;
+        player.addListener(new Player.Listener() {
+            @Override
+            public void onPlaybackStateChanged(int state) {
+                if (state != Player.STATE_READY) return;
+                RedditPost post = familyRedgifs ? redgifsPlayerPost : defaultPlayerPost;
+                if (post != null) listener.onMediaReady(post);
+            }
+
+            @Override
+            public void onPlayerError(PlaybackException error) {
+                RedditPost post = familyRedgifs ? redgifsPlayerPost : defaultPlayerPost;
+                if (post != null) listener.onMediaFailed(post);
+            }
+        });
+        if (redgifs) redgifsPlayer = player;
+        else defaultPlayer = player;
+        return player;
+    }
+
+    private void attachPooledPlayer(PostHolder holder, RedditPost post, int position, String url) {
+        if (holder == null || holder.playerView == null || post == null || url == null || url.isEmpty()) return;
+        if (position != activePosition || holder.boundPosition != position || holder.boundPost != post) return;
+
+        boolean redgifs = isRedgifsUrl(url);
+        try {
+            ExoPlayer target = obtainPlayer(url, redgifs);
+            ExoPlayer other = redgifs ? defaultPlayer : redgifsPlayer;
+            if (other != null && other != target) {
+                try { other.setPlayWhenReady(false); other.pause(); } catch (RuntimeException ignored) {}
+            }
+
+            if (activePlayerHolder != null && activePlayerHolder != holder
+                    && activePlayerHolder.playerView != null) {
+                try { activePlayerHolder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
+                activePlayerHolder.player = null;
+            }
+
+            activePlayer = target;
+            activePlayerHolder = holder;
+            holder.player = target;
+            holder.playerView.setPlayer(target);
+            holder.playerView.setOnClickListener(null);
+
+            String currentUrl = redgifs ? redgifsPlayerUrl : defaultPlayerUrl;
+            if (redgifs) redgifsPlayerPost = post;
+            else defaultPlayerPost = post;
+
+            if (!url.equals(currentUrl) || target.getPlayerError() != null) {
+                target.setMediaItem(MediaItem.fromUri(url));
+                target.prepare();
+                if (redgifs) redgifsPlayerUrl = url;
+                else defaultPlayerUrl = url;
+            }
+            target.setVolume(muted ? 0f : 1f);
+            target.setPlayWhenReady(true);
+        } catch (RuntimeException playerError) {
+            listener.onMediaFailed(post);
+        }
+    }
+
+    private void detachPooledPlayer(PostHolder holder) {
+        if (holder == null) return;
+        if (holder.playerView != null) {
+            try { holder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
+        }
+        holder.player = null;
+        if (activePlayerHolder == holder) {
+            if (activePlayer != null) {
+                try { activePlayer.setPlayWhenReady(false); activePlayer.pause(); } catch (RuntimeException ignored) {}
+            }
+            activePlayerHolder = null;
+            activePlayer = null;
+        }
+    }
+
+    private void pausePlayers() {
+        if (defaultPlayer != null) {
+            try { defaultPlayer.setPlayWhenReady(false); defaultPlayer.pause(); } catch (RuntimeException ignored) {}
+        }
+        if (redgifsPlayer != null) {
+            try { redgifsPlayer.setPlayWhenReady(false); redgifsPlayer.pause(); } catch (RuntimeException ignored) {}
+        }
+        activePlayer = null;
+        activePlayerHolder = null;
+    }
 
     public void releaseAll() {
-        for (ExoPlayer player : players.values()) {
-            try { player.release(); } catch (Exception ignored) {}
+        if (activePlayerHolder != null && activePlayerHolder.playerView != null) {
+            try { activePlayerHolder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
+            activePlayerHolder.player = null;
         }
-        players.clear();
+        activePlayerHolder = null;
+        activePlayer = null;
+        if (defaultPlayer != null) {
+            try { defaultPlayer.release(); } catch (Exception ignored) {}
+            defaultPlayer = null;
+        }
+        if (redgifsPlayer != null) {
+            try { redgifsPlayer.release(); } catch (Exception ignored) {}
+            redgifsPlayer = null;
+        }
+        defaultPlayerPost = null;
+        redgifsPlayerPost = null;
+        defaultPlayerUrl = "";
+        redgifsPlayerUrl = "";
     }
 
     @Override
@@ -211,13 +330,8 @@ public void setActivePosition(int position) {
     public void onViewAttachedToWindow(@NonNull PostHolder holder) {
         super.onViewAttachedToWindow(holder);
         if (!attachedHolders.contains(holder)) attachedHolders.add(holder);
-        if (holder.needsRebindAfterDetach) {
-            int position = holder.getBindingAdapterPosition();
-            if (position != RecyclerView.NO_POSITION && position >= 0 && position < posts.size()) {
-                holder.bind(posts.get(position), position);
-            }
-        }
         holder.applyChromeVisibility();
+        if (holder.boundPosition == activePosition) holder.activateIfNeeded();
     }
 
     @Override
@@ -244,7 +358,7 @@ public void setActivePosition(int position) {
         View bottomInfo;
         View mediaControl;
         int boundPosition = -1;
-        boolean needsRebindAfterDetach = false;
+        RedditPost boundPost;
 
         PostHolder(FrameLayout root) {
             super(root);
@@ -253,8 +367,8 @@ public void setActivePosition(int position) {
 
         void bind(RedditPost post, int position) {
             releasePlayer();
-            needsRebindAfterDetach = false;
             boundPosition = position;
+            boundPost = post;
             topMeta = null;
             bottomInfo = null;
             mediaControl = null;
@@ -266,6 +380,7 @@ public void setActivePosition(int position) {
             addTopMeta(post);
             addBottomInfo(post);
             applyChromeVisibility();
+            if (position == activePosition) activateIfNeeded();
         }
 
         private void addMedia(RedditPost post, int position) {
@@ -316,41 +431,10 @@ public void setActivePosition(int position) {
                 playerView.setBackgroundColor(Color.TRANSPARENT);
                 root.addView(playerView, fullParams());
 
-                try {
-                    player = HighQualityPlayerFactory.create(context, post.videoUrl);
-                    player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
-                    player.setMediaItem(MediaItem.fromUri(post.videoUrl));
-                    player.addListener(new Player.Listener() {
-                        @Override
-                        public void onPlaybackStateChanged(int state) {
-                            if (state == Player.STATE_READY) listener.onMediaReady(post);
-                        }
-
-                        @Override
-                        public void onPlayerError(PlaybackException error) {
-                            listener.onMediaFailed(post);
-                        }
-                    });
-                    player.setVolume(muted ? 0f : 1f);
-                    player.setPlayWhenReady(position == activePosition);
-                    player.prepare();
-                    playerView.setPlayer(player);
-                    players.put(position, player);
-                    playerView.setOnClickListener(null);
-                } catch (RuntimeException playerError) {
-                    if (playerView != null) {
-                        try { playerView.setPlayer(null); } catch (Exception ignored) {}
-                        try { root.removeView(playerView); } catch (Exception ignored) {}
-                    }
-                    if (player != null) {
-                        try { player.release(); } catch (Exception ignored) {}
-                    }
-                    players.remove(position);
-                    player = null;
-                    playerView = null;
-                    listener.onMediaFailed(post);
-                    return;
+                if (position == activePosition) {
+                    attachPooledPlayer(this, post, position, post.videoUrl);
                 }
+                playerView.setOnClickListener(null);
 
                 Button mute = pillButton(muted ? "Muted" : "Sound");
                 mediaControl = mute;
@@ -431,7 +515,7 @@ public void setActivePosition(int position) {
         }
 
         private void attachResolvedRedgifsVideo(RedditPost post, int position, String url) {
-            if (player != null || playerView != null || url == null || url.isEmpty()) return;
+            if (playerView != null || url == null || url.isEmpty()) return;
             if (boundPosition != position || position < 0 || position >= posts.size()
                     || posts.get(position) != post) return;
 
@@ -441,44 +525,13 @@ public void setActivePosition(int position) {
             nextView.setShutterBackgroundColor(Color.TRANSPARENT);
             nextView.setBackgroundColor(Color.TRANSPARENT);
 
-            // The poster stays mounted as the background. Put the player above it
-            // but below metadata/action overlays so the holder itself never rebinds.
             int mediaIndex = Math.min(1, root.getChildCount());
             root.addView(nextView, mediaIndex, fullParams());
             playerView = nextView;
+            nextView.setOnClickListener(null);
 
-            try {
-                player = HighQualityPlayerFactory.create(context, url);
-                player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
-                player.setMediaItem(MediaItem.fromUri(url));
-                player.addListener(new Player.Listener() {
-                    @Override
-                    public void onPlaybackStateChanged(int state) {
-                        if (state == Player.STATE_READY) listener.onMediaReady(post);
-                    }
-
-                    @Override
-                    public void onPlayerError(PlaybackException error) {
-                        listener.onMediaFailed(post);
-                    }
-                });
-                player.setVolume(muted ? 0f : 1f);
-                player.setPlayWhenReady(position == activePosition);
-                player.prepare();
-                nextView.setPlayer(player);
-                players.put(position, player);
-                nextView.setOnClickListener(null);
-            } catch (RuntimeException playerError) {
-                try { nextView.setPlayer(null); } catch (Exception ignored) {}
-                try { root.removeView(nextView); } catch (Exception ignored) {}
-                if (player != null) {
-                    try { player.release(); } catch (Exception ignored) {}
-                }
-                players.remove(position);
-                player = null;
-                playerView = null;
-                listener.onMediaFailed(post);
-                return;
+            if (position == activePosition) {
+                attachPooledPlayer(this, post, position, url);
             }
 
             Button mute = pillButton(muted ? "Muted" : "Sound");
@@ -495,6 +548,17 @@ public void setActivePosition(int position) {
                 listener.onMutedChanged(muted);
             });
             applyChromeVisibility();
+        }
+
+        void activateIfNeeded() {
+            if (boundPost == null || boundPosition != activePosition) return;
+            if (playerView == null) return;
+            String url = boundPost.videoUrl == null ? "" : boundPost.videoUrl;
+            if (url.isEmpty() || url.startsWith("redgifs:")) return;
+            if (boundPost.mediaKind == RedditPost.MediaKind.VIDEO
+                    || boundPost.mediaKind == RedditPost.MediaKind.GIF) {
+                attachPooledPlayer(this, boundPost, boundPosition, url);
+            }
         }
 
         private void addTopMeta(RedditPost post) {
@@ -613,26 +677,20 @@ public void setActivePosition(int position) {
         }
 
         void releaseForDetach() {
-            // RecyclerView may keep a detached holder without recycling it. Holding
-            // its ExoPlayer in that state leaks decoder/buffer pressure across rapid
-            // swipes, so release immediately and rebuild only if the holder reattaches.
-            needsRebindAfterDetach = true;
-            releasePlayer();
+            // Keep the page hierarchy intact for fast reverse/forward swipes. Only
+            // detach it from the bounded player pool; no holder rebind is required.
+            detachPooledPlayer(this);
         }
 
         void releasePlayer() {
-            if (boundPosition >= 0) players.remove(boundPosition);
+            detachPooledPlayer(this);
             if (playerView != null) {
                 try { playerView.setPlayer(null); } catch (Exception ignored) {}
             }
-            if (player != null) {
-                try { player.setVideoTextureView(null); } catch (Exception ignored) {}
-                try { player.stop(); } catch (Exception ignored) {}
-                try { player.release(); } catch (Exception ignored) {}
-                player = null;
-            }
+            player = null;
             playerView = null;
             boundPosition = -1;
+            boundPost = null;
         }
     }
 

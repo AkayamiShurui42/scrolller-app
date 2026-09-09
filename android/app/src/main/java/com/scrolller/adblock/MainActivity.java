@@ -240,6 +240,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        CrashReporter.install(this);
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.BLACK);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -355,7 +356,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (pager.getChildCount() > 0 && pager.getChildAt(0) instanceof RecyclerView) {
             RecyclerView pagerRecycler = (RecyclerView) pager.getChildAt(0);
             pagerRecycler.setItemAnimator(null);
-            pagerRecycler.setItemViewCacheSize(0);
+            pagerRecycler.setItemViewCacheSize(2);
         }
         appLayer.addView(pager, match());
 
