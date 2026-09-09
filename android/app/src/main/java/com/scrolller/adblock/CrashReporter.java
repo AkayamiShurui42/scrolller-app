@@ -7,6 +7,7 @@ import android.app.ApplicationExitInfo;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.pm.PackageInfo;
 import android.os.Build;
 
 import java.io.File;
@@ -40,6 +41,7 @@ final class CrashReporter {
                 pw.println("Time: " + DateFormat.getDateTimeInstance().format(new Date()));
                 pw.println("Thread: " + thread.getName());
                 pw.println("Android: " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
+                pw.println("App build at crash: " + versionLabel(activity));
                 pw.println();
                 throwable.printStackTrace(pw);
                 pw.flush();
@@ -61,6 +63,13 @@ final class CrashReporter {
                 report += exit;
             }
             if (report.isEmpty()) return;
+
+            String currentBuild = "Current installed build: " + versionLabel(activity);
+            if (!report.contains("App build at crash:")) {
+                report = "Stored crash report predates build-tagged reporting; "
+                        + "it may have been recorded by an older installed APK.\n\n" + report;
+            }
+            report = currentBuild + "\n\n" + report;
 
             final String finalReport = report;
             new AlertDialog.Builder(activity)
@@ -108,6 +117,19 @@ final class CrashReporter {
                     + "Description: " + String.valueOf(info.getDescription());
         } catch (Throwable ignored) {
             return "";
+        }
+    }
+
+    private static String versionLabel(Context context) {
+        try {
+            PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+            long code = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? info.getLongVersionCode()
+                    : info.versionCode;
+            String name = info.versionName == null ? "?" : info.versionName;
+            return name + " (versionCode " + code + ")";
+        } catch (Exception ignored) {
+            return "unknown";
         }
     }
 

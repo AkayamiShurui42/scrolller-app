@@ -255,8 +255,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             }
         });
 
-        prefs = getSharedPreferences("native-redview", MODE_PRIVATE);
         readHideStore = new ReadHideStore(this);
+        LegacyHiddenPrefsPreflight.migrateIfNeeded(this, readHideStore);
+        prefs = getSharedPreferences("native-redview", MODE_PRIVATE);
         loadSubredditPresets();
         sort = "random";
         topTime = prefs.getString("topTime", "day");
