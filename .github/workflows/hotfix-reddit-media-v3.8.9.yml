@@ -42,7 +42,7 @@ jobs:
           grep -q 'class ReadHideStore extends SQLiteOpenHelper' android/app/src/main/java/com/scrolller/adblock/ReadHideStore.java
           grep -q 'insertWithOnConflict' android/app/src/main/java/com/scrolller/adblock/ReadHideStore.java
           ! grep -A8 'private void saveReadHideState' android/app/src/main/java/com/scrolller/adblock/MainActivity.java | grep -q 'hidden.toString()'
-          grep -q 'Previous app crash captured' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'final class CrashReporter' android/app/src/main/java/com/scrolller/adblock/CrashReporter.java
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
