@@ -361,6 +361,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
         postAdapter = new PostPagerAdapter(this, this);
         postAdapter.setMuted(muted);
+        HighQualityPlayerFactory.warmup(getApplicationContext());
         pager.setAdapter(postAdapter);
         pager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
             @Override

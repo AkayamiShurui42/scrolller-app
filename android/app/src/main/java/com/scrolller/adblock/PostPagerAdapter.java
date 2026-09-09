@@ -36,8 +36,10 @@ import com.bumptech.glide.request.target.Target;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapter.PostHolder> {
     public interface Listener {
@@ -59,6 +61,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     private final ArrayList<RedditPost> posts = new ArrayList<>();
     private final Map<Integer, ExoPlayer> players = new HashMap<>();
     private final ArrayList<PostHolder> attachedHolders = new ArrayList<>();
+    private final Set<String> warmingRedgifs = new HashSet<>();
     private int activePosition = 0;
     private boolean muted = true;
     private boolean chromeVisible = false;
@@ -78,6 +81,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         posts.addAll(items);
         activePosition = 0;
         notifyDataSetChanged();
+        warmAdjacentMedia(activePosition);
     }
 
     public void appendPosts(List<RedditPost> items) {
@@ -85,6 +89,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         int start = posts.size();
         posts.addAll(items);
         notifyItemRangeInserted(start, items.size());
+        warmAdjacentMedia(activePosition);
     }
 
     public List<RedditPost> getPosts() { return posts; }
@@ -798,18 +803,61 @@ public void setActivePosition(int position) {
 
 
 private void warmAdjacentMedia(int center) {
-        int start = Math.max(0, center - 2);
-        int end = Math.min(posts.size() - 1, center + 2);
+        if (center < 0 || posts.isEmpty()) return;
+        int start = Math.max(0, center - 1);
+        int end = Math.min(posts.size() - 1, center + 4);
+        Context app = context.getApplicationContext();
         for (int i = start; i <= end; i++) {
             RedditPost post = posts.get(i);
             if (post == null) continue;
             String preview = post.posterUrl;
-            if ((preview == null || preview.isEmpty()) && post.imageUrls != null && !post.imageUrls.isEmpty()) {
+            if ((preview == null || preview.isEmpty())
+                    && post.imageUrls != null && !post.imageUrls.isEmpty()) {
                 preview = post.imageUrls.get(0);
             }
             if (preview != null && !preview.isEmpty()) {
-                Glide.with(context.getApplicationContext()).load(preview).preload();
+                Glide.with(app).load(preview).preload();
             }
+
+            int distance = i - center;
+            if (distance > 0) preloadUpcomingVideo(post, distance);
+        }
+    }
+
+    private void preloadUpcomingVideo(RedditPost post, int distance) {
+        if (post == null || distance < 1 || distance > 4) return;
+        String video = post.videoUrl == null ? "" : post.videoUrl;
+        final long bytes = distance == 1
+                ? 4L * 1024L * 1024L
+                : distance == 2
+                ? 2L * 1024L * 1024L
+                : distance == 3
+                ? 768L * 1024L
+                : 256L * 1024L;
+
+        if (video.startsWith("redgifs:")) {
+            final String unresolved = video;
+            final String id = unresolved.substring("redgifs:".length());
+            final String key = id.toLowerCase();
+            if (key.isEmpty() || !warmingRedgifs.add(key)) return;
+            RedgifsResolver.resolve(id, new RedgifsResolver.Callback() {
+                @Override
+                public void onResolved(String url) {
+                    warmingRedgifs.remove(key);
+                    if (post.videoUrl.equals(unresolved)) post.videoUrl = url;
+                    HighQualityPlayerFactory.preload(context.getApplicationContext(), url, bytes);
+                }
+
+                @Override
+                public void onError(String error) {
+                    warmingRedgifs.remove(key);
+                }
+            });
+            return;
+        }
+
+        if (!video.isEmpty()) {
+            HighQualityPlayerFactory.preload(context.getApplicationContext(), video, bytes);
         }
     }
 }
