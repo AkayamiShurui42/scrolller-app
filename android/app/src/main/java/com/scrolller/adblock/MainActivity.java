@@ -166,6 +166,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private RedditSessionEngine engine;
     private SharedPreferences prefs;
+    private ReadHideStore readHideStore;
 
     private Screen screen = Screen.HOME;
     private BrowserPurpose browserPurpose = BrowserPurpose.NONE;
@@ -255,6 +256,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         });
 
         prefs = getSharedPreferences("native-redview", MODE_PRIVATE);
+        readHideStore = new ReadHideStore(this);
         loadSubredditPresets();
         sort = "random";
         topTime = prefs.getString("topTime", "day");
@@ -3108,11 +3110,13 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         persistSavedPostIds();
         boolean hiddenChanged = false;
         for (RedditPost savedPost : collected) {
-            if (savedPost != null && savedPost.id != null && hiddenPosts.remove(savedPost.id) != null) {
+            if (savedPost != null && savedPost.id != null && hiddenPosts.containsKey(savedPost.id)) {
+                hiddenPosts.remove(savedPost.id);
+                readHideStore.deleteAsync(savedPost.id);
                 hiddenChanged = true;
             }
         }
-        if (hiddenChanged) saveReadHideState();
+        if (hiddenChanged) trimHiddenPostCache();
         applyFavoriteOrdering(collected);
         replacePosts(collected);
         if (collected.isEmpty()) {
@@ -3781,15 +3785,7 @@ private void showCategoryRoot() {
             restoreHiddenGroup("videos", "");
         });
 
-        ArrayList<String> communities = new ArrayList<>();
-        for (RedditPost post : hiddenPosts.values()) {
-            if (post == null || post.subreddit == null || post.subreddit.isEmpty()) continue;
-            boolean exists = false;
-            for (String existing : communities) {
-                if (existing.equalsIgnoreCase(post.subreddit)) { exists = true; break; }
-            }
-            if (!exists) communities.add(post.subreddit);
-        }
+        ArrayList<String> communities = new ArrayList<>(readHideStore.listCommunities());
         communities.sort(String.CASE_INSENSITIVE_ORDER);
         if (!communities.isEmpty()) {
             TextView title = sectionTitle("Restore by subreddit");
@@ -3811,28 +3807,11 @@ private void showCategoryRoot() {
     }
 
     private void restoreHiddenGroup(String kind, String community) {
-        ArrayList<String> removeIds = new ArrayList<>();
-        for (RedditPost post : hiddenPosts.values()) {
-            if (post == null || post.id == null || post.id.isEmpty()) continue;
-            boolean match;
-            if (kind.equals("all")) {
-                match = true;
-            } else if (kind.equals("images")) {
-                match = post.mediaKind == RedditPost.MediaKind.IMAGE
-                        || post.mediaKind == RedditPost.MediaKind.GALLERY;
-            } else if (kind.equals("videos")) {
-                match = post.mediaKind == RedditPost.MediaKind.VIDEO
-                        || post.mediaKind == RedditPost.MediaKind.GIF;
-            } else {
-                match = post.subreddit != null && post.subreddit.equalsIgnoreCase(community);
-            }
-            if (match) removeIds.add(post.id);
-        }
+        ArrayList<String> removeIds = new ArrayList<>(readHideStore.deleteGroup(kind, community));
         for (String id : removeIds) {
             hiddenPosts.remove(id);
             feedSeenPostIds.remove(id);
         }
-        saveReadHideState();
         loadHiddenPostsView();
     }
 
@@ -4058,13 +4037,18 @@ private void showCategoryRoot() {
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
         ArrayList<RedditPost> items = new ArrayList<>();
-        for (RedditPost post : hiddenPosts.values()) {
-            if (matchesMedia(post)) items.add(post);
+        for (RedditPost post : readHideStore.loadRecent(1000)) {
+            if (post != null && matchesMedia(post)) items.add(post);
         }
         applyFavoriteOrdering(items);
         replacePosts(items);
-        if (items.isEmpty()) setStatus("No locally hidden posts.", false);
-        else hideStatus();
+        if (items.isEmpty()) {
+            setStatus("No locally hidden posts.", false);
+        } else if (hiddenPosts.size() > 1000) {
+            setStatus("Showing the 1,000 most recent hidden posts of " + hiddenPosts.size() + ".", false);
+        } else {
+            hideStatus();
+        }
         updateChrome();
         restorePendingPosition();
     }
@@ -4113,7 +4097,8 @@ private void trackFullscreenVisit(int position) {
                 && !savedPostIds.contains(previous.id)
                 && !hiddenPosts.containsKey(previous.id)) {
             hiddenPosts.put(previous.id, previous);
-            saveReadHideState();
+            readHideStore.hideAsync(previous);
+            trimHiddenPostCache();
         }
         lastFullscreenPostId = currentId;
         fullscreenVisitStartedAtMs = now;
@@ -4125,7 +4110,7 @@ private void trackFullscreenVisit(int position) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
         hiddenPosts.remove(post.id);
         feedSeenPostIds.remove(post.id);
-        saveReadHideState();
+        readHideStore.deleteAsync(post.id);
         if (showingHiddenLibrary()) loadHiddenPostsView();
         else reloadCurrent();
     }
@@ -4133,27 +4118,86 @@ private void trackFullscreenVisit(int position) {
     private void loadReadHideState() {
         hiddenPosts.clear();
         try {
-            JSONArray hidden = new JSONArray(prefs.getString("hiddenPosts", "[]"));
-            for (int i = 0; i < hidden.length(); i++) {
-                RedditPost post = postFromJson(hidden.optJSONObject(i));
+            // One-time migration from the old giant SharedPreferences JSON. For a
+            // very large legacy value, scan IDs directly instead of constructing a
+            // JSONArray/JSONObject graph and duplicating tens of MB on the heap.
+            String legacy = prefs.getString("hiddenPosts", "");
+            if (legacy != null && !legacy.isEmpty() && !legacy.equals("[]")) {
+                LinkedHashSet<String> legacyIds = scanLegacyHiddenIds(legacy);
+                if (legacy.length() <= 2_000_000) {
+                    ArrayList<RedditPost> legacyPosts = new ArrayList<>();
+                    try {
+                        JSONArray hidden = new JSONArray(legacy);
+                        for (int i = 0; i < hidden.length(); i++) {
+                            RedditPost post = postFromJson(hidden.optJSONObject(i));
+                            if (post != null && post.id != null && !post.id.isEmpty()) {
+                                legacyPosts.add(post);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                    readHideStore.importPosts(legacyPosts);
+                }
+                readHideStore.importIds(legacyIds);
+                // commit() is intentional for the one-time migration so the huge
+                // legacy string is removed from the in-memory preference map now.
+                prefs.edit()
+                        .remove("hiddenPosts")
+                        .remove("pendingReadPosts")
+                        .commit();
+            } else {
+                prefs.edit().remove("pendingReadPosts").apply();
+            }
+
+            for (String id : readHideStore.loadIds()) {
+                if (id != null && !id.isEmpty()) hiddenPosts.put(id, null);
+            }
+            for (RedditPost post : readHideStore.loadRecent(400)) {
                 if (post != null && post.id != null && !post.id.isEmpty()) {
                     hiddenPosts.put(post.id, post);
                 }
             }
-            // v3.6.1 replaced the old five-post delayed queue with immediate marking.
-            prefs.edit().remove("pendingReadPosts").apply();
-        } catch (Exception ignored) {}
+            trimHiddenPostCache();
+        } catch (Exception ignored) {
+            prefs.edit().remove("hiddenPosts").remove("pendingReadPosts").apply();
+        }
+    }
+
+    private LinkedHashSet<String> scanLegacyHiddenIds(String legacy) {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        if (legacy == null || legacy.isEmpty()) return ids;
+        final String marker = "\"id\":\"";
+        int from = 0;
+        while (from < legacy.length()) {
+            int start = legacy.indexOf(marker, from);
+            if (start < 0) break;
+            start += marker.length();
+            int end = legacy.indexOf('"', start);
+            if (end < 0) break;
+            String id = legacy.substring(start, end);
+            if (!id.isEmpty()) ids.add(id);
+            from = end + 1;
+        }
+        return ids;
+    }
+
+    private void trimHiddenPostCache() {
+        int materialized = 0;
+        for (RedditPost post : hiddenPosts.values()) if (post != null) materialized++;
+        if (materialized <= 400) return;
+        for (Map.Entry<String, RedditPost> entry : hiddenPosts.entrySet()) {
+            if (materialized <= 400) break;
+            if (entry.getValue() != null) {
+                entry.setValue(null);
+                materialized--;
+            }
+        }
     }
 
     private void saveReadHideState() {
-        try {
-            JSONArray hidden = new JSONArray();
-            for (RedditPost post : hiddenPosts.values()) hidden.put(postToJson(post));
-            prefs.edit()
-                    .putString("hiddenPosts", hidden.toString())
-                    .remove("pendingReadPosts")
-                    .apply();
-        } catch (Exception ignored) {}
+        // v3.8.9 intentionally never serializes the full hidden library. Each hide
+        // or restore is persisted incrementally by ReadHideStore.
+        prefs.edit().remove("hiddenPosts").remove("pendingReadPosts").apply();
+        trimHiddenPostCache();
     }
 
     private JSONObject postToJson(RedditPost post) throws Exception {
@@ -4454,8 +4498,9 @@ private void setFullscreenChrome(boolean visible) {
                 if (post.saved) {
                     if (post.id != null && !post.id.isEmpty()) savedPostIds.add(post.id);
                     persistSavedPostIds();
-                    if (post.id != null && hiddenPosts.remove(post.id) != null) {
-                        saveReadHideState();
+                    if (post.id != null && hiddenPosts.containsKey(post.id)) {
+                        hiddenPosts.remove(post.id);
+                        readHideStore.deleteAsync(post.id);
                         if (showingHiddenLibrary()) {
                             loadHiddenPostsView();
                             return;
