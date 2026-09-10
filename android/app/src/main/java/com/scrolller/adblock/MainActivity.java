@@ -153,6 +153,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private LinearLayout statusPanel;
     private TextView statusText;
     private ProgressBar progress;
+    private int statusGeneration = 0;
+    private Runnable statusDismissRunnable;
     private ScrollView accountView;
     private Button browserBack;
     private Button compactMenuButton;
@@ -552,23 +554,29 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         addNavButton("★\nFavorites", this::loadFavorites);
         addNavButton("●\nAccount", this::showAccount);
 
+        // Status is intentionally a small transient bottom banner, never a
+        // blocking center-screen loading card. Loading work happens silently.
         statusPanel = new LinearLayout(this);
-        statusPanel.setOrientation(LinearLayout.VERTICAL);
-        statusPanel.setGravity(Gravity.CENTER);
-        statusPanel.setPadding(dp(18), dp(15), dp(18), dp(15));
-        statusPanel.setBackground(rounded(0xE6151515, 16));
+        statusPanel.setOrientation(LinearLayout.HORIZONTAL);
+        statusPanel.setGravity(Gravity.CENTER_VERTICAL);
+        statusPanel.setPadding(dp(14), dp(8), dp(14), dp(8));
+        statusPanel.setBackground(rounded(0xE6151515, 999));
         progress = new ProgressBar(this);
-        statusPanel.addView(progress, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        progress.setVisibility(View.GONE);
         statusText = new TextView(this);
-        statusText.setText("Connecting to Reddit…");
         statusText.setTextColor(Color.WHITE);
-        statusText.setTextSize(13);
+        statusText.setTextSize(12);
         statusText.setGravity(Gravity.CENTER);
-        statusText.setPadding(0, dp(10), 0, 0);
         statusPanel.addView(statusText, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        appLayer.addView(statusPanel, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        FrameLayout.LayoutParams statusParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        statusParams.leftMargin = dp(12);
+        statusParams.rightMargin = dp(12);
+        statusParams.bottomMargin = dp(18);
+        appLayer.addView(statusPanel, statusParams);
+        statusPanel.setVisibility(View.GONE);
 
         browserBack = new Button(this);
         browserBack.setAllCaps(false);
@@ -622,6 +630,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (topBar != null) topBar.setVisibility(View.GONE);
         if (bottomBar != null) bottomBar.setVisibility(View.GONE);
         if (gridView != null) gridView.setPadding(0, systemTopPx + dp(8), 0, systemBottomPx + dp(8));
+        if (statusPanel != null && statusPanel.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams statusParams = (FrameLayout.LayoutParams) statusPanel.getLayoutParams();
+            statusParams.bottomMargin = systemBottomPx + dp(18);
+            statusPanel.setLayoutParams(statusParams);
+        }
+
         if (compactMenuButton != null && compactMenuButton.getLayoutParams() instanceof FrameLayout.LayoutParams) {
             FrameLayout.LayoutParams menuParams = (FrameLayout.LayoutParams) compactMenuButton.getLayoutParams();
             menuParams.bottomMargin = systemBottomPx + dp(14);
@@ -1462,6 +1476,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
         postAdapter.setPosts(visible);
         gridAdapter.setPosts(visible);
+        if (!visible.isEmpty()) hideStatus();
     }
 
     private void prefetchSubredditReservoir() {
@@ -2239,6 +2254,7 @@ private void loadQualityCollection(boolean reset) {
         }
         postAdapter.appendPosts(unique);
         gridAdapter.appendPosts(unique);
+        if (!unique.isEmpty()) hideStatus();
     }
 
     private void prefetchHistoricalTopAllIfNeeded(int generation) {
@@ -4594,13 +4610,53 @@ private void setFullscreenChrome(boolean visible) {
     }
 
     private void setStatus(String message, boolean spinning) {
+        if (statusPanel == null || statusText == null) return;
+
+        final int token = ++statusGeneration;
+        if (root != null && statusDismissRunnable != null) {
+            root.removeCallbacks(statusDismissRunnable);
+        }
+
+        // Never cover the feed with a loading card/spinner. The pager remains
+        // interactive while network/archive/media work continues in the background.
+        if (spinning) {
+            progress.setVisibility(View.GONE);
+            statusText.setText("");
+            statusPanel.setVisibility(View.GONE);
+            statusDismissRunnable = null;
+            return;
+        }
+
+        String text = message == null ? "" : message.trim();
+        if (text.isEmpty()) {
+            hideStatus();
+            return;
+        }
+
+        progress.setVisibility(View.GONE);
+        statusText.setText(text);
         statusPanel.setVisibility(View.VISIBLE);
-        statusText.setText(message);
-        progress.setVisibility(spinning ? View.VISIBLE : View.GONE);
+
+        // Informational/error banners are self-clearing so a late successful
+        // async result can never leave a stale failure message stuck on screen.
+        statusDismissRunnable = () -> {
+            if (token != statusGeneration || statusPanel == null) return;
+            statusPanel.setVisibility(View.GONE);
+            statusText.setText("");
+            statusDismissRunnable = null;
+        };
+        if (root != null) root.postDelayed(statusDismissRunnable, 3500L);
     }
 
     private void hideStatus() {
-        statusPanel.setVisibility(View.GONE);
+        statusGeneration++;
+        if (root != null && statusDismissRunnable != null) {
+            root.removeCallbacks(statusDismissRunnable);
+        }
+        statusDismissRunnable = null;
+        if (progress != null) progress.setVisibility(View.GONE);
+        if (statusText != null) statusText.setText("");
+        if (statusPanel != null) statusPanel.setVisibility(View.GONE);
     }
 
     private String friendlyError(RedditSessionEngine.ApiResult result) {
