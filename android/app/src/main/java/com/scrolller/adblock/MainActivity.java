@@ -4306,7 +4306,7 @@ private void trackFullscreenVisit(int position) {
         subscribeButton.setVisibility(subredditScreen ? View.VISIBLE : View.GONE);
         if (subredditScreen) {
             boolean subscribed = subscriptionNames.contains(subreddit.toLowerCase(Locale.US));
-            subscribeButton.setText(subscribed ? "Unsubscribe" : "Subscribe");
+            subscribeButton.setText(subscribed ? "Leave" : "Join");
         }
 
         String title;
@@ -4404,6 +4404,7 @@ private void setFullscreenChrome(boolean visible) {
                 subscriptions.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
             }
 
+            setStatus((currentlySubscribed ? "Left r/" : "Joined r/") + target, false);
             updateChrome();
         });
     }
@@ -4869,6 +4870,19 @@ private void installCompactNavigation() {
         where.setPadding(dp(14), 0, dp(14), dp(10));
         body.addView(where);
 
+        if (screen == Screen.HOME && context.equals("subreddit")
+                && subreddit != null && !subreddit.isEmpty()) {
+            boolean subscribed = subscriptionNames.contains(subreddit.toLowerCase(Locale.US));
+            Button membership = sheetButton((subscribed ? "Leave / unsubscribe " : "Join / subscribe ")
+                    + "r/" + subreddit);
+            if (subscribed) membership.setTextColor(0xFFFFB0B0);
+            body.addView(membership, sectionButtonParams());
+            membership.setOnClickListener(v -> {
+                dialog.dismiss();
+                toggleSubredditSubscription();
+            });
+        }
+
         Button browse = sheetButton("Browse  ›");
         Button search = sheetButton("Search  ›");
         Button presets = sheetButton("Multi-subreddit presets  ›");
@@ -4901,6 +4915,18 @@ private void installCompactNavigation() {
         Button subredditButton = sheetButton("Open subreddit…");
         Button categories = sheetButton("NSFW categories…");
         body.addView(home, sectionButtonParams());
+        if (screen == Screen.HOME && context.equals("subreddit")
+                && subreddit != null && !subreddit.isEmpty()) {
+            boolean subscribed = subscriptionNames.contains(subreddit.toLowerCase(Locale.US));
+            Button membership = sheetButton((subscribed ? "Leave / unsubscribe " : "Join / subscribe ")
+                    + "r/" + subreddit);
+            if (subscribed) membership.setTextColor(0xFFFFB0B0);
+            body.addView(membership, sectionButtonParams());
+            membership.setOnClickListener(v -> {
+                dialog.dismiss();
+                toggleSubredditSubscription();
+            });
+        }
         body.addView(subredditButton, sectionButtonParams());
         body.addView(categories, sectionButtonParams());
         home.setOnClickListener(v -> { dialog.dismiss(); navigateHome("home", true); });
