@@ -5692,7 +5692,7 @@ private void installCompactNavigation() {
     private void showPeopleFilterSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("People / content filter");
-        body.addView(bodyText("Multi-select. Categories come only from explicit subreddit/title/flair metadata; the app never guesses identity from an image. No selection shows everything."));
+        body.addView(bodyText("Multi-select. Gay / Lesbian and Trans require explicit subreddit/title/flair metadata. General NSFW content with no explicit LGBT tag falls into Straight so normal adult feeds do not disappear. The app never guesses identity from an image. No selection shows everything."));
         CheckBox straight = filterCheckBox("Straight", (peopleFilterMask & ContentTaxonomy.STRAIGHT) != 0);
         CheckBox gayLesbian = filterCheckBox("Gay / Lesbian", (peopleFilterMask & ContentTaxonomy.GAY_LESBIAN) != 0);
         CheckBox trans = filterCheckBox("Trans", (peopleFilterMask & ContentTaxonomy.TRANS) != 0);

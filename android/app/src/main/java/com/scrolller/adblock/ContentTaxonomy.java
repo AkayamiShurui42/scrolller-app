@@ -60,6 +60,12 @@ final class ContentTaxonomy {
             mask |= TRANS;
         }
 
+        // Most general NSFW communities do not explicitly write "straight" in
+        // every title/flair. If metadata contains no explicit gay/lesbian/trans
+        // signal, classify the content stream as the straight/general bucket.
+        // Explicit LGBT metadata above always wins and prevents this fallback.
+        if (mask == 0 && post.nsfw) mask = STRAIGHT;
+
         return mask;
     }
 
