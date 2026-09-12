@@ -29,6 +29,8 @@ public final class RedditPost {
     public final int mediaWidth;
     public final int mediaHeight;
     public String searchMetadata = "";
+    public String sourceOrigin = "reddit";
+    public int durationSeconds = 0;
 
     RedditPost(
             String id,
@@ -107,6 +109,8 @@ public final class RedditPost {
                 + data.optString("domain", "") + " "
                 + data.optString("post_hint", "") + " "
                 + data.optString("subreddit_name_prefixed", "");
+        post.sourceOrigin = "reddit";
+        post.durationSeconds = mediaDurationSeconds(data);
         return post;
     }
 
@@ -178,7 +182,7 @@ public final class RedditPost {
             }
         }
 
-        return new RedditPost(
+        RedditPost post = new RedditPost(
                 "t3_" + redditId,
                 decode(item.optString("title", "")),
                 item.optString("username", ""),
@@ -196,6 +200,24 @@ public final class RedditPost {
                 poster,
                 width,
                 height);
+        post.sourceOrigin = "scrolller";
+        post.durationSeconds = Math.max(0,
+                item.optInt("durationSeconds", item.optInt("duration", 0)));
+        post.searchMetadata = decode(item.optString("description", "")) + " "
+                + decode(item.optString("tags", ""));
+        return post;
+    }
+
+    private static int mediaDurationSeconds(JSONObject d) {
+        if (d == null) return 0;
+        JSONObject secure = d.optJSONObject("secure_media");
+        JSONObject media = d.optJSONObject("media");
+        JSONObject video = secure != null ? secure.optJSONObject("reddit_video") : null;
+        if (video == null && media != null) video = media.optJSONObject("reddit_video");
+        JSONObject preview = d.optJSONObject("preview");
+        if (video == null && preview != null) video = preview.optJSONObject("reddit_video_preview");
+        if (video == null) return 0;
+        return Math.max(0, video.optInt("duration", 0));
     }
 
     private static JSONObject bestScrolllerSource(JSONArray sources) {

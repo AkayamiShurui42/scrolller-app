@@ -102,6 +102,23 @@ final class HighQualityPlayerFactory {
         });
     }
 
+    static void clearCacheAsync(Context context, Runnable done) {
+        cancelPendingPreloads();
+        Context app = context.getApplicationContext();
+        PRELOAD_EXECUTOR.execute(() -> {
+            try {
+                SimpleCache current = cache(app);
+                for (String key : new java.util.HashSet<>(current.getKeys())) {
+                    try { current.removeResource(key); } catch (Exception ignored) {}
+                }
+            } finally {
+                if (done != null) {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(done);
+                }
+            }
+        });
+    }
+
     private static CacheDataSource.Factory cachedDataSourceFactory(Context context, String mediaUrl) {
         return new CacheDataSource.Factory()
                 .setCache(cache(context))
