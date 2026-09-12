@@ -5548,6 +5548,15 @@ private void installCompactNavigation() {
                 && hiddenPosts.containsKey(post.id);
     }
 
+    private boolean shouldApplyJoinedOnlyFilter() {
+        if (!joinedOnlyFilter) return false;
+        if (screen == Screen.HOME) {
+            if ("subreddit".equals(context) || "multi".equals(context)) return false;
+        }
+        if (screen == Screen.SEARCH && "subreddit".equals(searchScope)) return false;
+        return true;
+    }
+
     private boolean passesDiscoveryFilters(RedditPost post) {
         if (post == null) return false;
         String community = cleanSubredditName(post.subreddit).toLowerCase(Locale.US);
@@ -5556,7 +5565,10 @@ private void installCompactNavigation() {
         if (!includedSubreddits.isEmpty() && !includedSubreddits.contains(community)) return false;
         if (excludedSubreddits.contains(community)) return false;
         if (!author.isEmpty() && blockedCreators.contains(author)) return false;
-        if (joinedOnlyFilter && !subscriptionNames.isEmpty()
+        // Joined-only is a discovery constraint, not permission to erase a feed
+        // the user explicitly opened. Direct subreddit, multi-preset, and
+        // subreddit-scoped search contexts always honor the explicit selection.
+        if (shouldApplyJoinedOnlyFilter() && !subscriptionNames.isEmpty()
                 && !subscriptionNames.contains(community)) return false;
 
         int sourceBit = 1;
@@ -5903,7 +5915,11 @@ private void installCompactNavigation() {
         out.append("People: ").append(ContentTaxonomy.label(peopleFilterMask)).append('\n');
         out.append("Sources: ").append(sourceFilterLabel()).append('\n');
         out.append("Viewed: ").append(showViewedPosts ? "All" : "Unread only").append('\n');
-        out.append("Subreddit scope: ").append(joinedOnlyFilter ? "Joined only" : "Any").append('\n');
+        out.append("Subreddit scope: ");
+        if (!joinedOnlyFilter) out.append("Any");
+        else if (!shouldApplyJoinedOnlyFilter()) out.append("Joined only (ignored for explicit selection)");
+        else out.append("Joined only");
+        out.append('\n');
         out.append("Include/exclude/blocked creators: ")
                 .append(includedSubreddits.size()).append('/')
                 .append(excludedSubreddits.size()).append('/')
