@@ -629,25 +629,34 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private void applySystemInsets(int top, int bottom) {
         systemTopPx = Math.max(0, top);
         systemBottomPx = Math.max(0, bottom);
-        if (topBar == null) return;
+        if (gridView == null || accountView == null || browserBack == null || postAdapter == null) return;
 
-        boolean compactTop = screen == Screen.ACCOUNT;
-        int topContent = compactTop ? dp(52) : dp(96);
-        FrameLayout.LayoutParams tp = (FrameLayout.LayoutParams) topBar.getLayoutParams();
-        tp.height = systemTopPx + topContent;
-        topBar.setLayoutParams(tp);
-        topBar.setPadding(dp(8), systemTopPx + dp(4), dp(8), dp(4));
+        // Legacy chrome is detached in compact mode. Only size it if it is ever
+        // deliberately attached again; otherwise do not reserve its old 96/64dp
+        // bands beneath the replacement UI.
+        if (topBar != null && topBar.getParent() != null
+                && topBar.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+            boolean compactTop = screen == Screen.ACCOUNT;
+            int topContent = compactTop ? dp(52) : dp(96);
+            FrameLayout.LayoutParams tp = (FrameLayout.LayoutParams) topBar.getLayoutParams();
+            tp.height = systemTopPx + topContent;
+            topBar.setLayoutParams(tp);
+            topBar.setPadding(dp(8), systemTopPx + dp(4), dp(8), dp(4));
+        }
 
-        FrameLayout.LayoutParams bp = (FrameLayout.LayoutParams) bottomBar.getLayoutParams();
-        bp.height = systemBottomPx + dp(64);
-        bottomBar.setLayoutParams(bp);
-        bottomBar.setPadding(dp(5), dp(3), dp(5), systemBottomPx + dp(3));
+        if (bottomBar != null && bottomBar.getParent() != null
+                && bottomBar.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams bp = (FrameLayout.LayoutParams) bottomBar.getLayoutParams();
+            bp.height = systemBottomPx + dp(64);
+            bottomBar.setLayoutParams(bp);
+            bottomBar.setPadding(dp(5), dp(3), dp(5), systemBottomPx + dp(3));
+        }
 
-        gridView.setPadding(0, systemTopPx + dp(96), 0, systemBottomPx + dp(64));
+        gridView.setPadding(0, systemTopPx + dp(8), 0, systemBottomPx + dp(8));
 
         FrameLayout.LayoutParams ap = (FrameLayout.LayoutParams) accountView.getLayoutParams();
-        ap.topMargin = systemTopPx + dp(52);
-        ap.bottomMargin = systemBottomPx + dp(64);
+        ap.topMargin = systemTopPx + dp(8);
+        ap.bottomMargin = systemBottomPx + dp(8);
         accountView.setLayoutParams(ap);
 
         FrameLayout.LayoutParams backParams = (FrameLayout.LayoutParams) browserBack.getLayoutParams();
@@ -4862,10 +4871,27 @@ private void setFullscreenChrome(boolean visible) {
     }
 
 
+private void detachLegacyChrome() {
+        // The compact UI replaces the old top/bottom chrome. GONE is not enough:
+        // remove the legacy views from appLayer so no later state/inset update can
+        // make them draw underneath the replacement interface.
+        if (topBar != null) {
+            topBar.setVisibility(View.GONE);
+            if (topBar.getParent() instanceof ViewGroup) {
+                ((ViewGroup) topBar.getParent()).removeView(topBar);
+            }
+        }
+        if (bottomBar != null) {
+            bottomBar.setVisibility(View.GONE);
+            if (bottomBar.getParent() instanceof ViewGroup) {
+                ((ViewGroup) bottomBar.getParent()).removeView(bottomBar);
+            }
+        }
+    }
+
 private void installCompactNavigation() {
+        detachLegacyChrome();
         if (compactMenuButton != null) return;
-        if (topBar != null) topBar.setVisibility(View.GONE);
-        if (bottomBar != null) bottomBar.setVisibility(View.GONE);
         compactMenuButton = new Button(this);
         compactMenuButton.setText("☰");
         compactMenuButton.setTextColor(Color.WHITE);
