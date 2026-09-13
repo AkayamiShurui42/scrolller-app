@@ -4103,11 +4103,9 @@ private void setFullscreenReadBaseline(int position) {
         RedditPost current = postAdapter.getPost(position);
         if (current == null || current.id == null || current.id.isEmpty()) {
             lastFullscreenPostId = "";
-            fullscreenVisitStartedAtMs = 0L;
             return;
         }
         lastFullscreenPostId = current.id;
-        fullscreenVisitStartedAtMs = SystemClock.elapsedRealtime();
     }
 
 
@@ -4116,11 +4114,9 @@ private void trackFullscreenVisit(int position) {
         RedditPost current = postAdapter.getPost(position);
         if (current == null || current.id == null || current.id.isEmpty()) return;
         String currentId = current.id;
-        long now = SystemClock.elapsedRealtime();
 
         if (lastFullscreenPostId.isEmpty()) {
             lastFullscreenPostId = currentId;
-            fullscreenVisitStartedAtMs = now;
             return;
         }
         if (lastFullscreenPostId.equals(currentId)) return;
@@ -4132,11 +4128,12 @@ private void trackFullscreenVisit(int position) {
                 break;
             }
         }
-        long dwellMs = fullscreenVisitStartedAtMs > 0L ? now - fullscreenVisitStartedAtMs : 0L;
-        boolean actuallyViewed = previous != null && (
-                mediaReadyPostIds.contains(previous.id)
-                        || mediaFailedPostIds.contains(previous.id)
-                        || dwellMs >= 350L);
+
+        // PostPagerAdapter reports readiness only after the active media meets
+        // its view gate: displayed image/GIF/gallery, or rendered video with
+        // >= 1 second of actual playback. Time on the pager is not enough.
+        boolean actuallyViewed = previous != null
+                && mediaReadyPostIds.contains(previous.id);
         if (actuallyViewed
                 && previous.id != null && !previous.id.isEmpty()
                 && !previous.saved
@@ -4147,7 +4144,6 @@ private void trackFullscreenVisit(int position) {
             trimHiddenPostCache();
         }
         lastFullscreenPostId = currentId;
-        fullscreenVisitStartedAtMs = now;
     }
 
 
@@ -4521,8 +4517,8 @@ private void setFullscreenChrome(boolean visible) {
 
     @Override
     public void onMediaFailed(RedditPost post) {
-        if (post == null || post.id == null || post.id.isEmpty()) return;
-        if (!mediaReadyPostIds.contains(post.id)) mediaFailedPostIds.add(post.id);
+        // A failed image/video load is explicitly NOT evidence that the user
+        // viewed the media. Keep the post unread so it can be encountered again.
     }
 
     @Override
@@ -5692,7 +5688,7 @@ private void installCompactNavigation() {
     private void showPeopleFilterSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("People / content filter");
-        body.addView(bodyText("Multi-select. Gay / Lesbian and Trans require explicit subreddit/title/flair metadata. General NSFW content with no explicit LGBT tag falls into Straight so normal adult feeds do not disappear. The app never guesses identity from an image. No selection shows everything."));
+        body.addView(bodyText("Multi-select. Categories use explicit subreddit/title/flair/tag metadata only. Posts with no reliable category metadata stay visible instead of being falsely rejected. Explicit non-matching metadata is filtered. The app never guesses identity from an image. No selection shows everything."));
         CheckBox straight = filterCheckBox("Straight", (peopleFilterMask & ContentTaxonomy.STRAIGHT) != 0);
         CheckBox gayLesbian = filterCheckBox("Gay / Lesbian", (peopleFilterMask & ContentTaxonomy.GAY_LESBIAN) != 0);
         CheckBox trans = filterCheckBox("Trans", (peopleFilterMask & ContentTaxonomy.TRANS) != 0);

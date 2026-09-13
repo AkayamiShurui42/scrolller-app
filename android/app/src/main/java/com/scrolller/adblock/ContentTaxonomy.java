@@ -60,18 +60,17 @@ final class ContentTaxonomy {
             mask |= TRANS;
         }
 
-        // Most general NSFW communities do not explicitly write "straight" in
-        // every title/flair. If metadata contains no explicit gay/lesbian/trans
-        // signal, classify the content stream as the straight/general bucket.
-        // Explicit LGBT metadata above always wins and prevents this fallback.
-        if (mask == 0 && post.nsfw) mask = STRAIGHT;
-
         return mask;
     }
 
     static boolean matches(RedditPost post, int selectedMask) {
         if (selectedMask == 0) return true;
-        return (classify(post) & selectedMask) != 0;
+        int classified = classify(post);
+        // Category metadata is often absent on otherwise-valid Reddit/Scrolller
+        // posts. Unknown must stay visible rather than being treated as a proven
+        // non-match; explicit conflicting metadata is still filtered normally.
+        if (classified == 0) return true;
+        return (classified & selectedMask) != 0;
     }
 
     static String label(int mask) {
