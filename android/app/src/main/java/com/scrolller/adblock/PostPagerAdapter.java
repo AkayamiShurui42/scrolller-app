@@ -774,8 +774,9 @@ public void setActivePosition(int position) {
             sp.leftMargin = dp(7);
             actions.addView(score, sp);
 
-            bottom.addView(actionScroll, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+            // v3.9.5: the thumb-first command bar owns post actions now. Keep the
+            // legacy action views unmounted so the old translucent strip cannot render
+            // underneath the redesigned UI or intercept/duplicate visual state.
 
             FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);

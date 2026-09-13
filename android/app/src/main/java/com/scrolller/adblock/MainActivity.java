@@ -2357,35 +2357,29 @@ private void loadQualityCollection(boolean reset) {
             return;
         }
 
-        RedditPost current = postAdapter.getPost(pager.getCurrentItem());
-        String currentKey = canonicalPostKey(current);
-        ArrayList<RedditPost> merged = new ArrayList<>();
+        // v3.9.5: once a feed prefix has been shown to the user, its order is
+        // immutable for the lifetime of that active feed. Historical/background
+        // discoveries may extend the stream, but they must never be re-sorted into
+        // positions the user has already passed. Doing that made newly-arrived posts
+        // appear behind or between already-viewed posts when scrolling backward.
         Set<String> ids = new HashSet<>();
         for (RedditPost post : postAdapter.getPosts()) {
             String key = canonicalPostKey(post);
-            if (!key.isEmpty() && ids.add(key)) merged.add(post);
-        }
-        for (RedditPost post : historical) {
-            String key = canonicalPostKey(post);
-            if (!key.isEmpty() && ids.add(key)) merged.add(post);
+            if (!key.isEmpty()) ids.add(key);
         }
 
-        merged.sort((a, b) -> {
+        ArrayList<RedditPost> historicalAdditions = new ArrayList<>();
+        for (RedditPost post : historical) {
+            String key = canonicalPostKey(post);
+            if (!key.isEmpty() && ids.add(key)) historicalAdditions.add(post);
+        }
+
+        historicalAdditions.sort((a, b) -> {
             int scoreOrder = Integer.compare(b.score, a.score);
             if (scoreOrder != 0) return scoreOrder;
             return Long.compare(b.createdUtc, a.createdUtc);
         });
-        replacePosts(merged);
-
-        if (!currentKey.isEmpty()) {
-            for (int i = 0; i < postAdapter.getItemCount(); i++) {
-                if (currentKey.equals(canonicalPostKey(postAdapter.getPost(i)))) {
-                    pager.setCurrentItem(i, false);
-                    if (layoutMode.equals("grid")) gridView.scrollToPosition(i);
-                    break;
-                }
-            }
-        }
+        appendUnique(historicalAdditions);
         hideStatus();
         updateChrome();
     }
