@@ -581,7 +581,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         addNavButton("Home", this::showHomeCommandSheet);
         addNavButton("View", this::showViewCommandSheet);
         addNavButton("Collections", this::showCollectionsCommandSheet);
-        saveCommandButton = addNavButton("Save", this::saveCurrentPostFromCommandBar);
+        saveCommandButton = addNavButton("Save", this::showSaveCommandSheet);
         addNavButton("Settings", this::showSettingsCommandSheet);
 
         // Status is intentionally a small transient bottom banner, never a
@@ -1358,11 +1358,34 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         return path;
     }
 
+    private String barePostId(String id) {
+        if (id == null) return "";
+        String clean = id.trim().toLowerCase(Locale.US);
+        if (clean.startsWith("t3_")) clean = clean.substring(3);
+        return clean;
+    }
+
+    private boolean hiddenContainsPostId(String id) {
+        if (id == null || id.isEmpty()) return false;
+        if (hiddenPosts.containsKey(id)) return true;
+        String bare = barePostId(id);
+        if (bare.isEmpty()) return false;
+        return hiddenPosts.containsKey(bare) || hiddenPosts.containsKey("t3_" + bare);
+    }
+
+    private boolean savedContainsPostId(String id) {
+        if (id == null || id.isEmpty()) return false;
+        if (savedPostIds.contains(id)) return true;
+        String bare = barePostId(id);
+        if (bare.isEmpty()) return false;
+        return savedPostIds.contains(bare) || savedPostIds.contains("t3_" + bare);
+    }
+
     private boolean isSavedForUnread(RedditPost post) {
         return post != null
                 && post.id != null
                 && !post.id.isEmpty()
-                && (post.saved || savedPostIds.contains(post.id));
+                && (post.saved || savedContainsPostId(post.id));
     }
 
     private boolean isContentBlocked(RedditPost post) {
@@ -1480,7 +1503,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         mediaFailedPostIds.clear();
         boolean hiddenLibrary = showingHiddenLibrary();
         boolean favoritesSaved = screen == Screen.FAVORITES && favoritesView.equals("saved");
-        boolean randomFeed = screen == Screen.HOME && sort.equals("random");
+        boolean dedupeMedia = !hiddenLibrary && !favoritesSaved;
         postAdapter.setHiddenMode(hiddenLibrary);
 
         Set<String> ids = new HashSet<>();
@@ -1496,7 +1519,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
                 String key = canonicalPostKey(post);
                 if (key.isEmpty() || !ids.add(key)) continue;
-                if (randomFeed) {
+                if (dedupeMedia) {
                     String mediaKey = canonicalMediaKey(post);
                     if (!mediaKey.isEmpty() && !mediaKeys.add(mediaKey)) continue;
                 }
@@ -1609,7 +1632,7 @@ private void loadQualityCollection(boolean reset) {
         for (RedditPost post : qualityCatalog.values()) {
             if (post == null || !matchesMedia(post)) continue;
             if (post.id == null || post.id.isEmpty()) continue;
-            if (hiddenPosts.containsKey(post.id)
+            if (hiddenContainsPostId(post.id)
                     || isSavedForUnread(post)
                     || isContentBlocked(post)) continue;
             if (!matchesQualityBrowse(post)) continue;
@@ -2013,7 +2036,7 @@ private void loadQualityCollection(boolean reset) {
             RedditPost post = redditPostFromArcticArchive(items.optJSONObject(i));
             if (post == null || !matchesMedia(post)) continue;
             if (post.id == null || post.id.isEmpty()) continue;
-            if (hiddenPosts.containsKey(post.id)
+            if (hiddenContainsPostId(post.id)
                     || isSavedForUnread(post)
                     || isContentBlocked(post)) continue;
             posts.add(post);
@@ -2254,14 +2277,14 @@ private void loadQualityCollection(boolean reset) {
 
         if (showingHiddenLibrary() || incoming == null || incoming.isEmpty()) return;
         boolean favoritesSaved = screen == Screen.FAVORITES && favoritesView.equals("saved");
-        boolean randomFeed = screen == Screen.HOME && sort.equals("random");
+        boolean dedupeMedia = !favoritesSaved;
 
         Set<String> ids = new HashSet<>();
         Set<String> mediaKeys = new HashSet<>();
         for (RedditPost post : postAdapter.getPosts()) {
             String key = canonicalPostKey(post);
             if (!key.isEmpty()) ids.add(key);
-            if (randomFeed) {
+            if (dedupeMedia) {
                 String mediaKey = canonicalMediaKey(post);
                 if (!mediaKey.isEmpty()) mediaKeys.add(mediaKey);
             }
@@ -2271,13 +2294,13 @@ private void loadQualityCollection(boolean reset) {
         for (RedditPost post : incoming) {
             if (post == null || post.id == null || post.id.isEmpty()) continue;
             if (!favoritesSaved
-                    && (hiddenPosts.containsKey(post.id)
+                    && (hiddenContainsPostId(post.id)
                     || isSavedForUnread(post)
                     || isContentBlocked(post))) continue;
 
             String key = canonicalPostKey(post);
             if (key.isEmpty() || !ids.add(key)) continue;
-            if (randomFeed) {
+            if (dedupeMedia) {
                 String mediaKey = canonicalMediaKey(post);
                 if (!mediaKey.isEmpty() && !mediaKeys.add(mediaKey)) continue;
             }
@@ -2401,12 +2424,48 @@ private void loadQualityCollection(boolean reset) {
             value = post.imageUrls.get(0);
         }
         if (value == null) return "";
+
         String clean = value.trim().toLowerCase(Locale.US);
         int queryAt = clean.indexOf('?');
         if (queryAt >= 0) clean = clean.substring(0, queryAt);
         int hashAt = clean.indexOf('#');
         if (hashAt >= 0) clean = clean.substring(0, hashAt);
-        return clean;
+        if (clean.startsWith("redgifs:")) return clean;
+
+        try {
+            Uri uri = Uri.parse(clean);
+            String host = uri.getHost();
+            String path = uri.getPath();
+            if (host == null || host.isEmpty()) return clean;
+            host = host.toLowerCase(Locale.US);
+            path = path == null ? "" : path.toLowerCase(Locale.US);
+
+            String[] parts = path.split("/");
+            String first = "";
+            String last = "";
+            for (String part : parts) {
+                if (part == null || part.isEmpty()) continue;
+                if (first.isEmpty()) first = part;
+                last = part;
+            }
+
+            if (host.equals("v.redd.it") && !first.isEmpty()) {
+                return "vreddit:" + first;
+            }
+            if ((host.equals("i.redd.it") || host.equals("preview.redd.it")) && !last.isEmpty()) {
+                return "reddit-image:" + last;
+            }
+            if (host.endsWith("redgifs.com") || host.endsWith("redgifsusercontent.com")) {
+                if (!last.isEmpty()) {
+                    int dot = last.lastIndexOf('.');
+                    if (dot > 0) last = last.substring(0, dot);
+                    return "redgifs:" + last;
+                }
+            }
+            return host + path;
+        } catch (Exception ignored) {
+            return clean;
+        }
     }
 
     private void openFullscreenAt(int position) {
@@ -3152,7 +3211,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         persistSavedPostIds();
         boolean hiddenChanged = false;
         for (RedditPost savedPost : collected) {
-            if (savedPost != null && savedPost.id != null && hiddenPosts.containsKey(savedPost.id)) {
+            if (savedPost != null && savedPost.id != null && hiddenContainsPostId(savedPost.id)) {
                 hiddenPosts.remove(savedPost.id);
                 readHideStore.deleteAsync(savedPost.id);
                 hiddenChanged = true;
@@ -4130,7 +4189,7 @@ private void trackFullscreenVisit(int position) {
                 && previous.id != null && !previous.id.isEmpty()
                 && !previous.saved
                 && !savedPostIds.contains(previous.id)
-                && !hiddenPosts.containsKey(previous.id)) {
+                && !hiddenContainsPostId(previous.id)) {
             hiddenPosts.put(previous.id, previous);
             readHideStore.hideAsync(previous);
             trimHiddenPostCache();
@@ -4535,7 +4594,7 @@ private void setFullscreenChrome(boolean visible) {
                 if (post.saved) {
                     if (post.id != null && !post.id.isEmpty()) savedPostIds.add(post.id);
                     persistSavedPostIds();
-                    if (post.id != null && hiddenPosts.containsKey(post.id)) {
+                    if (post.id != null && hiddenContainsPostId(post.id)) {
                         hiddenPosts.remove(post.id);
                         readHideStore.deleteAsync(post.id);
                         if (showingHiddenLibrary()) {
@@ -4870,28 +4929,61 @@ private void installCompactNavigation() {
         compactMenuButton.setOnClickListener(v -> showCompactMainMenu());
     }
 
-    private void saveCurrentPostFromCommandBar() {
+    private void showSaveCommandSheet() {
         RedditPost post = currentPagerPost();
-        if (post == null) {
-            setStatus("No current post to save.", false);
+        String targetSubreddit = post != null ? cleanSubredditName(post.subreddit) : "";
+        if (targetSubreddit.isEmpty()
+                && screen == Screen.HOME
+                && context.equals("subreddit")
+                && subreddit != null) {
+            targetSubreddit = cleanSubredditName(subreddit);
+        }
+
+        if (post == null && targetSubreddit.isEmpty()) {
+            setStatus("Nothing here to save.", false);
             return;
         }
-        onSave(post);
+
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout body = sheetBody("Save");
+
+        if (post != null && post.id != null && !post.id.isEmpty()) {
+            boolean saved = post.saved || savedContainsPostId(post.id);
+            Button savePost = sheetButton(saved ? "Unsave post" : "Save post");
+            body.addView(savePost, sectionButtonParams());
+            savePost.setOnClickListener(v -> {
+                dialog.dismiss();
+                onSave(post);
+            });
+        }
+
+        if (!targetSubreddit.isEmpty()) {
+            final String target = targetSubreddit;
+            boolean favorite = favoriteSubreddits.contains(target.toLowerCase(Locale.US));
+            Button saveSubreddit = sheetButton(
+                    (favorite ? "Remove saved subreddit" : "Save subreddit") + " · r/" + target);
+            body.addView(saveSubreddit, sectionButtonParams());
+            saveSubreddit.setOnClickListener(v -> {
+                dialog.dismiss();
+                toggleFavoriteSubreddit(target);
+            });
+        }
+
+        dialog.setContentView(body);
+        dialog.show();
     }
 
     private void updateSaveCommandState() {
         if (saveCommandButton == null) return;
         RedditPost post = currentPagerPost();
-        boolean available = post != null && post.id != null && !post.id.isEmpty();
+        boolean subredditAvailable = screen == Screen.HOME
+                && context.equals("subreddit")
+                && subreddit != null
+                && !subreddit.isEmpty();
+        boolean available = post != null || subredditAvailable;
         saveCommandButton.setEnabled(available);
-        if (!available) {
-            saveCommandButton.setText("Save");
-            saveCommandButton.setAlpha(0.45f);
-            return;
-        }
-        boolean saved = post.saved || savedPostIds.contains(post.id);
-        saveCommandButton.setText(saved ? "Saved" : "Save");
-        saveCommandButton.setAlpha(1f);
+        saveCommandButton.setText("Save");
+        saveCommandButton.setAlpha(available ? 1f : 0.45f);
     }
 
     private void showHomeCommandSheet() {
@@ -4899,6 +4991,20 @@ private void installCompactNavigation() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout body = sheetBody("Home");
         scroll.addView(body);
+
+        if (screen == Screen.HOME && context.equals("subreddit")
+                && subreddit != null && !subreddit.isEmpty()) {
+            String target = cleanSubredditName(subreddit);
+            boolean subscribed = subscriptionNames.contains(target.toLowerCase(Locale.US));
+            Button membership = sheetButton(
+                    (subscribed ? "Leave subreddit" : "Join subreddit") + " · r/" + target);
+            if (subscribed) membership.setTextColor(0xFFFFB0B0);
+            body.addView(membership, sectionButtonParams());
+            membership.setOnClickListener(v -> {
+                dialog.dismiss();
+                toggleSubredditSubscription();
+            });
+        }
 
         Button home = sheetButton("Go to Home");
         body.addView(home, sectionButtonParams());
@@ -5748,7 +5854,7 @@ private void installCompactNavigation() {
                 && post != null
                 && post.id != null
                 && !post.id.isEmpty()
-                && hiddenPosts.containsKey(post.id);
+                && hiddenContainsPostId(post.id);
     }
 
     private boolean shouldApplyJoinedOnlyFilter() {
@@ -6139,8 +6245,8 @@ private void installCompactNavigation() {
                     .append(post.mediaWidth).append('x').append(post.mediaHeight).append('\n');
             out.append("Duration: ").append(post.durationSeconds > 0 ? post.durationSeconds + " sec" : "unknown").append('\n');
             out.append("People tags: ").append(ContentTaxonomy.label(ContentTaxonomy.classify(post))).append('\n');
-            out.append("Saved: ").append(post.saved || savedPostIds.contains(post.id)).append('\n');
-            out.append("Read/hidden: ").append(hiddenPosts.containsKey(post.id)).append('\n');
+            out.append("Saved: ").append(post.saved || savedContainsPostId(post.id)).append('\n');
+            out.append("Read/hidden: ").append(hiddenContainsPostId(post.id)).append('\n');
         }
         return out.toString();
     }
