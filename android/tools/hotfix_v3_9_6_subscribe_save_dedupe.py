@@ -245,8 +245,8 @@ main = replace_once(main, old_append_mode, new_append_mode, 'append media dedupe
 random_blocks = main.count('if (randomFeed) {')
 if random_blocks == 0 and 'if (dedupeMedia) {' in main:
     pass
-elif random_blocks != 4:
-    raise SystemExit(f'expected 4 randomFeed media blocks, found {random_blocks}')
+elif random_blocks != 3:
+    raise SystemExit(f'expected 3 randomFeed media blocks, found {random_blocks}')
 else:
     main = main.replace('if (randomFeed) {', 'if (dedupeMedia) {')
 
