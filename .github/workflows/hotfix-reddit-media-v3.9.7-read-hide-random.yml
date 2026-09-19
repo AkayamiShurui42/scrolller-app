@@ -34,7 +34,10 @@ jobs:
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'versionCode 54' android/app/build.gradle
           grep -q 'versionName "3.9.7"' android/app/build.gradle
-          grep -q 'A completed ViewPager user gesture is itself the read event' "$MAIN"
+          grep -q 'private final LinkedHashMap<String, RedditPost> sessionReadCatalog' "$MAIN"
+          grep -q 'private void commitSessionReadCatalog()' "$MAIN"
+          grep -q 'sessionReadCatalog.put(key, previous)' "$MAIN"
+          grep -q 'commitSessionReadCatalog();' "$MAIN"
           grep -q '!savedContainsPostId(previous.id)' "$MAIN"
           ! grep -q 'boolean actuallyViewed = previous != null' "$MAIN"
           grep -q 'ArrayList<RedditPost> firstVisible = new ArrayList<>(collected);' "$MAIN"
@@ -53,10 +56,11 @@ jobs:
       - name: Use runner Android SDK
         run: |
           ANDROID_SDK=/usr/local/lib/android/sdk
-          SDKMANAGER="$ANDROID_SDK/cmdline-tools/16.0/bin/sdkmanager"
-          test -x "$SDKMANAGER"
+          test -d "$ANDROID_SDK"
+          SDKMANAGER="$(find "$ANDROID_SDK/cmdline-tools" -type f -name sdkmanager -perm -111 2>/dev/null | head -n 1)"
+          test -n "$SDKMANAGER"
           echo "ANDROID_HOME=$ANDROID_SDK" >> "$GITHUB_ENV"
-          echo "$ANDROID_SDK/cmdline-tools/16.0/bin" >> "$GITHUB_PATH"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
           "$SDKMANAGER" --version
 
       - name: Install Android 16 SDK
