@@ -115,6 +115,57 @@ new_track = '''private void trackFullscreenVisit(int position) {
 '''
 main = replace_once(main, old_track, new_track, 'session-scoped swipe read catalog')
 
+main = replace_once(
+    main,
+    '''    private boolean savedContainsPostId(String id) {
+        if (id == null || id.isEmpty()) return false;
+        if (savedPostIds.contains(id)) return true;
+        String bare = barePostId(id);
+        if (bare.isEmpty()) return false;
+        return savedPostIds.contains(bare) || savedPostIds.contains("t3_" + bare);
+    }
+
+    private boolean isSavedForUnread(RedditPost post) {
+''',
+    '''    private boolean savedContainsPostId(String id) {
+        if (id == null || id.isEmpty()) return false;
+        if (savedPostIds.contains(id)) return true;
+        String bare = barePostId(id);
+        if (bare.isEmpty()) return false;
+        return savedPostIds.contains(bare) || savedPostIds.contains("t3_" + bare);
+    }
+
+    private boolean sessionReadContainsPostId(String id) {
+        String bare = barePostId(id);
+        return !bare.isEmpty() && sessionReadCatalog.containsKey(bare);
+    }
+
+    private boolean isSavedForUnread(RedditPost post) {
+''',
+    'session catalog ID lookup',
+)
+
+main = replace_once(
+    main,
+    '''    private boolean isReadHiddenForDiscovery(RedditPost post) {
+        return !showViewedPosts
+                && post != null
+                && post.id != null
+                && !post.id.isEmpty()
+                && hiddenContainsPostId(post.id);
+    }
+''',
+    '''    private boolean isReadHiddenForDiscovery(RedditPost post) {
+        return !showViewedPosts
+                && post != null
+                && post.id != null
+                && !post.id.isEmpty()
+                && (hiddenContainsPostId(post.id) || sessionReadContainsPostId(post.id));
+    }
+''',
+    'session catalog participates in unread filtering',
+)
+
 # Commit the current browsing catalog only at a true navigation boundary.
 for old, new, label in [
     ('    private void navigateHome(String which, boolean pushHistory) {\n',
