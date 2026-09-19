@@ -52,9 +52,12 @@ jobs:
 
       - name: Use runner Android SDK
         run: |
-          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
-          command -v sdkmanager
-          sdkmanager --version
+          ANDROID_SDK=/usr/local/lib/android/sdk
+          SDKMANAGER="$ANDROID_SDK/cmdline-tools/16.0/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          echo "ANDROID_HOME=$ANDROID_SDK" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK/cmdline-tools/16.0/bin" >> "$GITHUB_PATH"
+          "$SDKMANAGER" --version
 
       - name: Install Android 16 SDK
         run: |
