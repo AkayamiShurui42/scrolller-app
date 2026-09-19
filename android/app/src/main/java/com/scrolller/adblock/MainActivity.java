@@ -251,6 +251,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private int qualityCrawlGeneration = 0;
     private int archivePrefetchGeneration = 0;
     private final LinkedHashMap<String, RedditPost> hiddenPosts = new LinkedHashMap<>();
+    private final LinkedHashMap<String, RedditPost> sessionReadCatalog = new LinkedHashMap<>();
     private final Set<String> mediaReadyPostIds = new HashSet<>();
     private final Set<String> mediaFailedPostIds = new HashSet<>();
     private String lastFullscreenPostId = "";
@@ -843,6 +844,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void navigateHome(String which, boolean pushHistory) {
+        commitSessionReadCatalog();
         if ("quality".equals(which)) which = "home";
         if (pushHistory && !(screen == Screen.HOME && context.equals(which) && subreddit.isEmpty())) {
             pushCurrentState();
@@ -861,6 +863,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void openSubredditFeed(String name) {
         if (name == null || name.isEmpty()) return;
+        commitSessionReadCatalog();
         history.clear();
         sort = "random";
         screen = Screen.HOME;
@@ -875,6 +878,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void openSearchScreen() {
+        commitSessionReadCatalog();
         boolean subredditEntry = screen == Screen.HOME
                 && context.equals("subreddit")
                 && subreddit != null
@@ -931,6 +935,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void openUserProfile(String name) {
         if (name == null || name.isEmpty()) return;
+        commitSessionReadCatalog();
         loading = false;
         feedGeneration++;
         pushCurrentState();
@@ -1057,10 +1062,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             String next = data != null ? data.optString("after", "") : "";
             after = next;
 
-            // Make subreddit/feed entry feel immediate. Final ordering still runs
-            // once the small reservoir is complete.
+            // Make subreddit/feed entry feel immediate, but honor Random before
+            // anything reaches the screen. Previously page 0 was shown in Reddit's
+            // remote "new" order and only later pages were shuffled.
             if (reset && page == 0 && !collected.isEmpty()) {
-                replacePosts(new ArrayList<>(collected));
+                ArrayList<RedditPost> firstVisible = new ArrayList<>(collected);
+                if (sort.equals("random")) Collections.shuffle(firstVisible);
+                replacePosts(firstVisible);
                 hideStatus();
                 updateChrome();
             }
@@ -1148,7 +1156,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 // Show the first successful subreddit immediately while the remaining
                 // preset members continue through the serialized request queue.
                 if (reset && postAdapter.getItemCount() == 0 && !collected.isEmpty()) {
-                    replacePosts(new ArrayList<>(collected));
+                    ArrayList<RedditPost> firstVisible = new ArrayList<>(collected);
+                    if (sort.equals("random")) Collections.shuffle(firstVisible);
+                    replacePosts(firstVisible);
                     hideStatus();
                     updateChrome();
                 }
@@ -1379,6 +1389,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         String bare = barePostId(id);
         if (bare.isEmpty()) return false;
         return savedPostIds.contains(bare) || savedPostIds.contains("t3_" + bare);
+    }
+
+    private boolean sessionReadContainsPostId(String id) {
+        String bare = barePostId(id);
+        return !bare.isEmpty() && sessionReadCatalog.containsKey(bare);
     }
 
     private boolean isSavedForUnread(RedditPost post) {
@@ -3136,6 +3151,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
     }
 
     private void loadFavorites() {
+        commitSessionReadCatalog();
         if (screen != Screen.FAVORITES) pushCurrentState();
         favoriteSort = "random";
         favoritesView = "saved";
@@ -3261,6 +3277,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
     }
 
     private void showAccount() {
+        commitSessionReadCatalog();
         if (screen != Screen.ACCOUNT) pushCurrentState();
         screen = Screen.ACCOUNT;
         profileUser = "";
@@ -4170,31 +4187,47 @@ private void trackFullscreenVisit(int position) {
             lastFullscreenPostId = currentId;
             return;
         }
-        if (lastFullscreenPostId.equals(currentId)) return;
+        if (barePostId(lastFullscreenPostId).equals(barePostId(currentId))) return;
 
         RedditPost previous = null;
         for (RedditPost candidate : postAdapter.getPosts()) {
-            if (candidate != null && lastFullscreenPostId.equals(candidate.id)) {
+            if (candidate != null
+                    && barePostId(lastFullscreenPostId).equals(barePostId(candidate.id))) {
                 previous = candidate;
                 break;
             }
         }
 
-        // PostPagerAdapter reports readiness only after the active media meets
-        // its view gate: displayed image/GIF/gallery, or rendered video with
-        // >= 1 second of actual playback. Time on the pager is not enough.
-        boolean actuallyViewed = previous != null
-                && mediaReadyPostIds.contains(previous.id);
-        if (actuallyViewed
+        // A completed manual swipe catalogs the page as read, but the active pager
+        // stays immutable. The catalog is committed only when the user changes
+        // subreddit or leaves this content tab.
+        if (previous != null
                 && previous.id != null && !previous.id.isEmpty()
                 && !previous.saved
-                && !savedPostIds.contains(previous.id)
+                && !savedContainsPostId(previous.id)
                 && !hiddenContainsPostId(previous.id)) {
-            hiddenPosts.put(previous.id, previous);
-            readHideStore.hideAsync(previous);
-            trimHiddenPostCache();
+            String key = barePostId(previous.id);
+            if (!key.isEmpty()) sessionReadCatalog.put(key, previous);
         }
         lastFullscreenPostId = currentId;
+    }
+
+    private void commitSessionReadCatalog() {
+        if (sessionReadCatalog.isEmpty()) {
+            lastFullscreenPostId = "";
+            return;
+        }
+        for (RedditPost post : new ArrayList<>(sessionReadCatalog.values())) {
+            if (post == null || post.id == null || post.id.isEmpty()) continue;
+            if (post.saved || savedContainsPostId(post.id) || hiddenContainsPostId(post.id)) continue;
+            hiddenPosts.put(post.id, post);
+            readHideStore.hideAsync(post);
+        }
+        sessionReadCatalog.clear();
+        trimHiddenPostCache();
+        lastFullscreenPostId = "";
+        fullscreenUserGesture = false;
+        pendingUserFullscreenPosition = -1;
     }
 
 
@@ -4592,7 +4625,10 @@ private void setFullscreenChrome(boolean visible) {
                 post.saved = !post.saved;
                 updateSaveCommandState();
                 if (post.saved) {
-                    if (post.id != null && !post.id.isEmpty()) savedPostIds.add(post.id);
+                    if (post.id != null && !post.id.isEmpty()) {
+                        savedPostIds.add(post.id);
+                        sessionReadCatalog.remove(barePostId(post.id));
+                    }
                     persistSavedPostIds();
                     if (post.id != null && hiddenContainsPostId(post.id)) {
                         hiddenPosts.remove(post.id);
@@ -4879,6 +4915,7 @@ private void setFullscreenChrome(boolean visible) {
 
     @Override
     protected void onDestroy() {
+        commitSessionReadCatalog();
         if (postAdapter != null) postAdapter.releaseAll();
         if (sessionView != null) sessionView.destroy();
         super.onDestroy();
@@ -5547,6 +5584,7 @@ private void installCompactNavigation() {
     }
 
     private void openMultiSubredditFeed(String presetName, List<String> communities) {
+        commitSessionReadCatalog();
         LinkedHashSet<String> clean = new LinkedHashSet<>();
         if (communities != null) {
             for (String community : communities) {
@@ -5854,7 +5892,7 @@ private void installCompactNavigation() {
                 && post != null
                 && post.id != null
                 && !post.id.isEmpty()
-                && hiddenContainsPostId(post.id);
+                && (hiddenContainsPostId(post.id) || sessionReadContainsPostId(post.id));
     }
 
     private boolean shouldApplyJoinedOnlyFilter() {
