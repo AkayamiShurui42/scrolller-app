@@ -50,8 +50,11 @@ jobs:
           distribution: temurin
           cache: gradle
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Use runner Android SDK
+        run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
+          command -v sdkmanager
+          sdkmanager --version
 
       - name: Install Android 16 SDK
         run: |
