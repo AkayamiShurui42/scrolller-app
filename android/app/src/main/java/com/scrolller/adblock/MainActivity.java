@@ -3861,16 +3861,57 @@ private void showCategoryRoot() {
             Button button = sheetButton(label(value) + (sort.equals(value) ? "  ✓" : ""));
             body.addView(button, sectionButtonParams());
             button.setOnClickListener(v -> {
+                boolean repeatRandom = "random".equals(value) && "random".equals(sort);
                 sort = value;
                 prefs.edit().putString("sort", sort).apply();
                 dialog.dismiss();
-                if (sort.equals("top")) showTopTimeSheet();
-                else reloadCurrent();
+                if (sort.equals("top")) {
+                    showTopTimeSheet();
+                } else if (repeatRandom) {
+                    reshuffleCurrentRandomOrder();
+                } else {
+                    reloadCurrent();
+                }
             });
         }
 
         dialog.setContentView(body);
         dialog.show();
+    }
+
+    private void reshuffleCurrentRandomOrder() {
+        ArrayList<RedditPost> shuffled = new ArrayList<>(postAdapter.getPosts());
+        if (shuffled.size() < 2) {
+            setStatus("Not enough buffered posts to reshuffle yet.", false);
+            return;
+        }
+
+        String previousFirstId = shuffled.get(0) != null ? shuffled.get(0).id : "";
+        Collections.shuffle(shuffled);
+        if (shuffled.get(0) != null
+                && previousFirstId != null
+                && previousFirstId.equals(shuffled.get(0).id)) {
+            Collections.swap(shuffled, 0, 1);
+        }
+
+        // Random is an explicit re-roll, not a navigation boundary and not a
+        // read gesture. Keep the session read catalog intact and only reorder
+        // the already-buffered active collection.
+        fullscreenUserGesture = false;
+        pendingUserFullscreenPosition = -1;
+        lastFullscreenPostId = "";
+        postAdapter.setPosts(shuffled);
+        gridAdapter.setPosts(shuffled);
+
+        pager.setCurrentItem(0, false);
+        if (layoutMode.equals("grid")) {
+            gridView.scrollToPosition(0);
+        } else {
+            setFullscreenReadBaseline(0);
+            postAdapter.setActivePosition(0);
+        }
+        hideStatus();
+        updateChrome();
     }
 
     private void showHiddenManageSheet() {
