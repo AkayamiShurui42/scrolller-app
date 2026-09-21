@@ -959,16 +959,15 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             return;
         }
 
-        if (reset) {
-        if (screen == Screen.HOME
-                && context.equals("home")
-                && sort.equals("random")
-                && !username.isEmpty()
-                && !subscriptions.isEmpty()) {
+        // Home Random is its own round-robin loader. It must handle both the
+        // initial reset and every near-end refill; otherwise pagination falls
+        // through to the ordinary Reddit listing after the first random batch.
+        if (homeSubscriptionRandomEnabled()) {
             loadHomeSubscriptionRandom(reset);
             return;
         }
 
+        if (reset) {
             feedGeneration++;
             loading = false;
             after = "";
@@ -1296,7 +1295,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         final String targetSubreddit = homeRandomRound.get(homeRandomRoundIndex++);
         homeRandomRequestsThisLoad++;
         String path = "/r/" + enc(targetSubreddit)
-                + "/new.json?limit=35&raw_json=1&show=all";
+                + "/new.json?limit=100&raw_json=1&show=all";
         engine.get(path, result -> {
             if (!homeRandomContextValid(feedGen, randomGen)) return;
             if (result.ok) {
@@ -2309,7 +2308,7 @@ private void loadQualityCollection(boolean reset) {
         for (RedditPost post : incoming) {
             if (post == null || post.id == null || post.id.isEmpty()) continue;
             if (!favoritesSaved
-                    && (hiddenContainsPostId(post.id)
+                    && (isReadHiddenForDiscovery(post)
                     || isSavedForUnread(post)
                     || isContentBlocked(post))) continue;
 
@@ -3880,38 +3879,82 @@ private void showCategoryRoot() {
     }
 
     private void reshuffleCurrentRandomOrder() {
-        ArrayList<RedditPost> shuffled = new ArrayList<>(postAdapter.getPosts());
-        if (shuffled.size() < 2) {
-            setStatus("Not enough buffered posts to reshuffle yet.", false);
-            return;
+        // The currently-visible post has been consumed even if the user has not
+        // swiped away from it yet. Catalog it before rebuilding the Random pool.
+        RedditPost current = currentPagerPost();
+        if (current != null
+                && current.id != null && !current.id.isEmpty()
+                && !current.saved
+                && !savedContainsPostId(current.id)
+                && !hiddenContainsPostId(current.id)) {
+            String key = barePostId(current.id);
+            if (!key.isEmpty()) sessionReadCatalog.put(key, current);
         }
 
-        String previousFirstId = shuffled.get(0) != null ? shuffled.get(0).id : "";
-        Collections.shuffle(shuffled);
-        if (shuffled.get(0) != null
-                && previousFirstId != null
-                && previousFirstId.equals(shuffled.get(0).id)) {
-            Collections.swap(shuffled, 0, 1);
+        ArrayList<RedditPost> unseen = new ArrayList<>();
+        for (RedditPost post : postAdapter.getPosts()) {
+            if (post == null || post.id == null || post.id.isEmpty()) continue;
+            if (sessionReadContainsPostId(post.id)
+                    || hiddenContainsPostId(post.id)
+                    || isSavedForUnread(post)
+                    || isContentBlocked(post)) continue;
+            unseen.add(post);
         }
 
-        // Random is an explicit re-roll, not a navigation boundary and not a
-        // read gesture. Keep the session read catalog intact and only reorder
-        // the already-buffered active collection.
+        Collections.shuffle(unseen);
         fullscreenUserGesture = false;
         pendingUserFullscreenPosition = -1;
         lastFullscreenPostId = "";
-        postAdapter.setPosts(shuffled);
-        gridAdapter.setPosts(shuffled);
+        replacePosts(unseen);
 
-        pager.setCurrentItem(0, false);
-        if (layoutMode.equals("grid")) {
-            gridView.scrollToPosition(0);
-        } else {
-            setFullscreenReadBaseline(0);
-            postAdapter.setActivePosition(0);
+        if (!unseen.isEmpty()) {
+            pager.setCurrentItem(0, false);
+            if (layoutMode.equals("grid")) {
+                gridView.scrollToPosition(0);
+            } else {
+                setFullscreenReadBaseline(0);
+                postAdapter.setActivePosition(0);
+            }
+            hideStatus();
         }
-        hideStatus();
+
         updateChrome();
+        refillRandomAfterReroll();
+    }
+
+    private void refillRandomAfterReroll() {
+        if (screen != Screen.HOME || !sort.equals("random") || root == null) return;
+
+        root.postDelayed(() -> {
+            if (screen != Screen.HOME || !sort.equals("random")) return;
+            if (loading) {
+                root.postDelayed(this::refillRandomAfterReroll, 180L);
+                return;
+            }
+
+            if (context.equals("home") && homeSubscriptionRandomEnabled()) {
+                loadHomeSubscriptionRandom(false);
+                return;
+            }
+            if (context.equals("multi")) {
+                loadMultiSubredditFair(false);
+                return;
+            }
+            if (context.equals("subreddit")) {
+                // Dropping viewed items lowers the usable-pool count. Re-open any
+                // supplemental source that previously stopped only because the old
+                // visible pool hit its cap, then continue the live cursor as well.
+                if (!archivePrefetchRunning) archivePrefetchDone = false;
+                if (!scrolllerPrefetchRunning) scrolllerPrefetchDone = false;
+                if (!historicalPrefetchRunning) historicalPrefetchDone = false;
+
+                if (after != null && !after.isEmpty()) loadFeed(false);
+                prefetchSubredditReservoir();
+                return;
+            }
+
+            if (after != null && !after.isEmpty()) loadFeed(false);
+        }, 80L);
     }
 
     private void showHiddenManageSheet() {
@@ -6037,35 +6080,62 @@ private void installCompactNavigation() {
 
     private void installCommunityAutocomplete(AutoCompleteTextView input) {
         final ArrayList<String> all = communityCandidates();
-        final Runnable refresh = () -> {
-            String raw = input.getText() == null ? "" : input.getText().toString();
-            String cleanQuery = cleanSubredditName(raw);
-            ArrayList<String> matches = new ArrayList<>(all);
-            if (!cleanQuery.isEmpty()) {
-                matches.sort((a, b) -> Integer.compare(
-                        FuzzySearch.score(cleanQuery, b), FuzzySearch.score(cleanQuery, a)));
-                matches.removeIf(name -> FuzzySearch.score(cleanQuery, name)
-                        < FuzzySearch.thresholdFor(FuzzySearch.normalize(cleanQuery).length()));
-            }
-            if (matches.size() > 30) matches.subList(30, matches.size()).clear();
-            ArrayList<String> labels = new ArrayList<>();
-            for (String name : matches) labels.add("r/" + name);
-            input.setAdapter(new ArrayAdapter<>(this,
-                    android.R.layout.simple_dropdown_item_1line, labels));
-            if (input.hasFocus() && !labels.isEmpty()) input.showDropDown();
+        final Runnable[] pending = new Runnable[1];
+
+        final Runnable scheduleRefresh = () -> {
+            if (pending[0] != null) input.removeCallbacks(pending[0]);
+            final String raw = input.getText() == null ? "" : input.getText().toString();
+            final String cleanQuery = cleanSubredditName(raw).toLowerCase(Locale.US);
+
+            pending[0] = () -> {
+                ArrayList<String> labels = new ArrayList<>();
+                if (cleanQuery.isEmpty()) {
+                    for (String name : all) {
+                        labels.add("r/" + name);
+                        if (labels.size() >= 30) break;
+                    }
+                } else {
+                    // Autocomplete is deliberately lightweight. Full fuzzy ranking
+                    // belongs to the submitted search, not the keyboard render path.
+                    for (String name : all) {
+                        if (name.toLowerCase(Locale.US).startsWith(cleanQuery)) {
+                            labels.add("r/" + name);
+                            if (labels.size() >= 30) break;
+                        }
+                    }
+                    if (labels.size() < 30) {
+                        for (String name : all) {
+                            String lower = name.toLowerCase(Locale.US);
+                            if (!lower.startsWith(cleanQuery) && lower.contains(cleanQuery)) {
+                                labels.add("r/" + name);
+                                if (labels.size() >= 30) break;
+                            }
+                        }
+                    }
+                }
+
+                input.setAdapter(new ArrayAdapter<>(this,
+                        android.R.layout.simple_dropdown_item_1line, labels));
+                if (input.hasFocus() && !labels.isEmpty()) input.showDropDown();
+            };
+            input.postDelayed(pending[0], 120L);
         };
+
         input.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
-            @Override public void afterTextChanged(Editable s) { refresh.run(); }
+            @Override public void afterTextChanged(Editable s) { scheduleRefresh.run(); }
         });
-        input.setOnFocusChangeListener((v, hasFocus) -> { if (hasFocus) refresh.run(); });
+        input.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) scheduleRefresh.run();
+            else if (pending[0] != null) input.removeCallbacks(pending[0]);
+        });
         input.setOnItemClickListener((parent, view, position, id) -> {
             Object item = parent.getItemAtPosition(position);
             String clean = cleanSubredditName(item == null ? "" : item.toString());
             if (!clean.isEmpty()) input.setText(clean, false);
         });
-        refresh.run();
+        scheduleRefresh.run();
     }
 
     private CheckBox filterCheckBox(String label, boolean checked) {
