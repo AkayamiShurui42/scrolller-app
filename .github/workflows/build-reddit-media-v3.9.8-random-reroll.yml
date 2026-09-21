@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.8 Random Reroll
+name: Build Reddit Media v3.9.9 Random Reroll
 
 on:
   push:
@@ -7,14 +7,14 @@ on:
     paths:
       - 'android/app/src/main/java/com/scrolller/adblock/MainActivity.java'
       - 'android/app/build.gradle'
-      - '.github/workflows/build-reddit-media-v3.9.8-random-reroll.yml'
+      - '.github/workflows/build-reddit-media-v3.9.9-random-reroll.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.8-${{ github.ref }}
+  group: reddit-media-v3.9.9-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,15 +26,19 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.8 invariants
+      - name: Validate v3.9.9 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'versionCode 55' android/app/build.gradle
-          grep -q 'versionName "3.9.8"' android/app/build.gradle
+          grep -q 'versionCode 56' android/app/build.gradle
+          grep -q 'versionName "3.9.9"' android/app/build.gradle
           grep -q 'boolean repeatRandom = "random".equals(value) && "random".equals(sort);' "$MAIN"
           grep -q 'private void reshuffleCurrentRandomOrder()' "$MAIN"
-          grep -q 'Collections.shuffle(shuffled);' "$MAIN"
-          grep -q 'Collections.swap(shuffled, 0, 1);' "$MAIN"
+          grep -q 'private void refillRandomAfterReroll()' "$MAIN"
+          grep -q 'sessionReadContainsPostId(post.id)' "$MAIN"
+          grep -q 'loadHomeSubscriptionRandom(reset);' "$MAIN"
+          grep -q 'new.json?limit=100&raw_json=1&show=all' "$MAIN"
+          grep -q 'input.postDelayed(pending\[0\], 120L);' "$MAIN"
+          ! grep -q 'FuzzySearch.score(cleanQuery' "$MAIN"
           grep -q 'sessionReadCatalog' "$MAIN"
           grep -q 'commitSessionReadCatalog' "$MAIN"
           grep -q 'if (sort.equals("random")) Collections.shuffle(firstVisible);' "$MAIN"
@@ -83,12 +87,12 @@ jobs:
           grep -q "versionCode='55'" /tmp/badging.txt
           grep -q "versionName='3.9.8'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.8-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.9-debug.apk
 
-      - name: Upload v3.9.8 APK
+      - name: Upload v3.9.9 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.8-debug-apk
-          path: dist/Reddit-Media-v3.9.8-debug.apk
+          name: reddit-media-v3.9.9-debug-apk
+          path: dist/Reddit-Media-v3.9.9-debug.apk
           if-no-files-found: error
           retention-days: 30
