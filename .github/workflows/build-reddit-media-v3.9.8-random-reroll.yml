@@ -7,7 +7,7 @@ on:
     paths:
       - 'android/app/src/main/java/com/scrolller/adblock/MainActivity.java'
       - 'android/app/build.gradle'
-      - '.github/workflows/build-reddit-media-v3.9.9-random-reroll.yml'
+      - '.github/workflows/build-reddit-media-v3.9.8-random-reroll.yml'
   workflow_dispatch:
 
 permissions:
@@ -84,8 +84,8 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='55'" /tmp/badging.txt
-          grep -q "versionName='3.9.8'" /tmp/badging.txt
+          grep -q "versionCode='56'" /tmp/badging.txt
+          grep -q "versionName='3.9.9'" /tmp/badging.txt
           mkdir -p dist
           cp "$APK" dist/Reddit-Media-v3.9.9-debug.apk
 
