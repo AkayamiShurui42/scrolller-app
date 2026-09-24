@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.9: Random rerolls consume viewed items and refill unseen content; autocomplete is debounced.
+// v3.9.10: active media auto-classifies read, swipe undo HUD, and stalled-feed recovery.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
@@ -158,8 +158,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private LinearLayout statusPanel;
     private TextView statusText;
     private ProgressBar progress;
+    private Button readUndoHud;
+    private Button recoveryHud;
+    private RedditPost lastUndoReadPost;
     private int statusGeneration = 0;
     private Runnable statusDismissRunnable;
+    private Runnable feedRecoveryRunnable;
+    private int feedRecoveryToken = 0;
+    private boolean feedRecoveryRetried = false;
     private ScrollView accountView;
     private Button browserBack;
     private Button compactMenuButton;
@@ -405,6 +411,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             @Override
             public void onPageScrollStateChanged(int state) {
                 if (state == ViewPager2.SCROLL_STATE_DRAGGING) {
+                    clearReadUndoHud();
                     postAdapter.setPagerScrolling(true);
                     if (layoutMode.equals("fullscreen")) setFullscreenChrome(false);
                     fullscreenUserGesture = true;
@@ -610,6 +617,40 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         appLayer.addView(statusPanel, statusParams);
         statusPanel.setVisibility(View.GONE);
 
+        readUndoHud = new Button(this);
+        readUndoHud.setAllCaps(false);
+        readUndoHud.setText("Didn't view the last post? Tap to unhide");
+        readUndoHud.setTextColor(Color.WHITE);
+        readUndoHud.setTextSize(11);
+        readUndoHud.setMinHeight(0);
+        readUndoHud.setMinimumHeight(0);
+        readUndoHud.setPadding(dp(10), 0, dp(10), 0);
+        readUndoHud.setBackground(rounded(0xE61B1B1B, 999));
+        readUndoHud.setVisibility(View.GONE);
+        FrameLayout.LayoutParams rup = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(34),
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        rup.topMargin = dp(8);
+        appLayer.addView(readUndoHud, rup);
+        readUndoHud.setOnClickListener(v -> undoLastReadClassification());
+
+        recoveryHud = new Button(this);
+        recoveryHud.setAllCaps(false);
+        recoveryHud.setText("Feed stalled · Tap to recover");
+        recoveryHud.setTextColor(Color.WHITE);
+        recoveryHud.setTextSize(11);
+        recoveryHud.setMinHeight(0);
+        recoveryHud.setMinimumHeight(0);
+        recoveryHud.setPadding(dp(10), 0, dp(10), 0);
+        recoveryHud.setBackground(rounded(0xE6513B16, 999));
+        recoveryHud.setVisibility(View.GONE);
+        FrameLayout.LayoutParams rhp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(34),
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        rhp.topMargin = dp(46);
+        appLayer.addView(recoveryHud, rhp);
+        recoveryHud.setOnClickListener(v -> recoverStalledFeed(true));
+
         browserBack = new Button(this);
         browserBack.setAllCaps(false);
         browserBack.setText("‹ Back");
@@ -633,6 +674,16 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private void applySystemInsets(int top, int bottom) {
         systemTopPx = Math.max(0, top);
         systemBottomPx = Math.max(0, bottom);
+        if (readUndoHud != null) {
+            FrameLayout.LayoutParams p = (FrameLayout.LayoutParams) readUndoHud.getLayoutParams();
+            p.topMargin = systemTopPx + dp(8);
+            readUndoHud.setLayoutParams(p);
+        }
+        if (recoveryHud != null) {
+            FrameLayout.LayoutParams p = (FrameLayout.LayoutParams) recoveryHud.getLayoutParams();
+            p.topMargin = systemTopPx + dp(46);
+            recoveryHud.setLayoutParams(p);
+        }
         if (topBar == null) return;
 
         boolean compactTop = screen == Screen.ACCOUNT;
@@ -954,6 +1005,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private void loadFeed(boolean reset) {
         if (!engine.isReady()) return;
         if (loading && !reset) return;
+        armFeedRecoveryWatchdog();
 
         if (screen == Screen.HOME && context.equals("multi")) {
             loadMultiSubredditFair(reset);
@@ -1543,7 +1595,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
         postAdapter.setPosts(visible);
         gridAdapter.setPosts(visible);
-        if (!visible.isEmpty()) hideStatus();
+        if (!visible.isEmpty()) {
+            noteFeedContentAvailable();
+            hideStatus();
+        }
     }
 
     private void prefetchSubredditReservoir() {
@@ -2323,7 +2378,10 @@ private void loadQualityCollection(boolean reset) {
         }
         postAdapter.appendPosts(unique);
         gridAdapter.appendPosts(unique);
-        if (!unique.isEmpty()) hideStatus();
+        if (!unique.isEmpty()) {
+            noteFeedContentAvailable();
+            hideStatus();
+        }
     }
 
     private void prefetchHistoricalTopAllIfNeeded(int generation) {
@@ -4283,21 +4341,69 @@ private void trackFullscreenVisit(int position) {
             }
         }
 
-        // A completed manual swipe catalogs the page as read, but the active pager
-        // stays immutable. The catalog is committed only when the user changes
-        // subreddit or leaves this content tab.
-        if (previous != null
-                && previous.id != null && !previous.id.isEmpty()
-                && !previous.saved
-                && !savedContainsPostId(previous.id)
-                && !hiddenContainsPostId(previous.id)) {
-            String key = barePostId(previous.id);
-            if (!key.isEmpty()) sessionReadCatalog.put(key, previous);
+        // Every completed manual swipe classifies the page just left as read.
+        // Fully-loaded media may already be in the catalog; uncertain/failed media
+        // enters here. The tiny HUD gives the user one-tap undo without blocking
+        // the feed or mutating the current pager order.
+        if (previous != null) {
+            catalogSessionRead(previous);
+            showReadUndoHud(previous);
         }
         lastFullscreenPostId = currentId;
     }
 
+    private void catalogSessionRead(RedditPost post) {
+        if (post == null || post.id == null || post.id.isEmpty()) return;
+        if (post.saved || savedContainsPostId(post.id) || hiddenContainsPostId(post.id)) return;
+        String key = barePostId(post.id);
+        if (!key.isEmpty()) sessionReadCatalog.put(key, post);
+    }
+
+    private void showReadUndoHud(RedditPost post) {
+        if (readUndoHud == null || post == null || post.id == null || post.id.isEmpty()) return;
+        lastUndoReadPost = post;
+        readUndoHud.setText("Didn't view the last post? Tap to unhide");
+        readUndoHud.setVisibility(View.VISIBLE);
+        readUndoHud.bringToFront();
+    }
+
+    private void clearReadUndoHud() {
+        lastUndoReadPost = null;
+        if (readUndoHud != null) readUndoHud.setVisibility(View.GONE);
+    }
+
+    private void undoLastReadClassification() {
+        RedditPost post = lastUndoReadPost;
+        if (post == null || post.id == null || post.id.isEmpty()) {
+            clearReadUndoHud();
+            return;
+        }
+
+        String bare = barePostId(post.id);
+        if (!bare.isEmpty()) sessionReadCatalog.remove(bare);
+        hiddenPosts.remove(post.id);
+        hiddenPosts.remove(bare);
+        hiddenPosts.remove("t3_" + bare);
+        readHideStore.deleteAsync(post.id);
+
+        // Let the post become eligible for a later feed/random fetch. Do not
+        // force it back into the current pager immediately; that gives failed
+        // media time to become available before it cycles around again.
+        feedSeenPostIds.remove(canonicalPostKey(post));
+        homeRandomSeenPostIds.remove(canonicalPostKey(post));
+        multiSubredditSeenPostIds.remove(canonicalPostKey(post));
+
+        readUndoHud.setText("Unhidden · it can return later");
+        lastUndoReadPost = null;
+        if (root != null) root.postDelayed(() -> {
+            if (readUndoHud != null && lastUndoReadPost == null) {
+                readUndoHud.setVisibility(View.GONE);
+            }
+        }, 1100L);
+    }
+
     private void commitSessionReadCatalog() {
+        clearReadUndoHud();
         if (sessionReadCatalog.isEmpty()) {
             lastFullscreenPostId = "";
             return;
@@ -4471,6 +4577,73 @@ private void trackFullscreenVisit(int position) {
             return post;
         } catch (Exception ignored) {
             return null;
+        }
+    }
+
+    private void armFeedRecoveryWatchdog() {
+        if (root == null || screen != Screen.HOME) return;
+        final int token = ++feedRecoveryToken;
+        if (feedRecoveryRunnable != null) root.removeCallbacks(feedRecoveryRunnable);
+
+        feedRecoveryRunnable = () -> {
+            if (token != feedRecoveryToken || screen != Screen.HOME) return;
+            if (postAdapter != null && postAdapter.getItemCount() > 0) {
+                noteFeedContentAvailable();
+                return;
+            }
+
+            // A blank fullscreen feed has no media surface to tap, so explicitly
+            // restore the controls before attempting recovery.
+            setFullscreenChrome(true);
+            if (recoveryHud != null) {
+                recoveryHud.setVisibility(View.VISIBLE);
+                recoveryHud.bringToFront();
+            }
+
+            if (!feedRecoveryRetried) {
+                feedRecoveryRetried = true;
+                recoverStalledFeed(false);
+            } else {
+                // One retry was already attempted. Preserve read history, then
+                // escape the dead context and return to a fresh Home feed.
+                commitSessionReadCatalog();
+                feedRecoveryRetried = false;
+                loading = false;
+                history.clear();
+                navigateHome("home", false);
+            }
+        };
+        root.postDelayed(feedRecoveryRunnable, 9000L);
+    }
+
+    private void recoverStalledFeed(boolean userRequested) {
+        if (screen != Screen.HOME) return;
+        commitSessionReadCatalog();
+        clearReadUndoHud();
+        setFullscreenChrome(true);
+        loading = false;
+
+        if (recoveryHud != null) {
+            recoveryHud.setText(userRequested ? "Recovering feed…" : "Retrying feed…");
+            recoveryHud.setVisibility(View.VISIBLE);
+            recoveryHud.bringToFront();
+        }
+
+        // Keep the current Home/subreddit/preset context for the first recovery.
+        // loadFeed(true) creates a fresh generation/cursor and reopens supplemental
+        // sources without requiring a media tap.
+        loadFeed(true);
+        armFeedRecoveryWatchdog();
+    }
+
+    private void noteFeedContentAvailable() {
+        feedRecoveryRetried = false;
+        feedRecoveryToken++;
+        if (root != null && feedRecoveryRunnable != null) root.removeCallbacks(feedRecoveryRunnable);
+        feedRecoveryRunnable = null;
+        if (recoveryHud != null) {
+            recoveryHud.setText("Feed stalled · Tap to recover");
+            recoveryHud.setVisibility(View.GONE);
         }
     }
 
@@ -4675,6 +4848,7 @@ private void setFullscreenChrome(boolean visible) {
 
     @Override
     public void onToggleChrome() {
+        clearReadUndoHud();
         toggleFullscreenChrome();
     }
 
@@ -4683,12 +4857,25 @@ private void setFullscreenChrome(boolean visible) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
         mediaFailedPostIds.remove(post.id);
         mediaReadyPostIds.add(post.id);
+
+        // PostPagerAdapter only reports readiness for the active page. A fully
+        // rendered active post therefore has enough evidence to be classified
+        // as read immediately, even if the user leaves the subreddit without
+        // performing another swipe.
+        if (layoutMode.equals("fullscreen")
+                && screen != Screen.ACCOUNT
+                && screen != Screen.FAVORITES) {
+            catalogSessionRead(post);
+        }
     }
 
     @Override
     public void onMediaFailed(RedditPost post) {
-        // A failed image/video load is explicitly NOT evidence that the user
-        // viewed the media. Keep the post unread so it can be encountered again.
+        if (post == null || post.id == null || post.id.isEmpty()) return;
+        mediaReadyPostIds.remove(post.id);
+        mediaFailedPostIds.add(post.id);
+        // Failure remains uncertain until the user leaves the page. The swipe
+        // path classifies it read by default but exposes a one-tap undo HUD.
     }
 
     @Override
