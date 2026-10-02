@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.13: harden direct post Save/Unsave with canonical Reddit IDs and feedback.
+// v3.9.14: request-level feed timeout leases prevent permanent loading deadlocks.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
@@ -209,6 +209,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private String modhash = "";
     private String after = "";
     private boolean loading;
+    private int feedRequestLeaseToken = 0;
+    private Runnable feedRequestLeaseRunnable;
     private boolean initialized;
     private boolean muted = true;
     private boolean fullscreenChromeVisible = true;
@@ -1007,6 +1009,63 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         loadUserProfileInternal();
     }
 
+    private int beginFeedRequestLease(String label) {
+        final int token = ++feedRequestLeaseToken;
+        if (root != null && feedRequestLeaseRunnable != null) {
+            root.removeCallbacks(feedRequestLeaseRunnable);
+        }
+
+        feedRequestLeaseRunnable = () -> {
+            if (token != feedRequestLeaseToken || screen != Screen.HOME) return;
+            feedRequestLeaseRunnable = null;
+
+            loading = false;
+            feedGeneration++;
+            homeRandomGeneration++;
+            multiSubredditGeneration++;
+            archivePrefetchGeneration++;
+            deferredAppends.clear();
+            deferredAppendScheduled = false;
+
+            setFullscreenChrome(true);
+            if (recoveryHud != null) {
+                recoveryHud.setText("Feed request timed out · retrying");
+                recoveryHud.setVisibility(View.VISIBLE);
+                recoveryHud.bringToFront();
+            }
+
+            setStatus("Restarting stalled " + (label == null ? "feed" : label) + "…", false);
+            if (root != null) {
+                root.postDelayed(() -> {
+                    if (screen != Screen.HOME) return;
+                    loading = false;
+                    loadFeed(true);
+                }, 120L);
+            }
+        };
+
+        if (root != null) root.postDelayed(feedRequestLeaseRunnable, 12000L);
+        return token;
+    }
+
+    private boolean finishFeedRequestLease(int token) {
+        if (token != feedRequestLeaseToken) return false;
+        feedRequestLeaseToken++;
+        if (root != null && feedRequestLeaseRunnable != null) {
+            root.removeCallbacks(feedRequestLeaseRunnable);
+        }
+        feedRequestLeaseRunnable = null;
+        return true;
+    }
+
+    private void cancelFeedRequestLease() {
+        feedRequestLeaseToken++;
+        if (root != null && feedRequestLeaseRunnable != null) {
+            root.removeCallbacks(feedRequestLeaseRunnable);
+        }
+        feedRequestLeaseRunnable = null;
+    }
+
     private void loadFeed(boolean reset) {
         if (!engine.isReady()) return;
         if (loading && !reset) return;
@@ -1067,7 +1126,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         String path = listingPath(cursor);
+        final int requestLease = beginFeedRequestLease("feed");
         engine.get(path, result -> {
+            if (!finishFeedRequestLease(requestLease)) return;
             if (generation != feedGeneration || screen != Screen.HOME) return;
             if (!result.ok) {
                 // If at least one live page already arrived, keep it instead of
@@ -1190,7 +1251,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         String target = communities.get(index);
+        final int requestLease = beginFeedRequestLease("preset fallback");
         engine.get(singlePresetListingPath(target), result -> {
+            if (!finishFeedRequestLease(requestLease)) return;
             if (generation != feedGeneration || screen != Screen.HOME || !context.equals("multi")) return;
 
             if (result.ok) {
@@ -1237,6 +1300,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             boolean reset,
             ArrayList<RedditPost> collected) {
         if (generation != feedGeneration || screen != Screen.HOME) return;
+        cancelFeedRequestLease();
         loading = false;
 
         if (sort.equals("random")) {
@@ -1354,7 +1418,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         homeRandomRequestsThisLoad++;
         String path = "/r/" + enc(targetSubreddit)
                 + "/new.json?limit=100&raw_json=1&show=all";
+        final int requestLease = beginFeedRequestLease("Home Random");
         engine.get(path, result -> {
+            if (!finishFeedRequestLease(requestLease)) return;
             if (!homeRandomContextValid(feedGen, randomGen)) return;
             if (result.ok) {
                 JSONObject rootJson = result.jsonObject();
@@ -4645,6 +4711,7 @@ private void trackFullscreenVisit(int position) {
 
     private void recoverStalledFeed(boolean userRequested) {
         if (screen != Screen.HOME) return;
+        cancelFeedRequestLease();
         commitSessionReadCatalog();
         clearReadUndoHud();
         setFullscreenChrome(true);
@@ -4677,6 +4744,7 @@ private void trackFullscreenVisit(int position) {
     private void resetCurrentSubredditFeed() {
         if (screen != Screen.HOME || !context.equals("subreddit")
                 || subreddit == null || subreddit.isEmpty()) return;
+        cancelFeedRequestLease();
 
         // Read posts have already been persisted at classification time. A reset
         // therefore only throws away transport/pagination state and reloads the
@@ -6058,7 +6126,9 @@ private void installCompactNavigation() {
 
         final String target = multiSubredditRound.get(multiSubredditRoundIndex++);
         multiSubredditRequestsThisLoad++;
+        final int requestLease = beginFeedRequestLease("preset Random");
         engine.get(singlePresetListingPath(target), result -> {
+            if (!finishFeedRequestLease(requestLease)) return;
             if (!multiSubredditContextValid(feedGen, multiGen)) return;
 
             if (result.ok) {
