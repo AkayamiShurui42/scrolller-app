@@ -66,9 +66,9 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
             if (id.equals(posts.get(i).id)) { index = i; break; }
         }
         if (index < 0) return;
-        releaseAllPlayers();
         posts.remove(index);
-        notifyDataSetChanged();
+        notifyItemRemoved(index);
+        if (index < posts.size()) notifyItemRangeChanged(index, posts.size() - index);
     }
 
     public void releaseAllPlayers() {
