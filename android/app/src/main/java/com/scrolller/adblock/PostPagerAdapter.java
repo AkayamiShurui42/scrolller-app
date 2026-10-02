@@ -159,11 +159,18 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             if (id.equals(posts.get(i).id)) { index = i; break; }
         }
         if (index < 0) return;
-        releaseAll();
+
         loadedVisualPostIds.remove(id);
         posts.remove(index);
-        activePosition = Math.max(0, Math.min(activePosition, posts.size() - 1));
-        notifyDataSetChanged();
+        if (activePosition > index) activePosition--;
+        activePosition = posts.isEmpty()
+                ? -1
+                : Math.max(0, Math.min(activePosition, posts.size() - 1));
+
+        notifyItemRemoved(index);
+        if (index < posts.size()) notifyItemRangeChanged(index, posts.size() - index);
+        resetVideoViewTracking(currentActivePost());
+        warmAdjacentMedia(activePosition);
     }
 
     public void setChromeVisible(boolean visible) {
