@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.13 Random Reroll
+name: Build Reddit Media v3.9.14 Random Reroll
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.13-${{ github.ref }}
+  group: reddit-media-v3.9.14-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,11 +26,11 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.13 invariants
+      - name: Validate v3.9.14 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'versionCode 60' android/app/build.gradle
-          grep -q 'versionName "3.9.13"' android/app/build.gradle
+          grep -q 'versionCode 61' android/app/build.gradle
+          grep -q 'versionName "3.9.14"' android/app/build.gradle
           grep -q 'boolean repeatRandom = "random".equals(value) && "random".equals(sort);' "$MAIN"
           grep -q 'private void reshuffleCurrentRandomOrder()' "$MAIN"
           grep -q 'private void refillRandomAfterReroll()' "$MAIN"
@@ -68,6 +68,11 @@ jobs:
           grep -q 'setStatus("Saved post.", false);' "$MAIN"
           grep -q 'setStatus("Unsaved post.", false);' "$MAIN"
           grep -q 'saveCommandButton.setText(targetSaved ? "Saving…" : "Unsaving…");' "$MAIN"
+          grep -q 'private int beginFeedRequestLease(String label)' "$MAIN"
+          grep -q 'root.postDelayed(feedRequestLeaseRunnable, 12000L);' "$MAIN"
+          test "$(grep -c 'beginFeedRequestLease(' "$MAIN")" -ge 5
+          test "$(grep -c 'finishFeedRequestLease(requestLease)' "$MAIN")" -ge 4
+          grep -q 'cancelFeedRequestLease();' "$MAIN"
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -110,15 +115,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='60'" /tmp/badging.txt
-          grep -q "versionName='3.9.13'" /tmp/badging.txt
+          grep -q "versionCode='61'" /tmp/badging.txt
+          grep -q "versionName='3.9.14'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.13-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.14-debug.apk
 
-      - name: Upload v3.9.13 APK
+      - name: Upload v3.9.14 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.13-debug-apk
-          path: dist/Reddit-Media-v3.9.13-debug.apk
+          name: reddit-media-v3.9.14-debug-apk
+          path: dist/Reddit-Media-v3.9.14-debug.apk
           if-no-files-found: error
           retention-days: 30
