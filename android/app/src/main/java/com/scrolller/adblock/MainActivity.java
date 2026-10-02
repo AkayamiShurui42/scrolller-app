@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.10: active media auto-classifies read, swipe undo HUD, and stalled-feed recovery.
+// v3.9.11: durable read hides, forward-progress recovery, Home reset, and post-only Save.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
@@ -451,7 +451,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     pendingUserFullscreenPosition = -1;
                 }
                 updateSaveCommandState();
-                if (screen == Screen.HOME && !loading && !after.isEmpty()
+                if (screen == Screen.HOME
+                        && position >= Math.max(0, postAdapter.getItemCount() - 8)) {
+                    armFeedRecoveryWatchdog();
+                    if (!loading && !after.isEmpty()) loadFeed(false);
+                } else if (screen == Screen.HOME && !loading && !after.isEmpty()
                         && position >= postAdapter.getItemCount() - 60) {
                     loadFeed(false);
                 }
@@ -472,9 +476,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
                 if (!(lm instanceof GridLayoutManager)) return;
                 int last = ((GridLayoutManager) lm).findLastVisibleItemPosition();
-                if (screen == Screen.HOME && !loading && !after.isEmpty()
-                        && last >= gridAdapter.getItemCount() - 8) {
-                    loadFeed(false);
+                if (screen == Screen.HOME
+                        && last >= Math.max(0, gridAdapter.getItemCount() - 3)) {
+                    armFeedRecoveryWatchdog();
+                    if (!loading && !after.isEmpty()) loadFeed(false);
                 }
             }
         });
@@ -590,7 +595,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         addNavButton("Home", this::showHomeCommandSheet);
         addNavButton("View", this::showViewCommandSheet);
         addNavButton("Collections", this::showCollectionsCommandSheet);
-        saveCommandButton = addNavButton("Save", this::showSaveCommandSheet);
+        saveCommandButton = addNavButton("Save", this::saveCurrentPostFromCommandBar);
         addNavButton("Settings", this::showSettingsCommandSheet);
 
         // Status is intentionally a small transient bottom banner, never a
@@ -4354,9 +4359,20 @@ private void trackFullscreenVisit(int position) {
 
     private void catalogSessionRead(RedditPost post) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
-        if (post.saved || savedContainsPostId(post.id) || hiddenContainsPostId(post.id)) return;
+        if (post.saved || savedContainsPostId(post.id)) return;
+
         String key = barePostId(post.id);
         if (!key.isEmpty()) sessionReadCatalog.put(key, post);
+
+        // Classification is durable immediately. This is intentionally not
+        // deferred until a subreddit/tab switch: once the user has seen or
+        // swiped away from a post, every later collector must treat it as hidden
+        // until the user explicitly unhides it.
+        if (!hiddenContainsPostId(post.id)) {
+            hiddenPosts.put(post.id, post);
+            readHideStore.hideAsync(post);
+            trimHiddenPostCache();
+        }
     }
 
     private void showReadUndoHud(RedditPost post) {
@@ -4404,16 +4420,8 @@ private void trackFullscreenVisit(int position) {
 
     private void commitSessionReadCatalog() {
         clearReadUndoHud();
-        if (sessionReadCatalog.isEmpty()) {
-            lastFullscreenPostId = "";
-            return;
-        }
-        for (RedditPost post : new ArrayList<>(sessionReadCatalog.values())) {
-            if (post == null || post.id == null || post.id.isEmpty()) continue;
-            if (post.saved || savedContainsPostId(post.id) || hiddenContainsPostId(post.id)) continue;
-            hiddenPosts.put(post.id, post);
-            readHideStore.hideAsync(post);
-        }
+        // Posts are persisted at catalogSessionRead(). Navigation only closes the
+        // current session bookkeeping; it is no longer the durability boundary.
         sessionReadCatalog.clear();
         trimHiddenPostCache();
         lastFullscreenPostId = "";
@@ -4583,17 +4591,30 @@ private void trackFullscreenVisit(int position) {
     private void armFeedRecoveryWatchdog() {
         if (root == null || screen != Screen.HOME) return;
         final int token = ++feedRecoveryToken;
+        final int baselineCount = postAdapter == null ? 0 : postAdapter.getItemCount();
+        final int baselinePosition = pager == null ? 0 : pager.getCurrentItem();
+        final String baselineContext = context + "|" + (subreddit == null ? "" : subreddit);
         if (feedRecoveryRunnable != null) root.removeCallbacks(feedRecoveryRunnable);
 
         feedRecoveryRunnable = () -> {
             if (token != feedRecoveryToken || screen != Screen.HOME) return;
-            if (postAdapter != null && postAdapter.getItemCount() > 0) {
+            String currentContext = context + "|" + (subreddit == null ? "" : subreddit);
+            if (!baselineContext.equals(currentContext)) return;
+
+            int currentCount = postAdapter == null ? 0 : postAdapter.getItemCount();
+            int currentPosition = pager == null ? 0 : pager.getCurrentItem();
+            boolean grew = currentCount > baselineCount;
+            boolean nearEnd = currentCount == 0
+                    || currentPosition >= Math.max(0, currentCount - 3)
+                    || baselinePosition >= Math.max(0, baselineCount - 3);
+
+            // Existing rows are not proof of a healthy feed. What matters here is
+            // whether the feed made forward progress after a refill/reset request.
+            if (grew || !nearEnd) {
                 noteFeedContentAvailable();
                 return;
             }
 
-            // A blank fullscreen feed has no media surface to tap, so explicitly
-            // restore the controls before attempting recovery.
             setFullscreenChrome(true);
             if (recoveryHud != null) {
                 recoveryHud.setVisibility(View.VISIBLE);
@@ -4604,8 +4625,6 @@ private void trackFullscreenVisit(int position) {
                 feedRecoveryRetried = true;
                 recoverStalledFeed(false);
             } else {
-                // One retry was already attempted. Preserve read history, then
-                // escape the dead context and return to a fresh Home feed.
                 commitSessionReadCatalog();
                 feedRecoveryRetried = false;
                 loading = false;
@@ -4645,6 +4664,23 @@ private void trackFullscreenVisit(int position) {
             recoveryHud.setText("Feed stalled · Tap to recover");
             recoveryHud.setVisibility(View.GONE);
         }
+    }
+
+    private void resetCurrentSubredditFeed() {
+        if (screen != Screen.HOME || !context.equals("subreddit")
+                || subreddit == null || subreddit.isEmpty()) return;
+
+        // Read posts have already been persisted at classification time. A reset
+        // therefore only throws away transport/pagination state and reloads the
+        // same subreddit from a clean cursor while keeping all read IDs hidden.
+        commitSessionReadCatalog();
+        loading = false;
+        feedRecoveryRetried = false;
+        setFullscreenChrome(true);
+        if (recoveryHud != null) recoveryHud.setVisibility(View.GONE);
+        setStatus("Resetting r/" + subreddit + "…", true);
+        loadFeed(true);
+        armFeedRecoveryWatchdog();
     }
 
     private void reloadCurrent() {
@@ -5238,6 +5274,15 @@ private void installCompactNavigation() {
         compactMenuButton.setOnClickListener(v -> showCompactMainMenu());
     }
 
+    private void saveCurrentPostFromCommandBar() {
+        RedditPost post = currentPagerPost();
+        if (post == null || post.id == null || post.id.isEmpty()) {
+            setStatus("No current post to save.", false);
+            return;
+        }
+        onSave(post);
+    }
+
     private void showSaveCommandSheet() {
         RedditPost post = currentPagerPost();
         String targetSubreddit = post != null ? cleanSubredditName(post.subreddit) : "";
@@ -5285,11 +5330,7 @@ private void installCompactNavigation() {
     private void updateSaveCommandState() {
         if (saveCommandButton == null) return;
         RedditPost post = currentPagerPost();
-        boolean subredditAvailable = screen == Screen.HOME
-                && context.equals("subreddit")
-                && subreddit != null
-                && !subreddit.isEmpty();
-        boolean available = post != null || subredditAvailable;
+        boolean available = post != null && post.id != null && !post.id.isEmpty();
         saveCommandButton.setEnabled(available);
         saveCommandButton.setText("Save");
         saveCommandButton.setAlpha(available ? 1f : 0.45f);
@@ -5312,6 +5353,22 @@ private void installCompactNavigation() {
             membership.setOnClickListener(v -> {
                 dialog.dismiss();
                 toggleSubredditSubscription();
+            });
+
+            boolean favorite = favoriteSubreddits.contains(target.toLowerCase(Locale.US));
+            Button saveSubreddit = sheetButton(
+                    (favorite ? "Remove saved subreddit" : "Save subreddit") + " · r/" + target);
+            body.addView(saveSubreddit, sectionButtonParams());
+            saveSubreddit.setOnClickListener(v -> {
+                dialog.dismiss();
+                toggleFavoriteSubreddit(target);
+            });
+
+            Button resetSubreddit = sheetButton("Reset subreddit · r/" + target);
+            body.addView(resetSubreddit, sectionButtonParams());
+            resetSubreddit.setOnClickListener(v -> {
+                dialog.dismiss();
+                resetCurrentSubredditFeed();
             });
         }
 
