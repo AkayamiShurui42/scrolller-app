@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.12: durable reads/recovery plus All, Images, GIFs & Videos, and Albums filters.
+// v3.9.13: harden direct post Save/Unsave with canonical Reddit IDs and feedback.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
@@ -4931,59 +4931,84 @@ private void setFullscreenChrome(boolean visible) {
 
     @Override
     public void onSave(RedditPost post) {
+        if (post == null || post.id == null || post.id.isEmpty()) {
+            setStatus("No current post to save.", false);
+            return;
+        }
         if (username.isEmpty()) {
+            setStatus("Sign in to save posts.", false);
             openBrowser(
                     REDDIT + "/login/?dest=" + enc(REDDIT + "/"),
                     BrowserPurpose.LOGIN);
             return;
         }
-        String body = "id=" + enc(post.id) + "&uh=" + enc(modhash);
-        engine.postForm(post.saved ? "/api/unsave" : "/api/save", body, result -> {
-            if (result.ok) {
-                post.saved = !post.saved;
+
+        String bare = barePostId(post.id);
+        if (bare.isEmpty()) {
+            setStatus("This post does not have a valid Reddit ID.", false);
+            return;
+        }
+        String fullname = "t3_" + bare;
+        boolean wasSaved = post.saved || savedContainsPostId(post.id);
+        boolean targetSaved = !wasSaved;
+
+        if (saveCommandButton != null) {
+            saveCommandButton.setEnabled(false);
+            saveCommandButton.setText(targetSaved ? "Saving…" : "Unsaving…");
+        }
+
+        String body = "id=" + enc(fullname) + "&uh=" + enc(modhash);
+        engine.postForm(targetSaved ? "/api/save" : "/api/unsave", body, result -> {
+            if (saveCommandButton != null) saveCommandButton.setEnabled(true);
+
+            if (!result.ok) {
                 updateSaveCommandState();
-                if (post.saved) {
-                    if (post.id != null && !post.id.isEmpty()) {
-                        savedPostIds.add(post.id);
-                        sessionReadCatalog.remove(barePostId(post.id));
-                    }
-                    persistSavedPostIds();
-                    if (post.id != null && hiddenContainsPostId(post.id)) {
-                        hiddenPosts.remove(post.id);
-                        readHideStore.deleteAsync(post.id);
-                        if (showingHiddenLibrary()) {
-                            loadHiddenPostsView();
-                            return;
-                        }
-                    }
-                    // Save is an explicit state transition, not swipe/read progression.
-                    // Remove only this manually-saved item from the active Unread
-                    // collection and establish a fresh baseline for the item that
-                    // shifts into its place. The automatic read path still never
-                    // mutates the live pager collection.
-                    if (screen != Screen.FAVORITES) {
-                        removeSavedFromUnread(post.id);
-                        return;
-                    }
-                    postAdapter.refreshPost(post);
+                setStatus((targetSaved ? "Save" : "Unsave") + " failed: "
+                        + friendlyError(result), false);
+                return;
+            }
+
+            post.saved = targetSaved;
+            if (targetSaved) {
+                savedPostIds.add(post.id);
+                savedPostIds.add(fullname);
+                sessionReadCatalog.remove(bare);
+
+                hiddenPosts.remove(post.id);
+                hiddenPosts.remove(bare);
+                hiddenPosts.remove(fullname);
+                readHideStore.deleteAsync(post.id);
+                if (!fullname.equals(post.id)) readHideStore.deleteAsync(fullname);
+
+                persistSavedPostIds();
+                setStatus("Saved post.", false);
+                updateSaveCommandState();
+
+                if (showingHiddenLibrary()) {
+                    loadHiddenPostsView();
                     return;
                 }
-
-                if (post.id != null && !post.id.isEmpty()) {
-                    savedPostIds.remove(post.id);
-                    feedSeenPostIds.remove(canonicalPostKey(post));
-                }
-                persistSavedPostIds();
-                if (screen == Screen.FAVORITES && favoritesView.equals("saved")) {
-                    // Favorites is passive, so a clean library reload is safe and
-                    // makes an Unsave disappear from the Saved folder immediately.
-                    loadFavoritesInternal();
+                if (screen != Screen.FAVORITES) {
+                    removeSavedFromUnread(post.id);
                     return;
                 }
                 postAdapter.refreshPost(post);
-            } else {
-                setStatus("Save failed: " + friendlyError(result), false);
+                return;
             }
+
+            savedPostIds.remove(post.id);
+            savedPostIds.remove(bare);
+            savedPostIds.remove(fullname);
+            feedSeenPostIds.remove(canonicalPostKey(post));
+            persistSavedPostIds();
+            setStatus("Unsaved post.", false);
+            updateSaveCommandState();
+
+            if (screen == Screen.FAVORITES && favoritesView.equals("saved")) {
+                loadFavoritesInternal();
+                return;
+            }
+            postAdapter.refreshPost(post);
         });
     }
 
