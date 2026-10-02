@@ -59,8 +59,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.14: request-level feed timeout leases prevent permanent loading deadlocks.
+// v3.9.15: bounded sliding feed window prevents long-session UI freezes.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
+    private static final int ACTIVE_FEED_BUFFER_LIMIT = 240;
+
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
@@ -1669,6 +1671,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     if (!mediaKey.isEmpty() && !mediaKeys.add(mediaKey)) continue;
                 }
                 visible.add(post);
+                if (screen == Screen.HOME && visible.size() >= ACTIVE_FEED_BUFFER_LIMIT) break;
             }
         }
         postAdapter.setPosts(visible);
@@ -1686,7 +1689,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         prefetchScrolllerSubredditIfNeeded();
         prefetchHistoricalSubredditIfNeeded(false);
 
-        if (!loading && postAdapter.getItemCount() < 300 && after != null && !after.isEmpty()) {
+        if (!loading && postAdapter.getItemCount() < 180 && after != null && !after.isEmpty()) {
             final int generation = archivePrefetchGeneration;
             root.postDelayed(() -> {
                 if (generation != archivePrefetchGeneration) return;
@@ -1700,7 +1703,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         if (sort.equals("random")
-                && (postAdapter.getItemCount() >= 300 || after == null || after.isEmpty())) {
+                && (postAdapter.getItemCount() >= 180 || after == null || after.isEmpty())) {
             prefetchRandomSubredditArchiveIfNeeded();
         }
     }
@@ -1980,7 +1983,7 @@ private void loadQualityCollection(boolean reset) {
         historicalPrefetchRunning = true;
         final int generation = archivePrefetchGeneration;
         final String targetSubreddit = subreddit;
-        ArcticShiftClient.crawlSubreddit(targetSubreddit, 2400, new ArcticShiftClient.CrawlCallback() {
+        ArcticShiftClient.crawlSubreddit(targetSubreddit, 800, new ArcticShiftClient.CrawlCallback() {
             @Override
             public void onBatch(JSONArray items) {
                 if (!historicalSubredditContextValid(generation, targetSubreddit)) return;
@@ -2237,7 +2240,7 @@ private void loadQualityCollection(boolean reset) {
                     if (!feedSeenPostIds.add(canonicalPostKey(post))) continue;
                     if (isReadHiddenForDiscovery(post) || isSavedForUnread(post) || isContentBlocked(post)) continue;
                     additions.add(post);
-                    if (postAdapter.getItemCount() + additions.size() >= 1400) break;
+                    if (postAdapter.getItemCount() + additions.size() >= ACTIVE_FEED_BUFFER_LIMIT) break;
                 }
                 if (!additions.isEmpty()) {
                     Collections.shuffle(additions);
@@ -2270,7 +2273,7 @@ private void loadQualityCollection(boolean reset) {
                 && sort.equals("random")
                 && subreddit != null
                 && subreddit.equalsIgnoreCase(targetSubreddit)
-                && postAdapter.getItemCount() < 1400;
+                && postAdapter.getItemCount() < ACTIVE_FEED_BUFFER_LIMIT;
     }
 
     private void prefetchRandomSubredditArchiveIfNeeded() {
@@ -2301,7 +2304,7 @@ private void loadQualityCollection(boolean reset) {
             Set<String> sourceSeenCursors,
             int page) {
         if (!archiveContextStillValid(generation, targetSubreddit)) return;
-        if (postAdapter.getItemCount() >= 800 || source >= 5) {
+        if (postAdapter.getItemCount() >= ACTIVE_FEED_BUFFER_LIMIT || source >= 5) {
             archivePrefetchRunning = false;
             archivePrefetchDone = true;
             return;
@@ -2344,7 +2347,7 @@ private void loadQualityCollection(boolean reset) {
             boolean canContinue = !next.isEmpty()
                     && !sourceSeenCursors.contains(next)
                     && page < 4
-                    && postAdapter.getItemCount() < 800;
+                    && postAdapter.getItemCount() < ACTIVE_FEED_BUFFER_LIMIT;
             if (canContinue) {
                 fetchSubredditArchiveSource(
                         generation,
@@ -2388,8 +2391,12 @@ private void loadQualityCollection(boolean reset) {
         if (incoming == null || incoming.isEmpty()) return;
         if (layoutMode.equals("fullscreen") && pager != null
                 && pager.getScrollState() != ViewPager2.SCROLL_STATE_IDLE) {
-            deferredAppends.addAll(incoming);
-            scheduleDeferredAppend();
+            int room = Math.max(0, ACTIVE_FEED_BUFFER_LIMIT
+                    - postAdapter.getItemCount() - deferredAppends.size());
+            if (room > 0) {
+                deferredAppends.addAll(incoming.subList(0, Math.min(room, incoming.size())));
+                scheduleDeferredAppend();
+            }
             return;
         }
         appendUniqueNow(incoming);
@@ -2438,8 +2445,12 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
+        int room = Math.max(0, ACTIVE_FEED_BUFFER_LIMIT - postAdapter.getItemCount());
+        if (room <= 0) return;
+
         ArrayList<RedditPost> unique = new ArrayList<>();
         for (RedditPost post : incoming) {
+            if (unique.size() >= room) break;
             if (post == null || post.id == null || post.id.isEmpty()) continue;
             if (!favoritesSaved
                     && (isReadHiddenForDiscovery(post)
@@ -4427,8 +4438,55 @@ private void trackFullscreenVisit(int position) {
         if (previous != null) {
             catalogSessionRead(previous);
             showReadUndoHud(previous);
+            removeReadPostFromActiveFeed(previous, currentId);
+        } else {
+            lastFullscreenPostId = currentId;
         }
-        lastFullscreenPostId = currentId;
+    }
+
+    private void removeReadPostFromActiveFeed(RedditPost previous, String currentId) {
+        if (previous == null || previous.id == null || previous.id.isEmpty()) {
+            lastFullscreenPostId = currentId == null ? "" : currentId;
+            return;
+        }
+        if (root == null) return;
+
+        final String removeId = previous.id;
+        final String keepId = currentId == null ? "" : currentId;
+        root.post(() -> {
+            if (screen == Screen.FAVORITES || screen == Screen.ACCOUNT) return;
+
+            fullscreenUserGesture = false;
+            pendingUserFullscreenPosition = -1;
+
+            postAdapter.removePostById(removeId);
+            gridAdapter.removePostById(removeId);
+
+            int target = 0;
+            String keepBare = barePostId(keepId);
+            List<RedditPost> remaining = postAdapter.getPosts();
+            for (int i = 0; i < remaining.size(); i++) {
+                RedditPost candidate = remaining.get(i);
+                if (candidate != null
+                        && barePostId(candidate.id).equals(keepBare)) {
+                    target = i;
+                    break;
+                }
+            }
+
+            if (!remaining.isEmpty()) {
+                pager.setCurrentItem(Math.max(0, Math.min(target, remaining.size() - 1)), false);
+                setFullscreenReadBaseline(Math.max(0, Math.min(target, remaining.size() - 1)));
+                postAdapter.setActivePosition(Math.max(0, Math.min(target, remaining.size() - 1)));
+            } else {
+                lastFullscreenPostId = "";
+                loadFeed(false);
+            }
+
+            if (screen == Screen.HOME && postAdapter.getItemCount() < 80 && !loading) {
+                loadFeed(false);
+            }
+        });
     }
 
     private void catalogSessionRead(RedditPost post) {
