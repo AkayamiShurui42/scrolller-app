@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.11: durable read hides, forward-progress recovery, Home reset, and post-only Save.
+// v3.9.12: durable reads/recovery plus All, Images, GIFs & Videos, and Albums filters.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
@@ -1545,10 +1545,17 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private boolean matchesMedia(RedditPost post) {
+        if (post == null) return false;
         if (media.equals("all")) return true;
+
+        int imageCount = post.imageUrls == null ? 0 : post.imageUrls.size();
+        boolean album = imageCount >= 2;
+
+        if (media.equals("album")) {
+            return album;
+        }
         if (media.equals("image")) {
-            return post.mediaKind == RedditPost.MediaKind.IMAGE
-                    || post.mediaKind == RedditPost.MediaKind.GALLERY;
+            return post.mediaKind == RedditPost.MediaKind.IMAGE && !album;
         }
         if (media.equals("video")) {
             return post.mediaKind == RedditPost.MediaKind.VIDEO
@@ -4135,7 +4142,8 @@ private void showCategoryRoot() {
         String[][] values = {
                 {"all", "All media"},
                 {"image", "Images"},
-                {"video", "Videos / GIFs"}
+                {"video", "GIFs & Videos"},
+                {"album", "Albums"}
         };
         for (String[] pair : values) {
             Button b = sheetButton(pair[1] + (media.equals(pair[0]) ? "  ✓" : ""));
@@ -4732,7 +4740,9 @@ private void trackFullscreenVisit(int position) {
                 ? (favoritesView.equals("hidden") ? "Manage" : favoriteSortLabel())
                 : label(sort));
         filterButton.setText(media.equals("all") ? "All media"
-                : media.equals("image") ? "Images" : "Video/GIF");
+                : media.equals("image") ? "Images"
+                : media.equals("album") ? "Albums"
+                : "GIFs/Video");
         layoutButton.setText(layoutMode.equals("grid") ? "Stream" : "Fullscreen");
 
         controlRow.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
