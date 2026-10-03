@@ -10,8 +10,8 @@ android {
         applicationId "com.crimson.redditmedia"
         minSdk 24
         targetSdk 36
-        versionCode 63
-        versionName "3.9.16"
+        versionCode 64
+        versionName "3.9.17"
     }
 
     signingConfigs {
