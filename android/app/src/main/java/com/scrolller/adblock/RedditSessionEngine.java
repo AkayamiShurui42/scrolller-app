@@ -94,6 +94,22 @@ public final class RedditSessionEngine {
         request(path, "POST", body, callback);
     }
 
+    public void cancelPendingRequests() {
+        handler.post(() -> {
+            requestQueue.clear();
+            inFlight.clear();
+
+            // The JavaScript fetch itself cannot be synchronously aborted from
+            // here, but detaching its token makes any late Bridge delivery a
+            // no-op. Releasing requestInFlight lets the new feed generation start
+            // immediately instead of sitting behind obsolete work.
+            requestInFlight = false;
+            nextRequestAtMs = 0L;
+            drainScheduled = false;
+        });
+    }
+
+
     public void request(String path, String method, String body, Callback callback) {
         handler.post(() -> {
             requestQueue.addLast(new PendingRequest(path, method, body, callback));
