@@ -59,10 +59,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.15: bounded sliding feed window prevents long-session UI freezes.
+// v3.9.16: flush obsolete Reddit request backlog on navigation/reset; revert feed-mutation regressions.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
-    private static final int ACTIVE_FEED_BUFFER_LIMIT = 240;
-
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
@@ -211,8 +209,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private String modhash = "";
     private String after = "";
     private boolean loading;
-    private int feedRequestLeaseToken = 0;
-    private Runnable feedRequestLeaseRunnable;
     private boolean initialized;
     private boolean muted = true;
     private boolean fullscreenChromeVisible = true;
@@ -905,6 +901,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void navigateHome(String which, boolean pushHistory) {
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         if ("quality".equals(which)) which = "home";
         if (pushHistory && !(screen == Screen.HOME && context.equals(which) && subreddit.isEmpty())) {
@@ -924,6 +921,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void openSubredditFeed(String name) {
         if (name == null || name.isEmpty()) return;
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         history.clear();
         sort = "random";
@@ -939,6 +937,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void openSearchScreen() {
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         boolean subredditEntry = screen == Screen.HOME
                 && context.equals("subreddit")
@@ -991,11 +990,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         prefs.edit().remove("lastSearch").apply();
         searchInput.setText("");
         screen = Screen.SEARCH;
+        cancelObsoleteRedditRequests();
         loadSearchInternal();
     }
 
     private void openUserProfile(String name) {
         if (name == null || name.isEmpty()) return;
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         loading = false;
         feedGeneration++;
@@ -1011,65 +1012,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         loadUserProfileInternal();
     }
 
-    private int beginFeedRequestLease(String label) {
-        final int token = ++feedRequestLeaseToken;
-        if (root != null && feedRequestLeaseRunnable != null) {
-            root.removeCallbacks(feedRequestLeaseRunnable);
-        }
-
-        feedRequestLeaseRunnable = () -> {
-            if (token != feedRequestLeaseToken || screen != Screen.HOME) return;
-            feedRequestLeaseRunnable = null;
-
-            loading = false;
-            feedGeneration++;
-            homeRandomGeneration++;
-            multiSubredditGeneration++;
-            archivePrefetchGeneration++;
-            deferredAppends.clear();
-            deferredAppendScheduled = false;
-
-            setFullscreenChrome(true);
-            if (recoveryHud != null) {
-                recoveryHud.setText("Feed request timed out · retrying");
-                recoveryHud.setVisibility(View.VISIBLE);
-                recoveryHud.bringToFront();
-            }
-
-            setStatus("Restarting stalled " + (label == null ? "feed" : label) + "…", false);
-            if (root != null) {
-                root.postDelayed(() -> {
-                    if (screen != Screen.HOME) return;
-                    loading = false;
-                    loadFeed(true);
-                }, 120L);
-            }
-        };
-
-        if (root != null) root.postDelayed(feedRequestLeaseRunnable, 12000L);
-        return token;
-    }
-
-    private boolean finishFeedRequestLease(int token) {
-        if (token != feedRequestLeaseToken) return false;
-        feedRequestLeaseToken++;
-        if (root != null && feedRequestLeaseRunnable != null) {
-            root.removeCallbacks(feedRequestLeaseRunnable);
-        }
-        feedRequestLeaseRunnable = null;
-        return true;
-    }
-
-    private void cancelFeedRequestLease() {
-        feedRequestLeaseToken++;
-        if (root != null && feedRequestLeaseRunnable != null) {
-            root.removeCallbacks(feedRequestLeaseRunnable);
-        }
-        feedRequestLeaseRunnable = null;
+    private void cancelObsoleteRedditRequests() {
+        if (engine != null) engine.cancelPendingRequests();
+        loading = false;
     }
 
     private void loadFeed(boolean reset) {
         if (!engine.isReady()) return;
+        if (reset) cancelObsoleteRedditRequests();
         if (loading && !reset) return;
         armFeedRecoveryWatchdog();
 
@@ -1128,9 +1078,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         String path = listingPath(cursor);
-        final int requestLease = beginFeedRequestLease("feed");
         engine.get(path, result -> {
-            if (!finishFeedRequestLease(requestLease)) return;
             if (generation != feedGeneration || screen != Screen.HOME) return;
             if (!result.ok) {
                 // If at least one live page already arrived, keep it instead of
@@ -1253,9 +1201,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         String target = communities.get(index);
-        final int requestLease = beginFeedRequestLease("preset fallback");
         engine.get(singlePresetListingPath(target), result -> {
-            if (!finishFeedRequestLease(requestLease)) return;
             if (generation != feedGeneration || screen != Screen.HOME || !context.equals("multi")) return;
 
             if (result.ok) {
@@ -1302,7 +1248,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             boolean reset,
             ArrayList<RedditPost> collected) {
         if (generation != feedGeneration || screen != Screen.HOME) return;
-        cancelFeedRequestLease();
         loading = false;
 
         if (sort.equals("random")) {
@@ -1338,6 +1283,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void loadHomeSubscriptionRandom(boolean reset) {
         if (!engine.isReady()) return;
+        if (reset) cancelObsoleteRedditRequests();
         if (loading && !reset) return;
 
         if (reset) {
@@ -1420,9 +1366,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         homeRandomRequestsThisLoad++;
         String path = "/r/" + enc(targetSubreddit)
                 + "/new.json?limit=100&raw_json=1&show=all";
-        final int requestLease = beginFeedRequestLease("Home Random");
         engine.get(path, result -> {
-            if (!finishFeedRequestLease(requestLease)) return;
             if (!homeRandomContextValid(feedGen, randomGen)) return;
             if (result.ok) {
                 JSONObject rootJson = result.jsonObject();
@@ -1671,7 +1615,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     if (!mediaKey.isEmpty() && !mediaKeys.add(mediaKey)) continue;
                 }
                 visible.add(post);
-                if (screen == Screen.HOME && visible.size() >= ACTIVE_FEED_BUFFER_LIMIT) break;
             }
         }
         postAdapter.setPosts(visible);
@@ -1689,7 +1632,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         prefetchScrolllerSubredditIfNeeded();
         prefetchHistoricalSubredditIfNeeded(false);
 
-        if (!loading && postAdapter.getItemCount() < 180 && after != null && !after.isEmpty()) {
+        if (!loading && postAdapter.getItemCount() < 300 && after != null && !after.isEmpty()) {
             final int generation = archivePrefetchGeneration;
             root.postDelayed(() -> {
                 if (generation != archivePrefetchGeneration) return;
@@ -1703,7 +1646,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         if (sort.equals("random")
-                && (postAdapter.getItemCount() >= 180 || after == null || after.isEmpty())) {
+                && (postAdapter.getItemCount() >= 300 || after == null || after.isEmpty())) {
             prefetchRandomSubredditArchiveIfNeeded();
         }
     }
@@ -1983,7 +1926,7 @@ private void loadQualityCollection(boolean reset) {
         historicalPrefetchRunning = true;
         final int generation = archivePrefetchGeneration;
         final String targetSubreddit = subreddit;
-        ArcticShiftClient.crawlSubreddit(targetSubreddit, 800, new ArcticShiftClient.CrawlCallback() {
+        ArcticShiftClient.crawlSubreddit(targetSubreddit, 2400, new ArcticShiftClient.CrawlCallback() {
             @Override
             public void onBatch(JSONArray items) {
                 if (!historicalSubredditContextValid(generation, targetSubreddit)) return;
@@ -2240,7 +2183,7 @@ private void loadQualityCollection(boolean reset) {
                     if (!feedSeenPostIds.add(canonicalPostKey(post))) continue;
                     if (isReadHiddenForDiscovery(post) || isSavedForUnread(post) || isContentBlocked(post)) continue;
                     additions.add(post);
-                    if (postAdapter.getItemCount() + additions.size() >= ACTIVE_FEED_BUFFER_LIMIT) break;
+                    if (postAdapter.getItemCount() + additions.size() >= 1400) break;
                 }
                 if (!additions.isEmpty()) {
                     Collections.shuffle(additions);
@@ -2273,7 +2216,7 @@ private void loadQualityCollection(boolean reset) {
                 && sort.equals("random")
                 && subreddit != null
                 && subreddit.equalsIgnoreCase(targetSubreddit)
-                && postAdapter.getItemCount() < ACTIVE_FEED_BUFFER_LIMIT;
+                && postAdapter.getItemCount() < 1400;
     }
 
     private void prefetchRandomSubredditArchiveIfNeeded() {
@@ -2304,7 +2247,7 @@ private void loadQualityCollection(boolean reset) {
             Set<String> sourceSeenCursors,
             int page) {
         if (!archiveContextStillValid(generation, targetSubreddit)) return;
-        if (postAdapter.getItemCount() >= ACTIVE_FEED_BUFFER_LIMIT || source >= 5) {
+        if (postAdapter.getItemCount() >= 800 || source >= 5) {
             archivePrefetchRunning = false;
             archivePrefetchDone = true;
             return;
@@ -2347,7 +2290,7 @@ private void loadQualityCollection(boolean reset) {
             boolean canContinue = !next.isEmpty()
                     && !sourceSeenCursors.contains(next)
                     && page < 4
-                    && postAdapter.getItemCount() < ACTIVE_FEED_BUFFER_LIMIT;
+                    && postAdapter.getItemCount() < 800;
             if (canContinue) {
                 fetchSubredditArchiveSource(
                         generation,
@@ -2391,12 +2334,8 @@ private void loadQualityCollection(boolean reset) {
         if (incoming == null || incoming.isEmpty()) return;
         if (layoutMode.equals("fullscreen") && pager != null
                 && pager.getScrollState() != ViewPager2.SCROLL_STATE_IDLE) {
-            int room = Math.max(0, ACTIVE_FEED_BUFFER_LIMIT
-                    - postAdapter.getItemCount() - deferredAppends.size());
-            if (room > 0) {
-                deferredAppends.addAll(incoming.subList(0, Math.min(room, incoming.size())));
-                scheduleDeferredAppend();
-            }
+            deferredAppends.addAll(incoming);
+            scheduleDeferredAppend();
             return;
         }
         appendUniqueNow(incoming);
@@ -2445,12 +2384,8 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
-        int room = Math.max(0, ACTIVE_FEED_BUFFER_LIMIT - postAdapter.getItemCount());
-        if (room <= 0) return;
-
         ArrayList<RedditPost> unique = new ArrayList<>();
         for (RedditPost post : incoming) {
-            if (unique.size() >= room) break;
             if (post == null || post.id == null || post.id.isEmpty()) continue;
             if (!favoritesSaved
                     && (isReadHiddenForDiscovery(post)
@@ -4438,55 +4373,8 @@ private void trackFullscreenVisit(int position) {
         if (previous != null) {
             catalogSessionRead(previous);
             showReadUndoHud(previous);
-            removeReadPostFromActiveFeed(previous, currentId);
-        } else {
-            lastFullscreenPostId = currentId;
         }
-    }
-
-    private void removeReadPostFromActiveFeed(RedditPost previous, String currentId) {
-        if (previous == null || previous.id == null || previous.id.isEmpty()) {
-            lastFullscreenPostId = currentId == null ? "" : currentId;
-            return;
-        }
-        if (root == null) return;
-
-        final String removeId = previous.id;
-        final String keepId = currentId == null ? "" : currentId;
-        root.post(() -> {
-            if (screen == Screen.FAVORITES || screen == Screen.ACCOUNT) return;
-
-            fullscreenUserGesture = false;
-            pendingUserFullscreenPosition = -1;
-
-            postAdapter.removePostById(removeId);
-            gridAdapter.removePostById(removeId);
-
-            int target = 0;
-            String keepBare = barePostId(keepId);
-            List<RedditPost> remaining = postAdapter.getPosts();
-            for (int i = 0; i < remaining.size(); i++) {
-                RedditPost candidate = remaining.get(i);
-                if (candidate != null
-                        && barePostId(candidate.id).equals(keepBare)) {
-                    target = i;
-                    break;
-                }
-            }
-
-            if (!remaining.isEmpty()) {
-                pager.setCurrentItem(Math.max(0, Math.min(target, remaining.size() - 1)), false);
-                setFullscreenReadBaseline(Math.max(0, Math.min(target, remaining.size() - 1)));
-                postAdapter.setActivePosition(Math.max(0, Math.min(target, remaining.size() - 1)));
-            } else {
-                lastFullscreenPostId = "";
-                loadFeed(false);
-            }
-
-            if (screen == Screen.HOME && postAdapter.getItemCount() < 80 && !loading) {
-                loadFeed(false);
-            }
-        });
+        lastFullscreenPostId = currentId;
     }
 
     private void catalogSessionRead(RedditPost post) {
@@ -4769,7 +4657,7 @@ private void trackFullscreenVisit(int position) {
 
     private void recoverStalledFeed(boolean userRequested) {
         if (screen != Screen.HOME) return;
-        cancelFeedRequestLease();
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         clearReadUndoHud();
         setFullscreenChrome(true);
@@ -4802,8 +4690,8 @@ private void trackFullscreenVisit(int position) {
     private void resetCurrentSubredditFeed() {
         if (screen != Screen.HOME || !context.equals("subreddit")
                 || subreddit == null || subreddit.isEmpty()) return;
-        cancelFeedRequestLease();
 
+        cancelObsoleteRedditRequests();
         // Read posts have already been persisted at classification time. A reset
         // therefore only throws away transport/pagination state and reloads the
         // same subreddit from a clean cursor while keeping all read IDs hidden.
@@ -6100,6 +5988,7 @@ private void installCompactNavigation() {
 
     private void loadMultiSubredditFair(boolean reset) {
         if (!engine.isReady()) return;
+        if (reset) cancelObsoleteRedditRequests();
         if (loading && !reset) return;
 
         if (reset) {
@@ -6184,9 +6073,7 @@ private void installCompactNavigation() {
 
         final String target = multiSubredditRound.get(multiSubredditRoundIndex++);
         multiSubredditRequestsThisLoad++;
-        final int requestLease = beginFeedRequestLease("preset Random");
         engine.get(singlePresetListingPath(target), result -> {
-            if (!finishFeedRequestLease(requestLease)) return;
             if (!multiSubredditContextValid(feedGen, multiGen)) return;
 
             if (result.ok) {
