@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.16 Random Reroll
+name: Build Reddit Media v3.9.17 Random Reroll
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.16-${{ github.ref }}
+  group: reddit-media-v3.9.17-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,11 +26,11 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.16 invariants
+      - name: Validate v3.9.17 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'versionCode 63' android/app/build.gradle
-          grep -q 'versionName "3.9.16"' android/app/build.gradle
+          grep -q 'versionCode 64' android/app/build.gradle
+          grep -q 'versionName "3.9.17"' android/app/build.gradle
           grep -q 'boolean repeatRandom = "random".equals(value) && "random".equals(sort);' "$MAIN"
           grep -q 'private void reshuffleCurrentRandomOrder()' "$MAIN"
           grep -q 'private void refillRandomAfterReroll()' "$MAIN"
@@ -75,6 +75,13 @@ jobs:
           grep -q 'saveCommandButton.setText(targetSaved ? "Saving…" : "Unsaving…");' "$MAIN"
           grep -q 'private void cancelObsoleteRedditRequests()' "$MAIN"
           grep -q 'engine.cancelPendingRequests();' "$MAIN"
+          grep -q 'FEED_VISIBLE_AHEAD_TARGET = 40' "$MAIN"
+          grep -q 'FEED_RESERVOIR_REFILL_LOW = 100' "$MAIN"
+          grep -q 'FEED_RESERVOIR_MAX = 500' "$MAIN"
+          grep -q 'private void enqueueFeedReservoir' "$MAIN"
+          grep -q 'private void drainFeedReservoir' "$MAIN"
+          grep -q 'private void maybeRefillFeedReservoir' "$MAIN"
+          grep -q 'rerollPool.addAll(feedReservoir);' "$MAIN"
           grep -q 'if (reset) cancelObsoleteRedditRequests();' "$MAIN"
           ! grep -q 'removeReadPostFromActiveFeed' "$MAIN"
           ! grep -q 'ACTIVE_FEED_BUFFER_LIMIT' "$MAIN"
@@ -121,15 +128,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='63'" /tmp/badging.txt
-          grep -q "versionName='3.9.16'" /tmp/badging.txt
+          grep -q "versionCode='64'" /tmp/badging.txt
+          grep -q "versionName='3.9.17'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.16-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.17-debug.apk
 
-      - name: Upload v3.9.16 APK
+      - name: Upload v3.9.17 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.16-debug-apk
-          path: dist/Reddit-Media-v3.9.16-debug.apk
+          name: reddit-media-v3.9.17-debug-apk
+          path: dist/Reddit-Media-v3.9.17-debug.apk
           if-no-files-found: error
           retention-days: 30
