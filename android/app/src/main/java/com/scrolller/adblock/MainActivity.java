@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.17: preload large in-memory reservoir so scrolling consumes memory before network.
+// v3.9.18: hard-reset WebView/session transport when feed recovery detects a dead engine.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
@@ -338,55 +338,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             return insets;
         });
 
-        sessionView = new WebView(this);
-        sessionView.setBackgroundColor(Color.BLACK);
-        root.addView(sessionView, match());
-
-        WebSettings settings = sessionView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setSupportMultipleWindows(false);
-        settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        settings.setUseWideViewPort(true);
-        settings.setLoadWithOverviewMode(false);
-
-        CookieManager cookies = CookieManager.getInstance();
-        cookies.setAcceptCookie(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            cookies.setAcceptThirdPartyCookies(sessionView, true);
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        }
-
-        engine = new RedditSessionEngine(sessionView, this::onSessionReady);
-        sessionView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return handleWebNavigation(request.getUrl() != null ? request.getUrl().toString() : null);
-            }
-
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return handleWebNavigation(url);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                engine.markReady(url);
-                if (browserPurpose == BrowserPurpose.LOGIN && !isLoginUrl(url)) {
-                    refreshIdentity(() -> {
-                        if (!username.isEmpty()) {
-                            closeBrowser();
-                            loadSubscriptions(null);
-                            if (screen == Screen.FAVORITES) loadFavoritesInternal();
-                        }
-                    });
-                }
-            }
-        });
+        installSessionTransport(false);
 
         buildNativeUi();
         root.requestApplyInsets();
@@ -736,6 +688,118 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (compactMenuButton != null) compactMenuButton.setVisibility(View.GONE);
 }
 
+    private void installSessionTransport(boolean loadNow) {
+        WebView oldView = sessionView;
+        RedditSessionEngine oldEngine = engine;
+
+        if (oldEngine != null) {
+            try { oldEngine.cancelPendingRequests(); } catch (Exception ignored) {}
+        }
+
+        if (oldView != null) {
+            try { oldView.stopLoading(); } catch (Exception ignored) {}
+            try { oldView.removeJavascriptInterface("NativeRedditBridge"); } catch (Exception ignored) {}
+            try { root.removeView(oldView); } catch (Exception ignored) {}
+            try { oldView.destroy(); } catch (Exception ignored) {}
+        }
+
+        sessionView = new WebView(this);
+        sessionView.setBackgroundColor(Color.BLACK);
+        sessionView.setVisibility(browserPurpose == BrowserPurpose.NONE ? View.GONE : View.VISIBLE);
+
+        WebSettings settings = sessionView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setSupportMultipleWindows(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(false);
+
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            cookies.setAcceptThirdPartyCookies(sessionView, true);
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        }
+
+        engine = new RedditSessionEngine(sessionView, this::onSessionReady);
+        sessionView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return handleWebNavigation(request.getUrl() != null ? request.getUrl().toString() : null);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleWebNavigation(url);
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                if (view != sessionView || engine == null) return;
+                engine.markReady(url);
+                if (browserPurpose == BrowserPurpose.LOGIN && !isLoginUrl(url)) {
+                    refreshIdentity(() -> {
+                        if (!username.isEmpty()) {
+                            closeBrowser();
+                            loadSubscriptions(null);
+                            if (screen == Screen.FAVORITES) loadFavoritesInternal();
+                        }
+                    });
+                }
+            }
+        });
+
+        FrameLayout.LayoutParams params = match();
+        root.addView(sessionView, 0, params);
+
+        if (loadNow) {
+            initialized = false;
+            browserPurpose = BrowserPurpose.NONE;
+            sessionView.setVisibility(View.GONE);
+            sessionView.loadUrl(REDDIT + "/");
+        }
+    }
+
+    private void hardResetRedditTransport() {
+        if (root == null) return;
+
+        cancelObsoleteRedditRequests();
+        loading = false;
+        feedRecoveryRetried = false;
+        feedRecoveryToken++;
+        if (feedRecoveryRunnable != null) {
+            root.removeCallbacks(feedRecoveryRunnable);
+            feedRecoveryRunnable = null;
+        }
+
+        setFullscreenChrome(true);
+        if (recoveryHud != null) {
+            recoveryHud.setText("Reconnecting Reddit session…");
+            recoveryHud.setVisibility(View.VISIBLE);
+            recoveryHud.bringToFront();
+        }
+
+        setStatus("Reconnecting Reddit session…", true);
+        installSessionTransport(true);
+
+        root.postDelayed(() -> {
+            if (engine != null && !engine.isReady() && screen == Screen.HOME) {
+                if (recoveryHud != null) {
+                    recoveryHud.setText("Session reconnect failed · Tap to retry");
+                    recoveryHud.setVisibility(View.VISIBLE);
+                    recoveryHud.bringToFront();
+                }
+                setStatus("Reddit session did not reconnect.", false);
+                setFullscreenChrome(true);
+            }
+        }, 12000L);
+    }
+
     private void onSessionReady(String url) {
         if (initialized || browserPurpose != BrowserPurpose.NONE) return;
         initialized = true;
@@ -1026,7 +1090,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void loadFeed(boolean reset) {
-        if (!engine.isReady()) return;
+        if (engine == null || !engine.isReady()) {
+            if (screen == Screen.HOME && initialized) hardResetRedditTransport();
+            return;
+        }
         if (reset) cancelObsoleteRedditRequests();
         if (loading && !reset) return;
         armFeedRecoveryWatchdog();
@@ -4786,23 +4853,9 @@ private void trackFullscreenVisit(int position) {
 
     private void recoverStalledFeed(boolean userRequested) {
         if (screen != Screen.HOME) return;
-        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         clearReadUndoHud();
-        setFullscreenChrome(true);
-        loading = false;
-
-        if (recoveryHud != null) {
-            recoveryHud.setText(userRequested ? "Recovering feed…" : "Retrying feed…");
-            recoveryHud.setVisibility(View.VISIBLE);
-            recoveryHud.bringToFront();
-        }
-
-        // Keep the current Home/subreddit/preset context for the first recovery.
-        // loadFeed(true) creates a fresh generation/cursor and reopens supplemental
-        // sources without requiring a media tap.
-        loadFeed(true);
-        armFeedRecoveryWatchdog();
+        hardResetRedditTransport();
     }
 
     private void noteFeedContentAvailable() {
