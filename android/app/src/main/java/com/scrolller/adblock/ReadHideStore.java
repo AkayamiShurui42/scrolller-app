@@ -17,7 +17,7 @@ import java.util.concurrent.Executors;
 
 final class ReadHideStore extends SQLiteOpenHelper {
     private static final String DB_NAME = "read_hide.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
     private static final String TABLE = "hidden_posts";
 
     private final ExecutorService io = Executors.newSingleThreadExecutor(r -> {
@@ -37,20 +37,31 @@ final class ReadHideStore extends SQLiteOpenHelper {
                 + "title TEXT,author TEXT,subreddit TEXT,permalink TEXT,source_url TEXT,"
                 + "score INTEGER,comments INTEGER,created_utc INTEGER,saved INTEGER,nsfw INTEGER,"
                 + "media_kind TEXT,image_urls TEXT,video_url TEXT,poster_url TEXT,"
-                + "media_width INTEGER,media_height INTEGER,hidden_at INTEGER NOT NULL DEFAULT 0)");
+                + "media_width INTEGER,media_height INTEGER,media_key TEXT,"
+                + "hidden_at INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX hidden_posts_time ON " + TABLE + "(hidden_at DESC)");
         db.execSQL("CREATE INDEX hidden_posts_subreddit ON " + TABLE + "(subreddit COLLATE NOCASE)");
         db.execSQL("CREATE INDEX hidden_posts_kind ON " + TABLE + "(media_kind)");
+        db.execSQL("CREATE INDEX hidden_posts_media_key ON " + TABLE + "(media_key)");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // Version 1 only.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE " + TABLE + " ADD COLUMN media_key TEXT");
+            db.execSQL("CREATE INDEX IF NOT EXISTS hidden_posts_media_key ON "
+                    + TABLE + "(media_key)");
+        }
     }
 
     void hideAsync(RedditPost post) {
+        hideAsync(post, "");
+    }
+
+    void hideAsync(RedditPost post, String mediaKey) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
-        io.execute(() -> upsertPost(post));
+        final String key = mediaKey == null ? "" : mediaKey;
+        io.execute(() -> upsertPost(post, key));
     }
 
     void deleteAsync(String id) {
@@ -82,7 +93,7 @@ final class ReadHideStore extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            for (RedditPost post : posts) upsertPost(db, post);
+            for (RedditPost post : posts) upsertPost(db, post, "");
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
@@ -99,6 +110,20 @@ final class ReadHideStore extends SQLiteOpenHelper {
             }
         }
         return ids;
+    }
+
+    Set<String> loadMediaKeys() {
+        LinkedHashSet<String> keys = new LinkedHashSet<>();
+        try (Cursor cursor = getReadableDatabase().query(
+                TABLE, new String[]{"media_key"},
+                "media_key IS NOT NULL AND media_key<>''",
+                null, null, null, null)) {
+            while (cursor.moveToNext()) {
+                String key = cursor.getString(0);
+                if (key != null && !key.isEmpty()) keys.add(key);
+            }
+        }
+        return keys;
     }
 
     List<RedditPost> loadRecent(int limit) {
@@ -162,10 +187,14 @@ final class ReadHideStore extends SQLiteOpenHelper {
     }
 
     private void upsertPost(RedditPost post) {
-        upsertPost(getWritableDatabase(), post);
+        upsertPost(getWritableDatabase(), post, "");
     }
 
-    private void upsertPost(SQLiteDatabase db, RedditPost post) {
+    private void upsertPost(RedditPost post, String mediaKey) {
+        upsertPost(getWritableDatabase(), post, mediaKey);
+    }
+
+    private void upsertPost(SQLiteDatabase db, RedditPost post, String mediaKey) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
         ContentValues values = new ContentValues();
         values.put("id", post.id);
@@ -189,6 +218,7 @@ final class ReadHideStore extends SQLiteOpenHelper {
         values.put("poster_url", post.posterUrl);
         values.put("media_width", post.mediaWidth);
         values.put("media_height", post.mediaHeight);
+        values.put("media_key", mediaKey == null ? "" : mediaKey);
         values.put("hidden_at", System.currentTimeMillis());
         db.insertWithOnConflict(TABLE, null, values, SQLiteDatabase.CONFLICT_REPLACE);
     }
