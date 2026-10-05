@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.18 Random Reroll
+name: Build Reddit Media v3.9.19 Random Reroll
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.18-${{ github.ref }}
+  group: reddit-media-v3.9.19-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,11 +26,11 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.18 invariants
+      - name: Validate v3.9.19 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'versionCode 65' android/app/build.gradle
-          grep -q 'versionName "3.9.18"' android/app/build.gradle
+          grep -q 'versionCode 66' android/app/build.gradle
+          grep -q 'versionName "3.9.19"' android/app/build.gradle
           grep -q 'boolean repeatRandom = "random".equals(value) && "random".equals(sort);' "$MAIN"
           grep -q 'private void reshuffleCurrentRandomOrder()' "$MAIN"
           grep -q 'private void refillRandomAfterReroll()' "$MAIN"
@@ -87,6 +87,16 @@ jobs:
           grep -q 'Reconnecting Reddit session…' "$MAIN"
           grep -q 'Session reconnect failed · Tap to retry' "$MAIN"
           grep -q 'if (engine == null || !engine.isReady())' "$MAIN"
+          grep -q 'hiddenMediaKeys = new HashSet' "$MAIN"
+          grep -q 'hiddenContainsMedia(post)' "$MAIN"
+          grep -q 'readHideStore.hideAsync(post, mediaKey);' "$MAIN"
+          grep -q 'root.postDelayed(feedRecoveryRunnable, 24000L);' "$MAIN"
+          grep -q 'feedReservoir.size() >= FEED_RESERVOIR_MAX' "$MAIN"
+          ! grep -q 'if (!forceFallback && !sort.equals("random")) return;' "$MAIN"
+          STORE=android/app/src/main/java/com/scrolller/adblock/ReadHideStore.java
+          grep -q 'DB_VERSION = 2' "$STORE"
+          grep -q 'media_key TEXT' "$STORE"
+          grep -q 'Set<String> loadMediaKeys()' "$STORE"
           grep -q 'if (reset) cancelObsoleteRedditRequests();' "$MAIN"
           ! grep -q 'removeReadPostFromActiveFeed' "$MAIN"
           ! grep -q 'ACTIVE_FEED_BUFFER_LIMIT' "$MAIN"
@@ -133,15 +143,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='65'" /tmp/badging.txt
-          grep -q "versionName='3.9.18'" /tmp/badging.txt
+          grep -q "versionCode='66'" /tmp/badging.txt
+          grep -q "versionName='3.9.19'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.18-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.19-debug.apk
 
-      - name: Upload v3.9.18 APK
+      - name: Upload v3.9.19 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.18-debug-apk
-          path: dist/Reddit-Media-v3.9.18-debug.apk
+          name: reddit-media-v3.9.19-debug-apk
+          path: dist/Reddit-Media-v3.9.19-debug.apk
           if-no-files-found: error
           retention-days: 30
