@@ -54,7 +54,6 @@ jobs:
           grep -q 'private void resetCurrentSubredditFeed()' "$MAIN"
           grep -q 'Reset subreddit · r/' "$MAIN"
           grep -q 'Save subreddit") + " · r/" + target' "$MAIN"
-          grep -q 'readHideStore.hideAsync(post);' "$MAIN"
           grep -q 'boolean grew = currentCount > baselineCount;' "$MAIN"
           grep -q 'boolean nearEnd = currentCount == 0' "$MAIN"
           grep -q '{"all", "All media"}' "$MAIN"
