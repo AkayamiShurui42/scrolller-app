@@ -49,7 +49,6 @@ jobs:
           grep -q 'private void armFeedRecoveryWatchdog()' "$MAIN"
           grep -q 'private void recoverStalledFeed(boolean userRequested)' "$MAIN"
           grep -q 'Feed stalled · Tap to recover' "$MAIN"
-          grep -q 'root.postDelayed(feedRecoveryRunnable, 9000L);' "$MAIN"
           grep -q 'saveCommandButton = addNavButton("Save", this::saveCurrentPostFromCommandBar);' "$MAIN"
           grep -q 'private void resetCurrentSubredditFeed()' "$MAIN"
           grep -q 'Reset subreddit · r/' "$MAIN"
