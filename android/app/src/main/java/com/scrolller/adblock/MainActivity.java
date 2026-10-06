@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.19: persistent media-level read hiding and reservoir-aware long-session refill.
+// v3.9.20: keep feed parsing/backfill work from monopolizing the Android UI thread.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
@@ -2034,10 +2034,11 @@ private void loadQualityCollection(boolean reset) {
         historicalPrefetchRunning = true;
         final int generation = archivePrefetchGeneration;
         final String targetSubreddit = subreddit;
-        ArcticShiftClient.crawlSubreddit(targetSubreddit, 2400, new ArcticShiftClient.CrawlCallback() {
+        ArcticShiftClient.crawlSubreddit(targetSubreddit, 800, new ArcticShiftClient.CrawlCallback() {
             @Override
             public void onBatch(JSONArray items) {
                 if (!historicalSubredditContextValid(generation, targetSubreddit)) return;
+                if (feedReservoir.size() >= FEED_RESERVOIR_MAX) return;
                 ArrayList<RedditPost> additions = new ArrayList<>();
                 for (int i = 0; i < items.length(); i++) {
                     RedditPost post = redditPostFromArcticArchive(items.optJSONObject(i));
@@ -2291,6 +2292,7 @@ private void loadQualityCollection(boolean reset) {
             @Override
             public void onBatch(JSONArray items) {
                 if (!scrolllerContextStillValid(generation, targetSubreddit)) return;
+                if (feedReservoir.size() >= FEED_RESERVOIR_MAX) return;
                 ArrayList<RedditPost> additions = new ArrayList<>();
                 for (int i = 0; i < items.length(); i++) {
                     RedditPost post = RedditPost.fromScrolller(items.optJSONObject(i));
