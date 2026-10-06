@@ -13,6 +13,8 @@ import java.util.ArrayDeque;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class RedditSessionEngine {
     public interface Callback {
@@ -28,15 +30,22 @@ public final class RedditSessionEngine {
         public final int status;
         public final String body;
         public final String error;
+        private final JSONObject parsedObject;
 
         ApiResult(boolean ok, int status, String body, String error) {
+            this(ok, status, body, error, null);
+        }
+
+        ApiResult(boolean ok, int status, String body, String error, JSONObject parsedObject) {
             this.ok = ok;
             this.status = status;
             this.body = body == null ? "" : body;
             this.error = error == null ? "" : error;
+            this.parsedObject = parsedObject;
         }
 
         public JSONObject jsonObject() {
+            if (parsedObject != null) return parsedObject;
             try { return new JSONObject(body); } catch (Exception ignored) { return null; }
         }
     }
@@ -44,6 +53,12 @@ public final class RedditSessionEngine {
     private static final long MIN_REQUEST_GAP_MS = 900L;
     private static final long REQUEST_TIMEOUT_MS = 20000L;
     private static final int MAX_429_RETRIES = 2;
+    private static final ExecutorService RESPONSE_PARSER =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "reddit-response-parser");
+                t.setDaemon(true);
+                return t;
+            });
 
     private static final class PendingRequest {
         final String path;
@@ -227,23 +242,35 @@ public final class RedditSessionEngine {
     private final class Bridge {
         @JavascriptInterface
         public void deliver(String token, String payload) {
-            handler.post(() -> {
+            RESPONSE_PARSER.execute(() -> {
+                ApiResult apiResult;
+                String retryAfter = "";
+                String rateReset = "";
                 try {
                     JSONObject result = new JSONObject(payload);
-                    handleResult(
-                            token,
-                            new ApiResult(
-                                    result.optBoolean("ok", false),
-                                    result.optInt("status", 0),
-                                    result.optString("body", ""),
-                                    result.optString("error", "")
-                            ),
-                            result.optString("retryAfter", ""),
-                            result.optString("rateReset", "")
+                    String responseBody = result.optString("body", "");
+                    JSONObject parsedBody = null;
+                    if (!responseBody.isEmpty()) {
+                        try { parsedBody = new JSONObject(responseBody); } catch (Exception ignored) {}
+                    }
+                    apiResult = new ApiResult(
+                            result.optBoolean("ok", false),
+                            result.optInt("status", 0),
+                            responseBody,
+                            result.optString("error", ""),
+                            parsedBody
                     );
+                    retryAfter = result.optString("retryAfter", "");
+                    rateReset = result.optString("rateReset", "");
                 } catch (Exception e) {
-                    handleResult(token, new ApiResult(false, 0, "", e.getMessage()), "", "");
+                    apiResult = new ApiResult(false, 0, "", e.getMessage());
                 }
+
+                ApiResult finalResult = apiResult;
+                String finalRetryAfter = retryAfter;
+                String finalRateReset = rateReset;
+                handler.post(() -> handleResult(
+                        token, finalResult, finalRetryAfter, finalRateReset));
             });
         }
     }
