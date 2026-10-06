@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.20: keep feed parsing/backfill work from monopolizing the Android UI thread.
+// v3.9.21: mark active posts read immediately; persist session only on content-boundary exit.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
@@ -265,6 +265,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private final LinkedHashMap<String, RedditPost> hiddenPosts = new LinkedHashMap<>();
     private final Set<String> hiddenMediaKeys = new HashSet<>();
     private final LinkedHashMap<String, RedditPost> sessionReadCatalog = new LinkedHashMap<>();
+    private final Set<String> sessionReadMediaKeys = new HashSet<>();
     private final Set<String> mediaReadyPostIds = new HashSet<>();
     private final Set<String> mediaFailedPostIds = new HashSet<>();
     private String lastFullscreenPostId = "";
@@ -396,12 +397,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                         && screen != Screen.ACCOUNT
                         && screen != Screen.FAVORITES;
                 if (readEligible) {
+                    // Read classification happens as soon as a post becomes the
+                    // active on-screen page. The live pager remains unchanged;
+                    // persistence waits for a real subreddit/content-tab boundary.
+                    markVisiblePostRead(position);
                     if (fullscreenUserGesture) {
-                        // The real read transition is committed only once the swipe settles.
                         pendingUserFullscreenPosition = position;
                     } else {
-                        // Programmatic selections establish a baseline only. They never mark
-                        // a post read and never mark a post read.
                         setFullscreenReadBaseline(position);
                     }
                 } else {
@@ -1563,6 +1565,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         return !bare.isEmpty() && sessionReadCatalog.containsKey(bare);
     }
 
+    private boolean sessionReadContainsMedia(RedditPost post) {
+        if (post == null) return false;
+        String mediaKey = canonicalMediaKey(post);
+        return !mediaKey.isEmpty() && sessionReadMediaKeys.contains(mediaKey);
+    }
+
     private boolean isSavedForUnread(RedditPost post) {
         return post != null
                 && post.id != null
@@ -1720,6 +1728,15 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (!visible.isEmpty()) {
             noteFeedContentAvailable();
             hideStatus();
+            if (layoutMode.equals("fullscreen") && root != null) {
+                root.post(() -> {
+                    if (pager == null || postAdapter.getItemCount() == 0) return;
+                    int position = Math.max(0,
+                            Math.min(pager.getCurrentItem(), postAdapter.getItemCount() - 1));
+                    markVisiblePostRead(position);
+                    setFullscreenReadBaseline(position);
+                });
+            }
         }
     }
 
@@ -4563,6 +4580,15 @@ private void showCategoryRoot() {
         restorePendingPosition();
     }
 
+private void markVisiblePostRead(int position) {
+        if (!layoutMode.equals("fullscreen")
+                || screen == Screen.ACCOUNT
+                || screen == Screen.FAVORITES) return;
+        RedditPost current = postAdapter.getPost(position);
+        if (current == null || current.id == null || current.id.isEmpty()) return;
+        catalogSessionRead(current);
+    }
+
 private void setFullscreenReadBaseline(int position) {
         RedditPost current = postAdapter.getPost(position);
         if (current == null || current.id == null || current.id.isEmpty()) {
@@ -4594,14 +4620,9 @@ private void trackFullscreenVisit(int position) {
             }
         }
 
-        // Every completed manual swipe classifies the page just left as read.
-        // Fully-loaded media may already be in the catalog; uncertain/failed media
-        // enters here. The tiny HUD gives the user one-tap undo without blocking
-        // the feed or mutating the current pager order.
-        if (previous != null) {
-            catalogSessionRead(previous);
-            showReadUndoHud(previous);
-        }
+        // The previous page was already classified the moment it became active.
+        // Swiping away only exposes the unobtrusive undo HUD.
+        if (previous != null) showReadUndoHud(previous);
         lastFullscreenPostId = currentId;
     }
 
@@ -4612,17 +4633,8 @@ private void trackFullscreenVisit(int position) {
         String key = barePostId(post.id);
         if (!key.isEmpty()) sessionReadCatalog.put(key, post);
 
-        // Classification is durable immediately. This is intentionally not
-        // deferred until a subreddit/tab switch: once the user has seen or
-        // swiped away from a post, every later collector must treat it as hidden
-        // until the user explicitly unhides it.
-        if (!hiddenContainsPostId(post.id)) {
-            hiddenPosts.put(post.id, post);
-            String mediaKey = canonicalMediaKey(post);
-            if (!mediaKey.isEmpty()) hiddenMediaKeys.add(mediaKey);
-            readHideStore.hideAsync(post, mediaKey);
-            trimHiddenPostCache();
-        }
+        String mediaKey = canonicalMediaKey(post);
+        if (!mediaKey.isEmpty()) sessionReadMediaKeys.add(mediaKey);
     }
 
     private void showReadUndoHud(RedditPost post) {
@@ -4647,12 +4659,18 @@ private void trackFullscreenVisit(int position) {
 
         String bare = barePostId(post.id);
         if (!bare.isEmpty()) sessionReadCatalog.remove(bare);
-        hiddenPosts.remove(post.id);
-        hiddenPosts.remove(bare);
-        hiddenPosts.remove("t3_" + bare);
         String mediaKey = canonicalMediaKey(post);
-        if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
-        readHideStore.deleteAsync(post.id);
+        if (!mediaKey.isEmpty()) sessionReadMediaKeys.remove(mediaKey);
+
+        // If this post was already hidden from a previous committed session,
+        // undo should restore that persistent classification too.
+        if (hiddenContainsPostId(post.id) || hiddenContainsMedia(post)) {
+            hiddenPosts.remove(post.id);
+            hiddenPosts.remove(bare);
+            hiddenPosts.remove("t3_" + bare);
+            if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
+            readHideStore.deleteAsync(post.id);
+        }
 
         // Let the post become eligible for a later feed/random fetch. Do not
         // force it back into the current pager immediately; that gives failed
@@ -4672,9 +4690,20 @@ private void trackFullscreenVisit(int position) {
 
     private void commitSessionReadCatalog() {
         clearReadUndoHud();
-        // Posts are persisted at catalogSessionRead(). Navigation only closes the
-        // current session bookkeeping; it is no longer the durability boundary.
+        if (!sessionReadCatalog.isEmpty()) {
+            for (RedditPost post : new ArrayList<>(sessionReadCatalog.values())) {
+                if (post == null || post.id == null || post.id.isEmpty()) continue;
+                if (post.saved || savedContainsPostId(post.id)) continue;
+
+                String mediaKey = canonicalMediaKey(post);
+                if (!hiddenContainsPostId(post.id)) hiddenPosts.put(post.id, post);
+                if (!mediaKey.isEmpty()) hiddenMediaKeys.add(mediaKey);
+                readHideStore.hideAsync(post, mediaKey);
+            }
+        }
+
         sessionReadCatalog.clear();
+        sessionReadMediaKeys.clear();
         trimHiddenPostCache();
         lastFullscreenPostId = "";
         fullscreenUserGesture = false;
@@ -4914,7 +4943,6 @@ private void trackFullscreenVisit(int position) {
 
     private void recoverStalledFeed(boolean userRequested) {
         if (screen != Screen.HOME) return;
-        commitSessionReadCatalog();
         clearReadUndoHud();
 
         if (engine == null || !engine.isReady()) {
@@ -4963,10 +4991,9 @@ private void trackFullscreenVisit(int position) {
                 || subreddit == null || subreddit.isEmpty()) return;
 
         cancelObsoleteRedditRequests();
-        // Read posts have already been persisted at classification time. A reset
-        // therefore only throws away transport/pagination state and reloads the
-        // same subreddit from a clean cursor while keeping all read IDs hidden.
-        commitSessionReadCatalog();
+        // Reset stays inside the same subreddit session. Keep the session-read
+        // catalog in memory so already-viewed posts remain excluded from fresh
+        // fetches, but do not persist the whole session yet.
         loading = false;
         feedRecoveryRetried = false;
         setFullscreenChrome(true);
@@ -5188,16 +5215,6 @@ private void setFullscreenChrome(boolean visible) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
         mediaFailedPostIds.remove(post.id);
         mediaReadyPostIds.add(post.id);
-
-        // PostPagerAdapter only reports readiness for the active page. A fully
-        // rendered active post therefore has enough evidence to be classified
-        // as read immediately, even if the user leaves the subreddit without
-        // performing another swipe.
-        if (layoutMode.equals("fullscreen")
-                && screen != Screen.ACCOUNT
-                && screen != Screen.FAVORITES) {
-            catalogSessionRead(post);
-        }
     }
 
     @Override
@@ -5258,6 +5275,8 @@ private void setFullscreenChrome(boolean visible) {
                 savedPostIds.add(post.id);
                 savedPostIds.add(fullname);
                 sessionReadCatalog.remove(bare);
+                String sessionMediaKey = canonicalMediaKey(post);
+                if (!sessionMediaKey.isEmpty()) sessionReadMediaKeys.remove(sessionMediaKey);
 
                 hiddenPosts.remove(post.id);
                 hiddenPosts.remove(bare);
@@ -6548,7 +6567,8 @@ private void installCompactNavigation() {
                 && !post.id.isEmpty()
                 && (hiddenContainsPostId(post.id)
                 || hiddenContainsMedia(post)
-                || sessionReadContainsPostId(post.id));
+                || sessionReadContainsPostId(post.id)
+                || sessionReadContainsMedia(post));
     }
 
     private boolean shouldApplyJoinedOnlyFilter() {
