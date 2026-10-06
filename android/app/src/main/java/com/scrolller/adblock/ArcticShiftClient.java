@@ -19,8 +19,10 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 final class ArcticShiftClient {
     interface CrawlCallback {
@@ -86,7 +88,9 @@ final class ArcticShiftClient {
 
                     delivered += data.length();
                     JSONArray batch = data;
-                    MAIN.post(() -> callback.onBatch(batch));
+                    if (!deliverBatchBlocking(callback, batch)) {
+                        throw new IllegalStateException("Arctic Shift UI delivery timed out");
+                    }
 
                     long oldest = Long.MAX_VALUE;
                     for (int i = 0; i < data.length(); i++) {
@@ -111,6 +115,24 @@ final class ArcticShiftClient {
                 MAIN.post(() -> callback.onError(message));
             }
         });
+    }
+
+    private static boolean deliverBatchBlocking(
+            CrawlCallback callback, JSONArray batch) {
+        CountDownLatch latch = new CountDownLatch(1);
+        MAIN.post(() -> {
+            try {
+                callback.onBatch(batch);
+            } finally {
+                latch.countDown();
+            }
+        });
+        try {
+            return latch.await(30L, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private static JSONObject getJson(String url) throws Exception {
