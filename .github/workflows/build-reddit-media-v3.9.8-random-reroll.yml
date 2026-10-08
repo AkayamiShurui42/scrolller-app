@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.21 Random Reroll
+name: Build Reddit Media v3.9.22 Random Reroll
 
 on:
   push:
@@ -6,6 +6,8 @@ on:
       - fix/redview-read-filter-v3.9.3
     paths:
       - 'android/app/src/main/java/com/scrolller/adblock/MainActivity.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/PullPushClient.java'
       - 'android/app/build.gradle'
       - '.github/workflows/build-reddit-media-v3.9.8-random-reroll.yml'
   workflow_dispatch:
@@ -14,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.21-${{ github.ref }}
+  group: reddit-media-v3.9.22-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,11 +28,11 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.21 invariants
+      - name: Validate v3.9.22 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'versionCode 68' android/app/build.gradle
-          grep -q 'versionName "3.9.21"' android/app/build.gradle
+          grep -q 'versionCode 69' android/app/build.gradle
+          grep -q 'versionName "3.9.22"' android/app/build.gradle
           grep -q 'boolean repeatRandom = "random".equals(value) && "random".equals(sort);' "$MAIN"
           grep -q 'private void reshuffleCurrentRandomOrder()' "$MAIN"
           grep -q 'private void refillRandomAfterReroll()' "$MAIN"
@@ -113,6 +115,19 @@ jobs:
           grep -q 'markVisiblePostRead(position);' "$MAIN"
           grep -q 'readHideStore.hideAsync(post, mediaKey);' "$MAIN"
           ! grep -A20 'private void catalogSessionRead(RedditPost post)' "$MAIN" | grep -q 'readHideStore.hideAsync'
+          CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
+          PULLPUSH=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
+          grep -q 'FeedCacheStore feedCacheStore' "$MAIN"
+          grep -q 'hydrateSubredditCache(subreddit);' "$MAIN"
+          grep -q 'feedCacheStore.cacheAsync(incoming);' "$MAIN"
+          grep -q 'prefetchPullPushSubredditIfNeeded' "$MAIN"
+          grep -q 'pullPushBeforeUtc' "$MAIN"
+          grep -q 'class FeedCacheStore' "$CACHE"
+          grep -q 'cached_posts' "$CACHE"
+          grep -q 'loadSubredditAsync' "$CACHE"
+          grep -q 'class PullPushClient' "$PULLPUSH"
+          grep -q 'api.pullpush.io/reddit/search/submission' "$PULLPUSH"
+          grep -q 'sort_type=created_utc' "$PULLPUSH"
           grep -q 'if (reset) cancelObsoleteRedditRequests();' "$MAIN"
           ! grep -q 'removeReadPostFromActiveFeed' "$MAIN"
           ! grep -q 'ACTIVE_FEED_BUFFER_LIMIT' "$MAIN"
@@ -159,15 +174,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='68'" /tmp/badging.txt
-          grep -q "versionName='3.9.21'" /tmp/badging.txt
+          grep -q "versionCode='69'" /tmp/badging.txt
+          grep -q "versionName='3.9.22'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.21-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.22-debug.apk
 
-      - name: Upload v3.9.21 APK
+      - name: Upload v3.9.22 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.21-debug-apk
-          path: dist/Reddit-Media-v3.9.21-debug.apk
+          name: reddit-media-v3.9.22-debug-apk
+          path: dist/Reddit-Media-v3.9.22-debug.apk
           if-no-files-found: error
           retention-days: 30
