@@ -113,11 +113,11 @@ public final class RedditSessionEngine {
         handler.post(() -> {
             requestQueue.clear();
             inFlight.clear();
+            abortAllJavascriptRequests();
 
-            // The JavaScript fetch itself cannot be synchronously aborted from
-            // here, but detaching its token makes any late Bridge delivery a
-            // no-op. Releasing requestInFlight lets the new feed generation start
-            // immediately instead of sitting behind obsolete work.
+            // The WebView fetches themselves are aborted above, so releasing the
+            // Java-side lane cannot accumulate orphan requests across tab/sort
+            // changes.
             requestInFlight = false;
             nextRequestAtMs = 0L;
             drainScheduled = false;
@@ -161,6 +161,7 @@ public final class RedditSessionEngine {
         handler.postDelayed(() -> {
             PendingRequest timedOut = inFlight.remove(token);
             if (timedOut == null) return;
+            abortJavascriptRequest(token);
             finishRequest(timedOut, new ApiResult(false, 0, "", "Request timed out"));
         }, REQUEST_TIMEOUT_MS);
 
@@ -168,17 +169,48 @@ public final class RedditSessionEngine {
         String methodJs = JSONObject.quote(pending.method);
         String bodyJs = JSONObject.quote(pending.body);
         String tokenJs = JSONObject.quote(token);
-        String js = "(async()=>{try{" +
+        String js = "(async()=>{" +
+                "window.__redditMediaControllers=window.__redditMediaControllers||{};" +
+                "const token=" + tokenJs + ";" +
+                "const controller=new AbortController();" +
+                "window.__redditMediaControllers[token]=controller;" +
+                "try{" +
                 "const m=" + methodJs + ";" +
-                "const opts={method:m,credentials:'include',headers:{'Accept':'application/json'}};" +
+                "const opts={method:m,credentials:'include',signal:controller.signal,headers:{'Accept':'application/json'}};" +
                 "if(m==='POST'){opts.headers['Content-Type']='application/x-www-form-urlencoded; charset=UTF-8';opts.body=" + bodyJs + ";}" +
                 "const r=await fetch(" + pathJs + ",opts);" +
                 "const t=await r.text();" +
                 "const ra=r.headers.get('retry-after')||'';" +
                 "const rr=r.headers.get('x-ratelimit-reset')||'';" +
-                "NativeRedditBridge.deliver(" + tokenJs + ",JSON.stringify({ok:r.ok,status:r.status,body:t,error:'',retryAfter:ra,rateReset:rr}));" +
-                "}catch(e){NativeRedditBridge.deliver(" + tokenJs + ",JSON.stringify({ok:false,status:0,body:'',error:String(e),retryAfter:'',rateReset:''}));}})();";
+                "NativeRedditBridge.deliver(token,JSON.stringify({ok:r.ok,status:r.status,body:t,error:'',retryAfter:ra,rateReset:rr}));" +
+                "}catch(e){" +
+                "if(!(e&&e.name==='AbortError')){" +
+                "NativeRedditBridge.deliver(token,JSON.stringify({ok:false,status:0,body:'',error:String(e),retryAfter:'',rateReset:''}));" +
+                "}" +
+                "}finally{" +
+                "try{delete window.__redditMediaControllers[token];}catch(_e){}" +
+                "}})();";
         webView.evaluateJavascript(js, null);
+    }
+
+    private void abortJavascriptRequest(String token) {
+        if (token == null || token.isEmpty()) return;
+        String tokenJs = JSONObject.quote(token);
+        String js = "(function(){try{" +
+                "const m=window.__redditMediaControllers||{};" +
+                "const c=m[" + tokenJs + "];" +
+                "if(c){c.abort();delete m[" + tokenJs + "];}" +
+                "}catch(e){}})();";
+        try { webView.evaluateJavascript(js, null); } catch (RuntimeException ignored) {}
+    }
+
+    private void abortAllJavascriptRequests() {
+        String js = "(function(){try{" +
+                "const m=window.__redditMediaControllers||{};" +
+                "Object.keys(m).forEach(k=>{try{m[k].abort();}catch(e){}});" +
+                "window.__redditMediaControllers={};" +
+                "}catch(e){}})();";
+        try { webView.evaluateJavascript(js, null); } catch (RuntimeException ignored) {}
     }
 
     private void handleResult(
