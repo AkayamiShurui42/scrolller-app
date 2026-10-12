@@ -61,6 +61,8 @@ import java.util.Set;
 
 // v3.9.22: independent per-screen loaders + disk cache + PullPush fallback.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
+    // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
+
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
@@ -3057,22 +3059,7 @@ private void loadQualityCollection(boolean reset) {
         }
 
         if (searchScope.equals("subscribed")) {
-            if (username.isEmpty()) {
-                loading = false;
-                searchLoading = false;
-                setStatus("Sign in to search subscriptions.", false);
-                return;
-            }
-            ArrayList<String> groups = subscriptionSearchGroups();
-            if (groups.isEmpty()) {
-                loading = false;
-                searchLoading = false;
-                setStatus("No subscribed communities are available to search.", false);
-                return;
-            }
-            fetchRemoteSearchGroup(
-                    generation, groups, 0, "", new ArrayList<>(),
-                    new HashSet<>(), new HashSet<>(), 0, 0);
+            startSubscribedSearch(generation, false);
             return;
         }
 
@@ -3088,23 +3075,49 @@ private void loadQualityCollection(boolean reset) {
     }
 
     private ArrayList<String> subscriptionSearchGroups() {
-        ArrayList<String> names = new ArrayList<>();
+        ArrayList<String> groups = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
         for (Subscription sub : subscriptions) {
             if (sub == null) continue;
             String clean = cleanSubredditName(sub.name);
-            if (!clean.isEmpty()) names.add(clean);
-        }
-        ArrayList<String> groups = new ArrayList<>();
-        for (int i = 0; i < names.size(); i += 10) {
-            StringBuilder group = new StringBuilder();
-            int end = Math.min(names.size(), i + 10);
-            for (int j = i; j < end; j++) {
-                if (group.length() > 0) group.append('+');
-                group.append(names.get(j));
-            }
-            if (group.length() > 0) groups.add(group.toString());
+            String key = clean.toLowerCase(Locale.US);
+            if (!clean.isEmpty() && seen.add(key)) groups.add(clean);
         }
         return groups;
+    }
+
+    private void startSubscribedSearch(int generation, boolean refreshedOnce) {
+        if (!searchStillValid(generation) || !searchScope.equals("subscribed")) return;
+
+        if (username.isEmpty()) {
+            loading = false;
+            searchLoading = false;
+            setStatus("Sign in to search joined subreddits.", false);
+            return;
+        }
+
+        ArrayList<String> groups = subscriptionSearchGroups();
+        if (!groups.isEmpty()) {
+            setStatus("Searching " + groups.size() + " joined subreddits for “"
+                    + query + "”…", true);
+            fetchRemoteSearchGroup(
+                    generation, groups, 0, "", new ArrayList<>(),
+                    new HashSet<>(), new HashSet<>(), 0, 0);
+            return;
+        }
+
+        if (refreshedOnce) {
+            loading = false;
+            searchLoading = false;
+            setStatus("No joined subreddits are available to search.", false);
+            return;
+        }
+
+        setStatus("Refreshing joined subreddits…", true);
+        loadSubscriptions(() -> {
+            if (!searchStillValid(generation) || !searchScope.equals("subscribed")) return;
+            startSubscribedSearch(generation, true);
+        });
     }
 
     private void fetchRemoteSearchGroup(
@@ -3163,6 +3176,11 @@ private void loadQualityCollection(boolean reset) {
                 for (int i = 0; i < children.length(); i++) {
                     RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
                     if (post == null || !matchesMedia(post)) continue;
+                    if (searchScope.equals("subscribed")) {
+                        String joinedKey = cleanSubredditName(post.subreddit)
+                                .toLowerCase(Locale.US);
+                        if (joinedKey.isEmpty() || !subscriptionNames.contains(joinedKey)) continue;
+                    }
                     if (post.id == null || post.id.isEmpty()) continue;
                     if (!seenPostIds.add(post.id)) continue;
                     if (isReadHiddenForDiscovery(post)
@@ -4621,7 +4639,7 @@ private void showCategoryRoot() {
 
         String[][] values = {
                 {"global", "Global Reddit"},
-                {"subscribed", "Subscriptions"},
+                {"subscribed", "Joined subreddits"},
                 {"favorites", "Favorites / Saved"},
                 {"collector", "Collector · current app collection"}
         };
@@ -4704,7 +4722,7 @@ private void showCategoryRoot() {
     }
 
     private String searchScopeDescription() {
-        if (searchScope.equals("subscribed")) return "subscriptions";
+        if (searchScope.equals("subscribed")) return "joined subreddits";
         if (searchScope.equals("favorites")) return "Favorites";
         if (searchScope.equals("collector")) return "Collector";
         if (searchScope.equals("category")) {
@@ -4717,7 +4735,7 @@ private void showCategoryRoot() {
     }
 
     private String searchScopeLabel() {
-        if (searchScope.equals("subscribed")) return "Subs";
+        if (searchScope.equals("subscribed")) return "Joined";
         if (searchScope.equals("favorites")) return "Saved";
         if (searchScope.equals("collector")) return "Collector";
         if (searchScope.equals("category")) {
