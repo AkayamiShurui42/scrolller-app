@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.24 Random Reroll
+name: Build Reddit Media v3.9.25 Random Reroll
 
 on:
   push:
@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.24-${{ github.ref }}
+  group: reddit-media-v3.9.25-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,11 +30,11 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.24 invariants
+      - name: Validate v3.9.25 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'versionCode 71' android/app/build.gradle
-          grep -q 'versionName "3.9.24"' android/app/build.gradle
+          grep -q 'versionCode 72' android/app/build.gradle
+          grep -q 'versionName "3.9.25"' android/app/build.gradle
           grep -q 'boolean repeatRandom = "random".equals(value) && "random".equals(sort);' "$MAIN"
           grep -q 'private void reshuffleCurrentRandomOrder()' "$MAIN"
           grep -q 'private void refillRandomAfterReroll()' "$MAIN"
@@ -118,10 +118,15 @@ jobs:
           grep -q 'if (feedReservoir.size() >= FEED_RESERVOIR_MAX) return;' "$MAIN"
           grep -q 'private void markVisiblePostRead(int position)' "$MAIN"
           grep -q 'private void startSubscribedSearch(int generation, boolean refreshedOnce)' "$MAIN"
-          grep -q 'Searching " + groups.size() + " joined subreddits' "$MAIN"
           grep -q 'loadSubscriptions(() ->' "$MAIN"
-          grep -q 'subscriptionNames.contains(joinedKey)' "$MAIN"
           grep -q '{"subscribed", "Joined subreddits"}' "$MAIN"
+          grep -q 'searchJoinedSnapshot = new HashSet' "$MAIN"
+          grep -q 'private LinkedHashSet<String> joinedSubredditSnapshot()' "$MAIN"
+          grep -q 'for (int i = 0; i < names.size(); i += 10)' "$MAIN"
+          grep -q 'searchJoinedSnapshot.addAll(joined);' "$MAIN"
+          grep -q '!searchJoinedSnapshot.contains(joinedKey)' "$MAIN"
+          grep -q 'Searching " + joined.size() + " joined subreddits' "$MAIN"
+          grep -q 'joined.addAll(joinedSubredditSnapshot())' "$MAIN"
           grep -q 'sessionReadMediaKeys = new HashSet' "$MAIN"
           grep -q 'sessionReadContainsMedia(post)' "$MAIN"
           grep -q 'markVisiblePostRead(position);' "$MAIN"
@@ -201,15 +206,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='71'" /tmp/badging.txt
-          grep -q "versionName='3.9.24'" /tmp/badging.txt
+          grep -q "versionCode='72'" /tmp/badging.txt
+          grep -q "versionName='3.9.25'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.24-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.25-debug.apk
 
-      - name: Upload v3.9.24 APK
+      - name: Upload v3.9.25 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.24-debug-apk
-          path: dist/Reddit-Media-v3.9.24-debug.apk
+          name: reddit-media-v3.9.25-debug-apk
+          path: dist/Reddit-Media-v3.9.25-debug.apk
           if-no-files-found: error
           retention-days: 30
