@@ -242,6 +242,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private final ArrayList<Subscription> subscriptions = new ArrayList<>();
     private final Set<String> subscriptionNames = new HashSet<>();
+    private final Set<String> searchJoinedSnapshot = new HashSet<>();
     private final Set<String> feedSeenPostIds = new HashSet<>();
     private final Set<String> feedSeenCursors = new HashSet<>();
     private final Set<String> savedPostIds = new HashSet<>();
@@ -2997,6 +2998,7 @@ private void loadQualityCollection(boolean reset) {
         pager.setCurrentItem(0, false);
 
         final int generation = ++searchGeneration;
+        if (!searchScope.equals("subscribed")) searchJoinedSnapshot.clear();
         loading = true;
         searchLoading = true;
         setStatus("Searching " + searchScopeDescription() + " for “" + query + "”…", true);
@@ -3074,14 +3076,33 @@ private void loadQualityCollection(boolean reset) {
         return generation == searchGeneration && screen == Screen.SEARCH;
     }
 
-    private ArrayList<String> subscriptionSearchGroups() {
-        ArrayList<String> groups = new ArrayList<>();
-        HashSet<String> seen = new HashSet<>();
+    private LinkedHashSet<String> joinedSubredditSnapshot() {
+        LinkedHashSet<String> joined = new LinkedHashSet<>();
+        for (String name : subscriptionNames) {
+            String clean = cleanSubredditName(name);
+            if (!clean.isEmpty()) joined.add(clean.toLowerCase(Locale.US));
+        }
         for (Subscription sub : subscriptions) {
             if (sub == null) continue;
             String clean = cleanSubredditName(sub.name);
-            String key = clean.toLowerCase(Locale.US);
-            if (!clean.isEmpty() && seen.add(key)) groups.add(clean);
+            if (!clean.isEmpty()) joined.add(clean.toLowerCase(Locale.US));
+        }
+        return joined;
+    }
+
+    private ArrayList<String> subscriptionSearchGroups() {
+        ArrayList<String> names = new ArrayList<>(joinedSubredditSnapshot());
+        names.sort(String.CASE_INSENSITIVE_ORDER);
+
+        ArrayList<String> groups = new ArrayList<>();
+        for (int i = 0; i < names.size(); i += 10) {
+            StringBuilder group = new StringBuilder();
+            int end = Math.min(names.size(), i + 10);
+            for (int j = i; j < end; j++) {
+                if (group.length() > 0) group.append('+');
+                group.append(names.get(j));
+            }
+            if (group.length() > 0) groups.add(group.toString());
         }
         return groups;
     }
@@ -3096,9 +3117,12 @@ private void loadQualityCollection(boolean reset) {
             return;
         }
 
+        LinkedHashSet<String> joined = joinedSubredditSnapshot();
         ArrayList<String> groups = subscriptionSearchGroups();
-        if (!groups.isEmpty()) {
-            setStatus("Searching " + groups.size() + " joined subreddits for “"
+        if (!groups.isEmpty() && !joined.isEmpty()) {
+            searchJoinedSnapshot.clear();
+            searchJoinedSnapshot.addAll(joined);
+            setStatus("Searching " + joined.size() + " joined subreddits for “"
                     + query + "”…", true);
             fetchRemoteSearchGroup(
                     generation, groups, 0, "", new ArrayList<>(),
@@ -3179,7 +3203,7 @@ private void loadQualityCollection(boolean reset) {
                     if (searchScope.equals("subscribed")) {
                         String joinedKey = cleanSubredditName(post.subreddit)
                                 .toLowerCase(Locale.US);
-                        if (joinedKey.isEmpty() || !subscriptionNames.contains(joinedKey)) continue;
+                        if (joinedKey.isEmpty() || !searchJoinedSnapshot.contains(joinedKey)) continue;
                     }
                     if (post.id == null || post.id.isEmpty()) continue;
                     if (!seenPostIds.add(post.id)) continue;
@@ -3441,11 +3465,8 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         }
         if (searchScope.equals("subscribed")) {
             HashSet<String> allowed = new HashSet<>();
-            for (Subscription sub : subscriptions) {
-                if (sub == null) continue;
-                String clean = cleanSubredditName(sub.name);
-                if (!clean.isEmpty()) allowed.add(clean.toLowerCase(Locale.US));
-            }
+            if (!searchJoinedSnapshot.isEmpty()) allowed.addAll(searchJoinedSnapshot);
+            else allowed.addAll(joinedSubredditSnapshot());
             return allowed;
         }
         if (searchScope.equals("category")) {
@@ -4650,7 +4671,18 @@ private void showCategoryRoot() {
                 searchScope = pair[0];
                 prefs.edit().putString("searchScope", searchScope).apply();
                 dialog.dismiss();
-                if (!query.isEmpty()) loadSearchInternal();
+                if (searchScope.equals("subscribed") && joinedSubredditSnapshot().isEmpty()
+                        && !username.isEmpty()) {
+                    setStatus("Refreshing joined subreddits…", true);
+                    loadSubscriptions(() -> {
+                        if (!query.isEmpty() && screen == Screen.SEARCH
+                                && searchScope.equals("subscribed")) {
+                            loadSearchInternal();
+                        }
+                    });
+                } else if (!query.isEmpty()) {
+                    loadSearchInternal();
+                }
                 updateChrome();
             });
         }
@@ -6795,8 +6827,13 @@ private void installCompactNavigation() {
         // Joined-only is a discovery constraint, not permission to erase a feed
         // the user explicitly opened. Direct subreddit, multi-preset, and
         // subreddit-scoped search contexts always honor the explicit selection.
-        if (shouldApplyJoinedOnlyFilter() && !subscriptionNames.isEmpty()
-                && !subscriptionNames.contains(community)) return false;
+        if (shouldApplyJoinedOnlyFilter()) {
+            Set<String> joined = screen == Screen.SEARCH && searchScope.equals("subscribed")
+                    && !searchJoinedSnapshot.isEmpty()
+                    ? searchJoinedSnapshot
+                    : joinedSubredditSnapshot();
+            if (community.isEmpty() || !joined.contains(community)) return false;
+        }
 
         int sourceBit = 1;
         String origin = post.sourceOrigin == null ? "reddit" : post.sourceOrigin.toLowerCase(Locale.US);
