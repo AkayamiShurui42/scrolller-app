@@ -126,7 +126,7 @@ jobs:
           grep -q 'searchJoinedSnapshot.addAll(joined);' "$MAIN"
           grep -q '!searchJoinedSnapshot.contains(joinedKey)' "$MAIN"
           grep -q 'Searching " + joined.size() + " joined subreddits' "$MAIN"
-          grep -q 'joined.addAll(joinedSubredditSnapshot())' "$MAIN"
+          grep -q 'allowed.addAll(joinedSubredditSnapshot())' "$MAIN"
           grep -q 'sessionReadMediaKeys = new HashSet' "$MAIN"
           grep -q 'sessionReadContainsMedia(post)' "$MAIN"
           grep -q 'markVisiblePostRead(position);' "$MAIN"
