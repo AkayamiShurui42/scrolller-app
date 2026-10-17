@@ -190,10 +190,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private String context = "home";
     private String subreddit = "";
     private String sort = "random";
-    private String topTime = "day";
+    private String topTime = "all";
     private String media = "all";
     private String layoutMode = "fullscreen";
-    private String favoriteSort = "random";
+    private String favoriteSort = "saved_newest";
     private String favoritesView = "saved";
     private String searchScope = "global";
     private String searchSubreddit = "";
@@ -217,6 +217,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private boolean searchLoading;
     private boolean profileLoading;
     private boolean favoritesLoading;
+    private Runnable pendingFilterReload;
+    private int filterReloadToken = 0;
     private boolean initialized;
     private boolean muted = true;
     private boolean fullscreenChromeVisible = true;
@@ -309,7 +311,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         prefs = getSharedPreferences("native-redview", MODE_PRIVATE);
         loadSubredditPresets();
         sort = "random";
-        topTime = prefs.getString("topTime", "day");
+        topTime = prefs.getString("topTime", "all");
         media = prefs.getString("media", "all");
         layoutMode = prefs.getString("layout", "fullscreen");
         if (!layoutMode.equals("grid")) layoutMode = "fullscreen";
@@ -1013,7 +1015,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         history.clear();
-        sort = "random";
+        sort = "top";
+        topTime = "all";
         screen = Screen.HOME;
         context = "subreddit";
         subreddit = name;
@@ -1264,7 +1267,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             boolean oldest = sort.equals("oldest");
             boolean multi = context.equals("multi");
             int target = multi ? 180 : oldest ? 350 : random ? 320 : 60;
-            int pageLimit = multi ? 2 : topAll ? 12 : oldest ? 5 : random ? 6 : 5;
+            int pageLimit = multi ? 2 : topAll ? 4 : oldest ? 5 : random ? 6 : 5;
             boolean canContinue = !next.isEmpty()
                     && !feedSeenCursors.contains(next)
                     && page + 1 < pageLimit;
@@ -3094,17 +3097,10 @@ private void loadQualityCollection(boolean reset) {
         ArrayList<String> names = new ArrayList<>(joinedSubredditSnapshot());
         names.sort(String.CASE_INSENSITIVE_ORDER);
 
-        ArrayList<String> groups = new ArrayList<>();
-        for (int i = 0; i < names.size(); i += 10) {
-            StringBuilder group = new StringBuilder();
-            int end = Math.min(names.size(), i + 10);
-            for (int j = i; j < end; j++) {
-                if (group.length() > 0) group.append('+');
-                group.append(names.get(j));
-            }
-            if (group.length() > 0) groups.add(group.toString());
-        }
-        return groups;
+        // Search each joined community independently. Reddit's combined
+        // /r/a+b/search route is unreliable and one bad community used to make
+        // the entire Joined search look broken.
+        return names;
     }
 
     private void startSubscribedSearch(int generation, boolean refreshedOnce) {
@@ -3155,7 +3151,8 @@ private void loadQualityCollection(boolean reset) {
             int page,
             int rawFetched) {
         if (!searchStillValid(generation)) return;
-        if (groupIndex >= groups.size()) {
+        if (groupIndex >= groups.size()
+                || (searchScope.equals("subscribed") && collected.size() >= 120)) {
             finishSearchCollection(generation, collected);
             return;
         }
@@ -3670,7 +3667,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         if (screen != Screen.FAVORITES) pushCurrentState();
-        favoriteSort = "random";
+        favoriteSort = "saved_newest";
         favoritesView = "saved";
         screen = Screen.FAVORITES;
         profileUser = "";
@@ -4369,6 +4366,10 @@ private void showCategoryRoot() {
     }
 
     private void showSortSheet() {
+        if (screen == Screen.FAVORITES && favoritesView.equals("saved")) {
+            showFavoriteSortSheet();
+            return;
+        }
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Choose sorting option");
 
@@ -4554,8 +4555,8 @@ private void showCategoryRoot() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Favorites order");
         String[][] values = {
-                {"random", "Randomize"},
                 {"saved_newest", "Recently saved"},
+                {"random", "Randomize"},
                 {"saved_oldest", "Oldest saved"},
                 {"post_newest", "Newest post"},
                 {"post_oldest", "Oldest post"}
@@ -5229,6 +5230,21 @@ private void trackFullscreenVisit(int position) {
         setStatus("Resetting r/" + subreddit + "…", true);
         loadFeed(true);
         armFeedRecoveryWatchdog();
+    }
+
+    private void scheduleFilterReload() {
+        if (root == null) {
+            reloadCurrent();
+            return;
+        }
+        final int token = ++filterReloadToken;
+        if (pendingFilterReload != null) root.removeCallbacks(pendingFilterReload);
+        pendingFilterReload = () -> {
+            if (token != filterReloadToken) return;
+            pendingFilterReload = null;
+            reloadCurrent();
+        };
+        root.postDelayed(pendingFilterReload, 180L);
     }
 
     private void reloadCurrent() {
