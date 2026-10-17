@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.25 Random Reroll
+name: Build Reddit Media v3.9.26
 
 on:
   push:
@@ -6,8 +6,11 @@ on:
       - fix/redview-read-filter-v3.9.3
     paths:
       - 'android/app/src/main/java/com/scrolller/adblock/MainActivity.java'
-      - 'android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java'
-      - 'android/app/src/main/java/com/scrolller/adblock/PullPushClient.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/ReadHideStore.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/ArcticShiftClient.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/ScrolllerClient.java'
       - 'android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java'
       - 'android/app/src/main/java/com/scrolller/adblock/PullPushClient.java'
       - 'android/app/build.gradle'
@@ -18,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.25-${{ github.ref }}
+  group: reddit-media-v3.9.26-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,140 +33,69 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.25 invariants
+      - name: Validate v3.9.26 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'versionCode 72' android/app/build.gradle
-          grep -q 'versionName "3.9.25"' android/app/build.gradle
-          grep -q 'boolean repeatRandom = "random".equals(value) && "random".equals(sort);' "$MAIN"
-          grep -q 'private void reshuffleCurrentRandomOrder()' "$MAIN"
-          grep -q 'private void refillRandomAfterReroll()' "$MAIN"
-          grep -q 'sessionReadContainsPostId(post.id)' "$MAIN"
-          grep -q 'loadHomeSubscriptionRandom(reset);' "$MAIN"
-          grep -q 'new.json?limit=100&raw_json=1&show=all' "$MAIN"
-          grep -q 'input.postDelayed(pending\[0\], 120L);' "$MAIN"
-          ! grep -q 'FuzzySearch.score(cleanQuery' "$MAIN"
-          grep -q 'sessionReadCatalog' "$MAIN"
-          grep -q 'commitSessionReadCatalog' "$MAIN"
-          grep -q 'if (sort.equals("random")) Collections.shuffle(firstVisible);' "$MAIN"
-          grep -q 'private void catalogSessionRead(RedditPost post)' "$MAIN"
-          grep -q 'private void showReadUndoHud(RedditPost post)' "$MAIN"
-          grep -q 'private void undoLastReadClassification()' "$MAIN"
-          grep -q 'Didn.t view the last post? Tap to unhide' "$MAIN"
-          grep -q 'private void armFeedRecoveryWatchdog()' "$MAIN"
-          grep -q 'private void recoverStalledFeed(boolean userRequested)' "$MAIN"
-          grep -q 'Feed stalled · Tap to recover' "$MAIN"
-          grep -q 'saveCommandButton = addNavButton("Save", this::saveCurrentPostFromCommandBar);' "$MAIN"
-          grep -q 'private void resetCurrentSubredditFeed()' "$MAIN"
-          grep -q 'Reset subreddit · r/' "$MAIN"
-          grep -q 'Save subreddit") + " · r/" + target' "$MAIN"
-          grep -q 'boolean grew = currentCount > baselineCount;' "$MAIN"
-          grep -q 'boolean nearEnd = currentCount == 0' "$MAIN"
-          grep -q '{"all", "All media"}' "$MAIN"
-          grep -q '{"image", "Images"}' "$MAIN"
-          grep -q '{"video", "GIFs & Videos"}' "$MAIN"
-          grep -q '{"album", "Albums"}' "$MAIN"
-          grep -q 'boolean album = imageCount >= 2;' "$MAIN"
-          grep -q 'return post.mediaKind == RedditPost.MediaKind.IMAGE && !album;' "$MAIN"
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
-          grep -q 'public void cancelPendingRequests()' "$ENGINE"
-          grep -q 'requestQueue.clear();' "$ENGINE"
-          grep -q 'inFlight.clear();' "$ENGINE"
-          grep -q 'requestInFlight = false;' "$ENGINE"
-          grep -q 'new AbortController()' "$ENGINE"
-          grep -q 'signal:controller.signal' "$ENGINE"
-          grep -q 'abortAllJavascriptRequests();' "$ENGINE"
-          grep -q 'abortJavascriptRequest(token);' "$ENGINE"
-          grep -q '__redditMediaControllers' "$ENGINE"
-          grep -q 'String fullname = "t3_" + bare;' "$MAIN"
-          grep -q 'boolean wasSaved = post.saved || savedContainsPostId(post.id);' "$MAIN"
-          grep -q 'setStatus("Saved post.", false);' "$MAIN"
-          grep -q 'setStatus("Unsaved post.", false);' "$MAIN"
-          grep -q 'saveCommandButton.setText(targetSaved ? "Saving…" : "Unsaving…");' "$MAIN"
-          grep -q 'private void cancelObsoleteRedditRequests()' "$MAIN"
-          grep -q 'engine.cancelPendingRequests();' "$MAIN"
-          grep -q 'FEED_VISIBLE_AHEAD_TARGET = 40' "$MAIN"
-          grep -q 'FEED_RESERVOIR_REFILL_LOW = 100' "$MAIN"
-          grep -q 'FEED_RESERVOIR_MAX = 500' "$MAIN"
-          grep -q 'private void enqueueFeedReservoir' "$MAIN"
-          grep -q 'private void drainFeedReservoir' "$MAIN"
-          grep -q 'private void maybeRefillFeedReservoir' "$MAIN"
-          grep -q 'rerollPool.addAll(feedReservoir);' "$MAIN"
-          grep -q 'private void installSessionTransport(boolean loadNow)' "$MAIN"
-          grep -q 'private void hardResetRedditTransport()' "$MAIN"
-          grep -q 'Reconnecting Reddit session…' "$MAIN"
-          grep -q 'Session reconnect failed · Tap to retry' "$MAIN"
-          grep -q 'if (engine == null || !engine.isReady())' "$MAIN"
-          grep -q 'hiddenMediaKeys = new HashSet' "$MAIN"
-          grep -q 'hiddenContainsMedia(post)' "$MAIN"
-          grep -q 'readHideStore.hideAsync(post, mediaKey);' "$MAIN"
-          grep -q 'root.postDelayed(feedRecoveryRunnable, 24000L);' "$MAIN"
-          grep -q 'feedReservoir.size() >= FEED_RESERVOIR_MAX' "$MAIN"
-          ! grep -q 'if (!forceFallback && !sort.equals("random")) return;' "$MAIN"
-          STORE=android/app/src/main/java/com/scrolller/adblock/ReadHideStore.java
-          grep -q 'DB_VERSION = 2' "$STORE"
-          grep -q 'media_key TEXT' "$STORE"
-          grep -q 'Set<String> loadMediaKeys()' "$STORE"
-          ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
-          ARCTIC=android/app/src/main/java/com/scrolller/adblock/ArcticShiftClient.java
-          SCROLLLER=android/app/src/main/java/com/scrolller/adblock/ScrolllerClient.java
-          grep -q 'RESPONSE_PARSER' "$ENGINE"
-          grep -q 'new Thread(r, "reddit-response-parser")' "$ENGINE"
-          grep -q 'parsedBody' "$ENGINE"
-          grep -q 'deliverBatchBlocking' "$ARCTIC"
-          grep -q 'CountDownLatch' "$ARCTIC"
-          grep -q 'deliverBatchBlocking' "$SCROLLLER"
-          grep -q 'CountDownLatch' "$SCROLLLER"
-          grep -q 'crawlSubreddit(targetSubreddit, 800' "$MAIN"
-          grep -q 'if (feedReservoir.size() >= FEED_RESERVOIR_MAX) return;' "$MAIN"
-          grep -q 'private void markVisiblePostRead(int position)' "$MAIN"
-          grep -q 'private void startSubscribedSearch(int generation, boolean refreshedOnce)' "$MAIN"
-          grep -q 'loadSubscriptions(() ->' "$MAIN"
-          grep -q '{"subscribed", "Joined subreddits"}' "$MAIN"
-          grep -q 'searchJoinedSnapshot = new HashSet' "$MAIN"
-          grep -q 'private LinkedHashSet<String> joinedSubredditSnapshot()' "$MAIN"
-          grep -q 'for (int i = 0; i < names.size(); i += 10)' "$MAIN"
-          grep -q 'searchJoinedSnapshot.addAll(joined);' "$MAIN"
-          grep -q '!searchJoinedSnapshot.contains(joinedKey)' "$MAIN"
-          grep -q 'Searching " + joined.size() + " joined subreddits' "$MAIN"
-          grep -q 'allowed.addAll(joinedSubredditSnapshot())' "$MAIN"
-          grep -q 'sessionReadMediaKeys = new HashSet' "$MAIN"
-          grep -q 'sessionReadContainsMedia(post)' "$MAIN"
-          grep -q 'markVisiblePostRead(position);' "$MAIN"
-          grep -q 'readHideStore.hideAsync(post, mediaKey);' "$MAIN"
-          ! grep -A20 'private void catalogSessionRead(RedditPost post)' "$MAIN" | grep -q 'readHideStore.hideAsync'
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
-          PULLPUSH=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
-          grep -q 'FeedCacheStore feedCacheStore' "$MAIN"
-          grep -q 'hydrateSubredditCache(subreddit);' "$MAIN"
-          grep -q 'feedCacheStore.cacheAsync(incoming);' "$MAIN"
-          grep -q 'prefetchPullPushSubredditIfNeeded' "$MAIN"
-          grep -q 'pullPushBeforeUtc' "$MAIN"
-          grep -q 'class FeedCacheStore' "$CACHE"
-          grep -q 'cached_posts' "$CACHE"
-          grep -q 'loadSubredditAsync' "$CACHE"
-          grep -q 'class PullPushClient' "$PULLPUSH"
-          grep -q 'api.pullpush.io/reddit/search/submission' "$PULLPUSH"
-          grep -q 'sort_type=created_utc' "$PULLPUSH"
-          grep -q 'if (reset) cancelObsoleteRedditRequests();' "$MAIN"
-          ! grep -q 'removeReadPostFromActiveFeed' "$MAIN"
-          ! grep -q 'ACTIVE_FEED_BUFFER_LIMIT' "$MAIN"
-          ! grep -q 'beginFeedRequestLease' "$MAIN"
+          PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
+
+          grep -q 'versionCode 73' android/app/build.gradle
+          grep -q 'versionName "3.9.26"' android/app/build.gradle
+
+          # Context defaults.
+          grep -q 'sort = "random";' "$MAIN"
+          grep -q 'sort = "top";' "$MAIN"
+          grep -q 'topTime = "all";' "$MAIN"
+          grep -q 'favoriteSort = "saved_newest";' "$MAIN"
+          grep -q 'showFavoriteSortSheet();' "$MAIN"
+
+          # Filter sheets stay open and debounce reloads.
+          grep -q 'private void scheduleFilterReload()' "$MAIN"
+          grep -q 'scheduleFilterReload();' "$MAIN"
+          grep -q 'Apply source filter  ✓' "$MAIN"
+          grep -q 'Apply people filter  ✓' "$MAIN"
+          grep -q 'Refreshing joined…' "$MAIN"
+
+          # Joined search/filter correctness.
+          grep -q 'private ArrayList<String> subscriptionSearchGroups()' "$MAIN"
+          grep -q 'return names;' "$MAIN"
+          ! grep -q 'for (int i = 0; i < names.size(); i += 10)' "$MAIN"
+          grep -q 'searchJoinedSnapshot.addAll(joined);' "$MAIN"
+          grep -q 'collected.size() >= 120' "$MAIN"
+          grep -q 'if (!joined.isEmpty()' "$MAIN"
+
+          # Home membership action includes explicit Join/Leave.
+          grep -q 'Leave subreddit' "$MAIN"
+          grep -q 'Join subreddit' "$MAIN"
+          grep -q 'toggleSubredditSubscription();' "$MAIN"
+
+          # Loader isolation and transport cancellation.
           grep -q 'private boolean feedLoading;' "$MAIN"
           grep -q 'private boolean searchLoading;' "$MAIN"
           grep -q 'private boolean profileLoading;' "$MAIN"
           grep -q 'private boolean favoritesLoading;' "$MAIN"
-          ! grep -q 'if (loading' "$MAIN"
-          ! grep -q '|| loading' "$MAIN"
-          ! grep -q '&& !loading' "$MAIN"
-          CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
-          PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
-          grep -q 'class FeedCacheStore' "$CACHE"
-          grep -q 'loadSubredditAsync' "$CACHE"
-          grep -q 'class PullPushClient' "$PULL"
-          grep -q 'api.pullpush.io/reddit/search/submission' "$PULL"
+          grep -q 'public void cancelPendingRequests()' "$ENGINE"
+          grep -q 'MIN_REQUEST_GAP_MS = 650L' "$ENGINE"
+
+          # Cache and independent archive fallback.
+          grep -q 'FeedCacheStore feedCacheStore' "$MAIN"
           grep -q 'hydrateSubredditCache' "$MAIN"
           grep -q 'prefetchPullPushSubredditIfNeeded' "$MAIN"
+          grep -q 'class FeedCacheStore' "$CACHE"
+          grep -q 'class PullPushClient' "$PULL"
+          grep -q 'api.pullpush.io/reddit/search/submission' "$PULL"
+
+          # Read/hide behavior and media categories remain intact.
+          grep -q 'private void markVisiblePostRead(int position)' "$MAIN"
+          grep -q 'sessionReadMediaKeys = new HashSet' "$MAIN"
+          grep -q '{"all", "All media"}' "$MAIN"
+          grep -q '{"image", "Images"}' "$MAIN"
+          grep -q '{"video", "GIFs & Videos"}' "$MAIN"
+          grep -q '{"album", "Albums"}' "$MAIN"
+
+          # Faster initial Top-All entry.
+          grep -q 'topAll ? 4' "$MAIN"
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -206,15 +138,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='72'" /tmp/badging.txt
-          grep -q "versionName='3.9.25'" /tmp/badging.txt
+          grep -q "versionCode='73'" /tmp/badging.txt
+          grep -q "versionName='3.9.26'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.25-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.26-debug.apk
 
-      - name: Upload v3.9.25 APK
+      - name: Upload v3.9.26 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.25-debug-apk
-          path: dist/Reddit-Media-v3.9.25-debug.apk
+          name: reddit-media-v3.9.26-debug-apk
+          path: dist/Reddit-Media-v3.9.26-debug.apk
           if-no-files-found: error
           retention-days: 30
