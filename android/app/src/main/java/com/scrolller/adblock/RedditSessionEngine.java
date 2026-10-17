@@ -50,7 +50,7 @@ public final class RedditSessionEngine {
         }
     }
 
-    private static final long MIN_REQUEST_GAP_MS = 900L;
+    private static final long MIN_REQUEST_GAP_MS = 650L;
     private static final long REQUEST_TIMEOUT_MS = 20000L;
     private static final int MAX_429_RETRIES = 2;
     private static final ExecutorService RESPONSE_PARSER =
