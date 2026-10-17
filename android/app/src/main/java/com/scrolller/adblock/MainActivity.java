@@ -2362,6 +2362,7 @@ private void loadQualityCollection(boolean reset) {
             public void onComplete() {
                 if (screen != Screen.SEARCH) return;
                 loading = false;
+                searchLoading = false;
                 if (postAdapter.getItemCount() == 0) {
                     setStatus("No unread archived media found for "
                             + (kind.equals("author") ? "u/" : "r/") + target + ".", false);
@@ -2375,6 +2376,7 @@ private void loadQualityCollection(boolean reset) {
             public void onError(String error) {
                 if (screen != Screen.SEARCH) return;
                 loading = false;
+                searchLoading = false;
                 if (postAdapter.getItemCount() == 0) {
                     setStatus("Historical lookup failed: " + error, false);
                 }
@@ -2395,6 +2397,7 @@ private void loadQualityCollection(boolean reset) {
             public void onComplete(JSONArray items) {
                 if (screen != Screen.SEARCH) return;
                 loading = false;
+                searchLoading = false;
                 ArrayList<RedditPost> posts = archivePostsFromArray(items);
                 replacePosts(posts);
                 if (postAdapter.getItemCount() == 0) {
@@ -2409,6 +2412,7 @@ private void loadQualityCollection(boolean reset) {
             public void onError(String error) {
                 if (screen != Screen.SEARCH) return;
                 loading = false;
+                searchLoading = false;
                 setStatus("Archived post lookup failed: " + error, false);
             }
         });
@@ -6080,7 +6084,17 @@ private void installCompactNavigation() {
             joinedOnlyFilter = !joinedOnlyFilter;
             persistDiscoveryFilterPrefs();
             joined.setText("Subreddits · " + (joinedOnlyFilter ? "Joined only" : "Any"));
-            scheduleFilterReload();
+            if (joinedOnlyFilter && joinedSubredditSnapshot().isEmpty() && !username.isEmpty()) {
+                joined.setEnabled(false);
+                joined.setText("Subreddits · Refreshing joined…");
+                loadSubscriptions(() -> {
+                    joined.setEnabled(true);
+                    joined.setText("Subreddits · Joined only");
+                    scheduleFilterReload();
+                });
+            } else {
+                scheduleFilterReload();
+            }
         });
         video.setOnClickListener(v -> { dialog.dismiss(); showVideoFilterSheet(); });
         advanced.setOnClickListener(v -> { dialog.dismiss(); showAdvancedDiscoveryFilterSheet(); });
@@ -6857,13 +6871,14 @@ private void installCompactNavigation() {
                     && !searchJoinedSnapshot.isEmpty()
                     ? searchJoinedSnapshot
                     : joinedSubredditSnapshot();
-            if (community.isEmpty() || !joined.contains(community)) return false;
+            if (!joined.isEmpty()
+                    && (community.isEmpty() || !joined.contains(community))) return false;
         }
 
         int sourceBit = 1;
         String origin = post.sourceOrigin == null ? "reddit" : post.sourceOrigin.toLowerCase(Locale.US);
         if (origin.equals("scrolller")) sourceBit = 2;
-        else if (origin.equals("archive")) sourceBit = 4;
+        else if (origin.equals("archive") || origin.equals("pullpush")) sourceBit = 4;
         if (sourceFilterMask != 0 && (sourceFilterMask & sourceBit) == 0) return false;
 
         boolean video = post.mediaKind == RedditPost.MediaKind.VIDEO
@@ -7025,8 +7040,8 @@ private void installCompactNavigation() {
             peopleFilterMask = mask;
             blockLgbtTopics = false;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            apply.setText("Apply people filter  ✓");
+            scheduleFilterReload();
         });
         dialog.setContentView(body);
         dialog.show();
@@ -7138,8 +7153,9 @@ private void installCompactNavigation() {
             blockCurrent.setOnClickListener(v -> {
                 blockedCreators.add(author.toLowerCase(Locale.US));
                 persistDiscoveryFilterPrefs();
-                dialog.dismiss();
-                reloadCurrent();
+                blockCurrent.setText("Blocked · u/" + author + "  ✓");
+                blockCurrent.setEnabled(false);
+                scheduleFilterReload();
             });
         }
 
@@ -7358,14 +7374,24 @@ private void installCompactNavigation() {
         viewedMenu.setOnClickListener(v -> {
             showViewedPosts = !showViewedPosts;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            viewedMenu.setText("Viewed posts · " + (showViewedPosts ? "All" : "Unread only"));
+            scheduleFilterReload();
         });
         joinedMenu.setOnClickListener(v -> {
             joinedOnlyFilter = !joinedOnlyFilter;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            joinedMenu.setText("Subreddits · " + (joinedOnlyFilter ? "Joined only" : "Any"));
+            if (joinedOnlyFilter && joinedSubredditSnapshot().isEmpty() && !username.isEmpty()) {
+                joinedMenu.setEnabled(false);
+                joinedMenu.setText("Subreddits · Refreshing joined…");
+                loadSubscriptions(() -> {
+                    joinedMenu.setEnabled(true);
+                    joinedMenu.setText("Subreddits · Joined only");
+                    scheduleFilterReload();
+                });
+            } else {
+                scheduleFilterReload();
+            }
         });
         videoMenu.setOnClickListener(v -> { dialog.dismiss(); showVideoFilterSheet(); });
         advancedMenu.setOnClickListener(v -> { dialog.dismiss(); showAdvancedDiscoveryFilterSheet(); });
