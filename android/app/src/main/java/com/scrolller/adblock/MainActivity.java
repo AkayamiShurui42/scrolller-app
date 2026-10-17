@@ -4612,14 +4612,19 @@ private void showCategoryRoot() {
                 {"video", "GIFs & Videos"},
                 {"album", "Albums"}
         };
+        ArrayList<Button> buttons = new ArrayList<>();
         for (String[] pair : values) {
             Button b = sheetButton(pair[1] + (media.equals(pair[0]) ? "  ✓" : ""));
+            buttons.add(b);
             body.addView(b, sectionButtonParams());
             b.setOnClickListener(v -> {
                 media = pair[0];
                 prefs.edit().putString("media", media).apply();
-                dialog.dismiss();
-                reloadCurrent();
+                for (int i = 0; i < buttons.size(); i++) {
+                    buttons.get(i).setText(values[i][1]
+                            + (media.equals(values[i][0]) ? "  ✓" : ""));
+                }
+                scheduleFilterReload();
             });
         }
         dialog.setContentView(body);
@@ -6014,7 +6019,9 @@ private void installCompactNavigation() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("View");
         Button sortMenu = sheetButton("Sort · " + label(sort));
-        Button mediaMenu = sheetButton("Media · " + (media.equals("all") ? "All" : media.equals("image") ? "Images" : "Video / GIF"));
+        Button mediaMenu = sheetButton("Media · " + (media.equals("all") ? "All"
+                : media.equals("image") ? "Images"
+                : media.equals("album") ? "Albums" : "GIFs / Video"));
         Button filterMenu = sheetButton("Filter");
         Button contentMenu = sheetButton("Content · " + ContentTaxonomy.label(peopleFilterMask));
         Button viewedMenu = sheetButton("Viewed · " + (showViewedPosts ? "Include viewed" : "Unread only"));
@@ -6042,14 +6049,16 @@ private void installCompactNavigation() {
         unread.setOnClickListener(v -> {
             showViewedPosts = false;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            unread.setText("✓ Unread only");
+            all.setText("Include viewed");
+            scheduleFilterReload();
         });
         all.setOnClickListener(v -> {
             showViewedPosts = true;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            unread.setText("Unread only");
+            all.setText("✓ Include viewed");
+            scheduleFilterReload();
         });
         dialog.setContentView(body);
         dialog.show();
@@ -6070,8 +6079,8 @@ private void installCompactNavigation() {
         joined.setOnClickListener(v -> {
             joinedOnlyFilter = !joinedOnlyFilter;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            joined.setText("Subreddits · " + (joinedOnlyFilter ? "Joined only" : "Any"));
+            scheduleFilterReload();
         });
         video.setOnClickListener(v -> { dialog.dismiss(); showVideoFilterSheet(); });
         advanced.setOnClickListener(v -> { dialog.dismiss(); showAdvancedDiscoveryFilterSheet(); });
@@ -7051,8 +7060,8 @@ private void installCompactNavigation() {
             if (archive.isChecked()) mask |= 4;
             sourceFilterMask = (mask == 0 || mask == 7) ? 0 : mask;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            apply.setText("Apply source filter  ✓");
+            scheduleFilterReload();
         });
         dialog.setContentView(body);
         dialog.show();
@@ -7072,14 +7081,15 @@ private void installCompactNavigation() {
             minimumVideoHeight = minimumVideoHeight <= 0 ? 720
                     : minimumVideoHeight == 720 ? 1080 : 0;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            quality.setText("Minimum resolution · "
+                    + (minimumVideoHeight <= 0 ? "Any" : minimumVideoHeight + "p+"));
+            scheduleFilterReload();
         });
         length.setOnClickListener(v -> {
             videoLengthMode = (videoLengthMode + 1) % 4;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            length.setText("Length · " + videoLengthLabel());
+            scheduleFilterReload();
         });
         dialog.setContentView(body);
         dialog.show();
@@ -7147,8 +7157,8 @@ private void installCompactNavigation() {
                 if (!clean.isEmpty()) blockedCreators.add(clean);
             }
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            save.setText("Save advanced filters  ✓");
+            scheduleFilterReload();
         });
         dialog.setContentView(scroll);
         dialog.show();
