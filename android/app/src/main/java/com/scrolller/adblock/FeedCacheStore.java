@@ -11,7 +11,10 @@ import android.os.Looper;
 import org.json.JSONArray;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -101,6 +104,81 @@ final class FeedCacheStore extends SQLiteOpenHelper {
             } catch (Exception ignored) {}
             if (callback != null) main.post(() -> callback.onLoaded(posts));
         });
+    }
+
+    void searchSubredditsAsync(
+            Set<String> subreddits,
+            String query,
+            int limit,
+            LoadCallback callback) {
+        final HashSet<String> allowed = new HashSet<>();
+        if (subreddits != null) {
+            for (String value : subreddits) {
+                if (value == null) continue;
+                String clean = value.trim().toLowerCase(Locale.US);
+                if (!clean.isEmpty()) allowed.add(clean);
+            }
+        }
+        final String needle = query == null ? "" : query.trim();
+        final int boundedLimit = Math.max(1, Math.min(limit, 1000));
+
+        if (allowed.isEmpty()) {
+            if (callback != null) main.post(() -> callback.onLoaded(new ArrayList<>()));
+            return;
+        }
+
+        io.execute(() -> {
+            ArrayList<RedditPost> matches = new ArrayList<>();
+            String normalized = FuzzySearch.normalize(needle);
+            int threshold = FuzzySearch.thresholdFor(normalized.length());
+
+            try (Cursor cursor = getReadableDatabase().query(
+                    TABLE,
+                    new String[]{
+                            "id","title","author","subreddit","permalink","source_url",
+                            "score","comments","created_utc","nsfw","media_kind","image_urls",
+                            "video_url","poster_url","media_width","media_height",
+                            "duration_seconds","search_metadata","source_origin"
+                    },
+                    "nsfw=1",
+                    null,
+                    null,
+                    null,
+                    "cached_at DESC",
+                    "8000")) {
+                while (cursor.moveToNext() && matches.size() < boundedLimit) {
+                    RedditPost post = fromCursor(cursor);
+                    if (post == null || post.subreddit == null) continue;
+                    String community = post.subreddit.trim().toLowerCase(Locale.US);
+                    if (!allowed.contains(community)) continue;
+
+                    if (!normalized.isEmpty()) {
+                        int score = cachedSearchScore(post, needle);
+                        if (score < threshold) continue;
+                    }
+                    matches.add(post);
+                }
+            } catch (Exception ignored) {}
+
+            if (callback != null) main.post(() -> callback.onLoaded(matches));
+        });
+    }
+
+    private static int cachedSearchScore(RedditPost post, String query) {
+        if (post == null) return 0;
+        int subredditScore = FuzzySearch.score(query, post.subreddit);
+        int titleScore = FuzzySearch.score(query, post.title);
+        int authorScore = FuzzySearch.score(query, post.author);
+        int metadataScore = FuzzySearch.score(query, post.searchMetadata);
+        int urlScore = Math.max(
+                FuzzySearch.score(query, post.permalink),
+                FuzzySearch.score(query, post.sourceUrl));
+        int best = Math.max(titleScore,
+                Math.max(authorScore, Math.max(metadataScore, urlScore)));
+        if (subredditScore > 0) {
+            best = Math.max(best, Math.min(1000, subredditScore + 90));
+        }
+        return best;
     }
 
     private void upsert(SQLiteDatabase db, RedditPost post, long now) {
