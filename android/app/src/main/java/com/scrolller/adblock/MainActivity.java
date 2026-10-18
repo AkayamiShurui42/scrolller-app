@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.22: independent per-screen loaders + disk cache + PullPush fallback.
+// v3.9.28: make Joined search/filter persistent, atomic, cache-first, live-filtered, and archive-backed.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -309,6 +309,15 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         feedCacheStore = new FeedCacheStore(this);
         LegacyHiddenPrefsPreflight.migrateIfNeeded(this, readHideStore);
         prefs = getSharedPreferences("native-redview", MODE_PRIVATE);
+        Set<String> persistedJoined = prefs.getStringSet("joinedSubredditsV1", null);
+        if (persistedJoined != null) {
+            for (String value : persistedJoined) {
+                String clean = cleanSubredditName(value);
+                if (clean.isEmpty()) continue;
+                String key = clean.toLowerCase(Locale.US);
+                if (subscriptionNames.add(key)) subscriptions.add(new Subscription(clean, ""));
+            }
+        }
         loadSubredditPresets();
         sort = "random";
         topTime = prefs.getString("topTime", "all");
@@ -860,24 +869,37 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void loadSubscriptions(@Nullable Runnable done) {
-        subscriptions.clear();
-        subscriptionNames.clear();
         if (username.isEmpty()) {
             if (done != null) done.run();
             if (screen == Screen.ACCOUNT) renderAccount();
             return;
         }
-        loadSubscriptionsPage("", 0, done);
+        loadSubscriptionsPage(
+                "", 0, done, new ArrayList<>(), new LinkedHashSet<>());
     }
 
-    private void loadSubscriptionsPage(String cursor, int page, @Nullable Runnable done) {
+    private void loadSubscriptionsPage(
+            String cursor,
+            int page,
+            @Nullable Runnable done,
+            ArrayList<Subscription> pendingSubscriptions,
+            LinkedHashSet<String> pendingNames) {
         if (page >= 12) {
-            finishSubscriptions(done);
+            finishSubscriptions(done, pendingSubscriptions, pendingNames);
             return;
         }
         String path = "/subreddits/mine/subscriber.json?limit=100&raw_json=1";
         if (!cursor.isEmpty()) path += "&after=" + enc(cursor);
         engine.get(path, result -> {
+            if (!result.ok) {
+                // Keep the last known-good Joined snapshot. A failed refresh must
+                // never temporarily turn Joined-only into an empty/allow-all set.
+                if (done != null) done.run();
+                if (screen == Screen.ACCOUNT) renderAccount();
+                updateChrome();
+                return;
+            }
+
             JSONObject root = result.jsonObject();
             JSONObject data = root != null ? root.optJSONObject("data") : null;
             JSONArray children = data != null ? data.optJSONArray("children") : null;
@@ -886,21 +908,39 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     JSONObject d = children.optJSONObject(i) != null
                             ? children.optJSONObject(i).optJSONObject("data") : null;
                     if (d == null) continue;
-                    String name = d.optString("display_name", "");
+                    String name = cleanSubredditName(d.optString("display_name", ""));
                     if (name.isEmpty()) continue;
-                    subscriptions.add(new Subscription(
+                    String key = name.toLowerCase(Locale.US);
+                    if (!pendingNames.add(key)) continue;
+                    pendingSubscriptions.add(new Subscription(
                             name,
                             RedditPost.decode(d.optString("title", ""))));
-                    subscriptionNames.add(name.toLowerCase(Locale.US));
                 }
             }
             String next = data != null ? data.optString("after", "") : "";
-            if (!next.isEmpty()) loadSubscriptionsPage(next, page + 1, done);
-            else finishSubscriptions(done);
+            if (!next.isEmpty()) {
+                loadSubscriptionsPage(
+                        next, page + 1, done, pendingSubscriptions, pendingNames);
+            } else {
+                finishSubscriptions(done, pendingSubscriptions, pendingNames);
+            }
         });
     }
 
-    private void finishSubscriptions(@Nullable Runnable done) {
+    private void finishSubscriptions(
+            @Nullable Runnable done,
+            ArrayList<Subscription> pendingSubscriptions,
+            LinkedHashSet<String> pendingNames) {
+        if (pendingNames != null && !pendingNames.isEmpty()) {
+            subscriptions.clear();
+            subscriptionNames.clear();
+            subscriptions.addAll(pendingSubscriptions);
+            subscriptionNames.addAll(pendingNames);
+            prefs.edit()
+                    .putStringSet("joinedSubredditsV1", new HashSet<>(subscriptionNames))
+                    .apply();
+        }
+
         subscriptions.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
         if (done != null) done.run();
         if (screen == Screen.ACCOUNT) renderAccount();
@@ -3150,12 +3190,15 @@ private void loadQualityCollection(boolean reset) {
         }
 
         LinkedHashSet<String> joined = joinedSubredditSnapshot();
-        ArrayList<String> groups = subscriptionSearchGroups();
-        if (!groups.isEmpty() && !joined.isEmpty()) {
+        ArrayList<String> groups = new ArrayList<>();
+        groups.add("__global__");
+        if (!joined.isEmpty()) {
             searchJoinedSnapshot.clear();
             searchJoinedSnapshot.addAll(joined);
             setStatus("Searching " + joined.size() + " joined subreddits for “"
                     + query + "”…", true);
+
+            startJoinedPullPushSearch(generation, joined);
 
             if (feedCacheStore != null) {
                 feedCacheStore.searchSubredditsAsync(
@@ -3207,6 +3250,57 @@ private void loadQualityCollection(boolean reset) {
         loadSubscriptions(() -> {
             if (!searchStillValid(generation) || !searchScope.equals("subscribed")) return;
             startSubscribedSearch(generation, true);
+        });
+    }
+
+    private void startJoinedPullPushSearch(
+            int generation,
+            Set<String> joined) {
+        if (!searchStillValid(generation)
+                || !searchScope.equals("subscribed")
+                || joined == null
+                || joined.isEmpty()
+                || query == null
+                || query.trim().isEmpty()) return;
+
+        PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
+            @Override
+            public void onComplete(JSONArray items) {
+                if (!searchStillValid(generation)
+                        || !searchScope.equals("subscribed")
+                        || items == null) return;
+
+                ArrayList<RedditPost> additions = new ArrayList<>();
+                HashSet<String> existing = new HashSet<>();
+                for (RedditPost current : postAdapter.getPosts()) {
+                    if (current != null && current.id != null) existing.add(current.id);
+                }
+
+                for (int i = 0; i < items.length(); i++) {
+                    RedditPost post = redditPostFromArcticArchive(items.optJSONObject(i));
+                    if (post == null || post.id == null || post.id.isEmpty()) continue;
+                    post.sourceOrigin = "pullpush";
+                    if (!postAllowedBySearchScope(post)) continue;
+                    if (!matchesMedia(post) || !localWithinTopTime(post)) continue;
+                    if (isReadHiddenForDiscovery(post)
+                            || isSavedForUnread(post)
+                            || isContentBlocked(post)) continue;
+                    if (!existing.add(post.id)) continue;
+                    additions.add(post);
+                }
+
+                if (!additions.isEmpty()) {
+                    sortLocalSearch(additions);
+                    appendUnique(additions);
+                    hideStatus();
+                    updateChrome();
+                }
+            }
+
+            @Override
+            public void onError(String error) {
+                // Independent fallback failure must not break cache or Reddit search.
+            }
         });
     }
 
@@ -3288,8 +3382,10 @@ private void loadQualityCollection(boolean reset) {
             String next = data != null ? data.optString("after", "") : "";
             int nextRawFetched = rawFetched + pageRawCount;
             boolean deepSingleSource = searchScope.equals("global")
-                    || searchScope.equals("subreddit");
-            int maxPages = deepSingleSource ? 4 : 1;
+                    || searchScope.equals("subreddit")
+                    || (searchScope.equals("subscribed") && group.equals("__global__"));
+            int maxPages = searchScope.equals("subscribed") ? 8
+                    : deepSingleSource ? 4 : 1;
             boolean canContinue = !next.isEmpty()
                     && !seenCursors.contains(next)
                     && page + 1 < maxPages;
@@ -6949,8 +7045,10 @@ private void installCompactNavigation() {
                     && !searchJoinedSnapshot.isEmpty()
                     ? searchJoinedSnapshot
                     : joinedSubredditSnapshot();
-            if (!joined.isEmpty()
-                    && (community.isEmpty() || !joined.contains(community))) return false;
+            // Joined-only must fail closed. An empty membership snapshot is not
+            // permission to leak posts from arbitrary subreddits.
+            if (joined.isEmpty()) return false;
+            if (community.isEmpty() || !joined.contains(community)) return false;
         }
 
         int sourceBit = 1;
