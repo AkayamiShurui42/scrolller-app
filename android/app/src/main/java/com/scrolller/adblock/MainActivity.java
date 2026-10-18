@@ -3097,6 +3097,38 @@ private void loadQualityCollection(boolean reset) {
         return joined;
     }
 
+    private boolean postAllowedBySearchScope(RedditPost post) {
+        if (post == null) return false;
+        if (screen != Screen.SEARCH) return true;
+
+        String community = cleanSubredditName(post.subreddit).toLowerCase(Locale.US);
+
+        if (searchScope.equals("subscribed")) {
+            Set<String> joined = !searchJoinedSnapshot.isEmpty()
+                    ? searchJoinedSnapshot
+                    : joinedSubredditSnapshot();
+            return !joined.isEmpty()
+                    && !community.isEmpty()
+                    && joined.contains(community);
+        }
+
+        if (searchScope.equals("subreddit")) {
+            String target = cleanSubredditName(searchSubreddit).toLowerCase(Locale.US);
+            return !target.isEmpty() && target.equals(community);
+        }
+
+        if (searchScope.equals("category")) {
+            if (searchCategoryCommunities.isEmpty()) return false;
+            for (String value : searchCategoryCommunities) {
+                String target = cleanSubredditName(value).toLowerCase(Locale.US);
+                if (!target.isEmpty() && target.equals(community)) return true;
+            }
+            return false;
+        }
+
+        return true;
+    }
+
     private ArrayList<String> subscriptionSearchGroups() {
         ArrayList<String> names = new ArrayList<>(joinedSubredditSnapshot());
         names.sort(String.CASE_INSENSITIVE_ORDER);
@@ -3124,9 +3156,43 @@ private void loadQualityCollection(boolean reset) {
             searchJoinedSnapshot.addAll(joined);
             setStatus("Searching " + joined.size() + " joined subreddits for “"
                     + query + "”…", true);
-            fetchRemoteSearchGroup(
-                    generation, groups, 0, "", new ArrayList<>(),
-                    new HashSet<>(), new HashSet<>(), 0, 0);
+
+            if (feedCacheStore != null) {
+                feedCacheStore.searchSubredditsAsync(
+                        joined, query, 250, cached -> {
+                            if (!searchStillValid(generation)
+                                    || !searchScope.equals("subscribed")) return;
+
+                            ArrayList<RedditPost> collected = new ArrayList<>();
+                            HashSet<String> seenIds = new HashSet<>();
+                            if (cached != null) {
+                                for (RedditPost post : cached) {
+                                    if (post == null || post.id == null || post.id.isEmpty()) continue;
+                                    if (!postAllowedBySearchScope(post)) continue;
+                                    if (!matchesMedia(post) || !localWithinTopTime(post)) continue;
+                                    if (isReadHiddenForDiscovery(post)
+                                            || isSavedForUnread(post)
+                                            || isContentBlocked(post)) continue;
+                                    if (seenIds.add(post.id)) collected.add(post);
+                                }
+                            }
+
+                            if (!collected.isEmpty()) {
+                                sortLocalSearch(collected);
+                                replacePosts(new ArrayList<>(collected));
+                                hideStatus();
+                                updateChrome();
+                            }
+
+                            fetchRemoteSearchGroup(
+                                    generation, groups, 0, "", collected,
+                                    seenIds, new HashSet<>(), 0, 0);
+                        });
+            } else {
+                fetchRemoteSearchGroup(
+                        generation, groups, 0, "", new ArrayList<>(),
+                        new HashSet<>(), new HashSet<>(), 0, 0);
+            }
             return;
         }
 
@@ -3156,7 +3222,7 @@ private void loadQualityCollection(boolean reset) {
             int rawFetched) {
         if (!searchStillValid(generation)) return;
         if (groupIndex >= groups.size()
-                || (searchScope.equals("subscribed") && collected.size() >= 120)) {
+                || (searchScope.equals("subscribed") && collected.size() >= 250)) {
             finishSearchCollection(generation, collected);
             return;
         }
@@ -3201,11 +3267,7 @@ private void loadQualityCollection(boolean reset) {
                 for (int i = 0; i < children.length(); i++) {
                     RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
                     if (post == null || !matchesMedia(post)) continue;
-                    if (searchScope.equals("subscribed")) {
-                        String joinedKey = cleanSubredditName(post.subreddit)
-                                .toLowerCase(Locale.US);
-                        if (joinedKey.isEmpty() || !searchJoinedSnapshot.contains(joinedKey)) continue;
-                    }
+                    if (!postAllowedBySearchScope(post)) continue;
                     if (post.id == null || post.id.isEmpty()) continue;
                     if (!seenPostIds.add(post.id)) continue;
                     if (isReadHiddenForDiscovery(post)
@@ -3543,7 +3605,8 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
                 if (children != null) {
                     for (int i = 0; i < children.length(); i++) {
                         RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                        if (post == null || !matchesMedia(post)) continue;
+                        if (post == null || !postAllowedBySearchScope(post)
+                                || !matchesMedia(post)) continue;
                         if (post.id == null || post.id.isEmpty()) continue;
                         if (isReadHiddenForDiscovery(post)
                                 || isSavedForUnread(post)
@@ -3603,7 +3666,11 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         engine.get(path, result -> {
             if (!searchStillValid(generation)) return;
             if (result.ok) {
-                ArrayList<RedditPost> additions = parseListing(result.jsonObject(), true);
+                ArrayList<RedditPost> parsed = parseListing(result.jsonObject(), true);
+                ArrayList<RedditPost> additions = new ArrayList<>();
+                for (RedditPost post : parsed) {
+                    if (postAllowedBySearchScope(post)) additions.add(post);
+                }
                 appendUnique(additions);
                 if (postAdapter.getItemCount() > 0) hideStatus();
             }
@@ -6746,7 +6813,16 @@ private void installCompactNavigation() {
         String normalized = FuzzySearch.normalize(query);
         if (normalized.isEmpty()) return;
         ArrayList<String> candidates = knownNsfwSubreddits();
-        candidates.removeIf(name -> FuzzySearch.score(query, name) < FuzzySearch.thresholdFor(normalized.length()));
+        if (searchScope.equals("subscribed")) {
+            Set<String> joined = !searchJoinedSnapshot.isEmpty()
+                    ? searchJoinedSnapshot : joinedSubredditSnapshot();
+            candidates.removeIf(name -> {
+                String key = cleanSubredditName(name).toLowerCase(Locale.US);
+                return key.isEmpty() || !joined.contains(key);
+            });
+        }
+        candidates.removeIf(name -> FuzzySearch.score(query, name)
+                < FuzzySearch.thresholdFor(normalized.length()));
         candidates.sort((a, b) -> Integer.compare(FuzzySearch.score(query, b), FuzzySearch.score(query, a)));
         if (candidates.size() > 6) candidates = new ArrayList<>(candidates.subList(0, 6));
         fetchSubredditNameLeadIn(generation, candidates, 0);
@@ -6766,7 +6842,9 @@ private void installCompactNavigation() {
                 if (children != null) {
                     for (int i = 0; i < children.length(); i++) {
                         RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                        if (post == null || !post.nsfw || !matchesMedia(post) || isContentBlocked(post)) continue;
+                        if (post == null || !postAllowedBySearchScope(post)
+                                || !post.nsfw || !matchesMedia(post)
+                                || isContentBlocked(post)) continue;
                         additions.add(post);
                     }
                 }
