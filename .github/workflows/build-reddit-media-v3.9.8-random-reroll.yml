@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.26
+name: Build Reddit Media v3.9.27
 
 on:
   push:
@@ -13,6 +13,7 @@ on:
       - 'android/app/src/main/java/com/scrolller/adblock/ScrolllerClient.java'
       - 'android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java'
       - 'android/app/src/main/java/com/scrolller/adblock/PullPushClient.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/PullPushSearchClient.java'
       - 'android/app/build.gradle'
       - '.github/workflows/build-reddit-media-v3.9.8-random-reroll.yml'
   workflow_dispatch:
@@ -21,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.26-${{ github.ref }}
+  group: reddit-media-v3.9.27-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -33,15 +34,15 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.26 invariants
+      - name: Validate v3.9.27 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 73' android/app/build.gradle
-          grep -q 'versionName "3.9.26"' android/app/build.gradle
+          grep -q 'versionCode 74' android/app/build.gradle
+          grep -q 'versionName "3.9.27"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -62,7 +63,11 @@ jobs:
           grep -q 'return names;' "$MAIN"
           ! grep -q 'for (int i = 0; i < names.size(); i += 10)' "$MAIN"
           grep -q 'searchJoinedSnapshot.addAll(joined);' "$MAIN"
-          grep -q 'collected.size() >= 120' "$MAIN"
+          grep -q 'collected.size() >= 250' "$MAIN"
+          grep -q 'private boolean postAllowedBySearchScope(RedditPost post)' "$MAIN"
+          grep -q 'feedCacheStore.searchSubredditsAsync' "$MAIN"
+          grep -q '!postAllowedBySearchScope(post)' "$MAIN"
+          grep -q 'searchSubredditsAsync(' "$CACHE"
           grep -q 'if (!joined.isEmpty()' "$MAIN"
 
           # Home membership action includes explicit Join/Leave.
@@ -138,15 +143,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='73'" /tmp/badging.txt
-          grep -q "versionName='3.9.26'" /tmp/badging.txt
+          grep -q "versionCode='74'" /tmp/badging.txt
+          grep -q "versionName='3.9.27'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.26-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.27-debug.apk
 
-      - name: Upload v3.9.26 APK
+      - name: Upload v3.9.27 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.26-debug-apk
-          path: dist/Reddit-Media-v3.9.26-debug.apk
+          name: reddit-media-v3.9.27-debug-apk
+          path: dist/Reddit-Media-v3.9.27-debug.apk
           if-no-files-found: error
           retention-days: 30
