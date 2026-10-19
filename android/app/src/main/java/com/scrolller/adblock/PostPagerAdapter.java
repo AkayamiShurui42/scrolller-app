@@ -695,7 +695,12 @@ public void setActivePosition(int position) {
                     GradientDrawable.Orientation.TOP_BOTTOM,
                     new int[]{0xD9000000, 0x78000000, 0x00000000}));
 
-            Button sub = pillButton("r/" + post.subreddit);
+            boolean externalGallerySource = "rule34".equals(post.sourceOrigin)
+                    || "gelbooru".equals(post.sourceOrigin)
+                    || "createhentai".equals(post.sourceOrigin);
+            Button sub = pillButton(externalGallerySource
+                    ? post.subreddit
+                    : "r/" + post.subreddit);
             sub.setTextSize(12);
             meta.addView(sub, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
