@@ -6,7 +6,7 @@
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/sym_def_app_icon"
-        android:label="Reddit Media"
+        android:label="AI Gallery"
         android:roundIcon="@android:drawable/sym_def_app_icon"
         android:supportsRtl="true"
         android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
@@ -14,7 +14,7 @@
         android:usesCleartextTraffic="false">
 
         <activity
-            android:name=".MainActivity"
+            android:name=".AiGalleryActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
