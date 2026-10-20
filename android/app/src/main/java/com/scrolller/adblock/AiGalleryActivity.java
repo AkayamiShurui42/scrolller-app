@@ -56,16 +56,18 @@ public final class AiGalleryActivity extends AppCompatActivity
     private String query = "";
     private String sort = "random";
     private String layoutMode = "fullscreen";
-    private boolean aiOnly = true;
+    private final boolean aiOnly = true;
     private boolean useRule34 = true;
-    private boolean useGelbooru = true;
+    private boolean useSankaku = true;
+    private boolean useCreateHentai = true;
     private boolean includeViewed = false;
     private boolean chromeVisible = true;
 
     private int generation = 0;
     private int pendingSources = 0;
     private int rule34Page = 0;
-    private int gelbooruPage = 0;
+    private int sankakuPage = 0;
+    private int createHentaiPage = 0;
     private boolean loadingMore = false;
     private LibraryMode libraryMode = LibraryMode.NONE;
 
@@ -165,7 +167,8 @@ public final class AiGalleryActivity extends AppCompatActivity
             results.clear();
             resultIds.clear();
             rule34Page = 0;
-            gelbooruPage = 0;
+            sankakuPage = 0;
+            createHentaiPage = 0;
             loadingMore = false;
             libraryMode = LibraryMode.NONE;
             pagerAdapter.setHiddenMode(false);
@@ -177,7 +180,7 @@ public final class AiGalleryActivity extends AppCompatActivity
     private void fetchPage(int requestGeneration) {
         if (loadingMore || requestGeneration != generation) return;
 
-        int count = (useRule34 ? 1 : 0) + (useGelbooru ? 1 : 0);
+        int count = (useRule34 ? 1 : 0) + (useSankaku ? 1 : 0) + (useCreateHentai ? 1 : 0);
         if (count == 0) {
             showStatus("Enable at least one source.");
             return;
@@ -197,12 +200,15 @@ public final class AiGalleryActivity extends AppCompatActivity
                     sourceCallback(requestGeneration));
         }
 
-        if (useGelbooru) {
-            final int page = gelbooruPage++;
-            AdultImageSourceClient.fetch(
-                    AdultImageSourceClient.Source.GELBOORU,
-                    query, false, page, 100,
-                    sourceCallback(requestGeneration));
+        if (useSankaku) {
+            final int page = sankakuPage++;
+            AdultImageSourceClient.fetch(AdultImageSourceClient.Source.SANKAKU,
+                    query, true, page, 100, sourceCallback(requestGeneration));
+        }
+        if (useCreateHentai) {
+            final int page = createHentaiPage++;
+            AdultImageSourceClient.fetch(AdultImageSourceClient.Source.CREATEHENTAI,
+                    query, true, page, 100, sourceCallback(requestGeneration));
         }
     }
 
@@ -525,37 +531,19 @@ public final class AiGalleryActivity extends AppCompatActivity
     private void showSettingsSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Sources & search");
-
-        Button ai = sheetButton("AI-only · " + (aiOnly ? "On" : "Off"));
+        body.addView(bodyText("AI-only filtering is mandatory. Unavailable sources fail closed; no unrestricted website fallback."));
         Button r34 = sheetButton("Rule34 · " + (useRule34 ? "On" : "Off"));
-        Button gel = sheetButton("Gelbooru fallback · " + (useGelbooru ? "On" : "Off"));
-
-        body.addView(ai, sectionButtonParams());
+        Button sankaku = sheetButton("Sankaku Complex · " + (useSankaku ? "On" : "Off"));
+        Button create = sheetButton("CreateHentai · " + (useCreateHentai ? "On" : "Off"));
         body.addView(r34, sectionButtonParams());
-        body.addView(gel, sectionButtonParams());
-        body.addView(bodyText(
-                "Rule34 is the primary AI-tag source. Gelbooru may require authentication or contain fewer AI-tagged posts, so failures are ignored."));
-
-        ai.setOnClickListener(v -> {
-            aiOnly = !aiOnly;
-            ai.setText("AI-only · " + (aiOnly ? "On" : "Off"));
-        });
-        r34.setOnClickListener(v -> {
-            useRule34 = !useRule34;
-            r34.setText("Rule34 · " + (useRule34 ? "On" : "Off"));
-        });
-        gel.setOnClickListener(v -> {
-            useGelbooru = !useGelbooru;
-            gel.setText("Gelbooru fallback · " + (useGelbooru ? "On" : "Off"));
-        });
-
+        body.addView(sankaku, sectionButtonParams());
+        body.addView(create, sectionButtonParams());
+        r34.setOnClickListener(v -> { useRule34 = !useRule34; r34.setText("Rule34 · " + (useRule34 ? "On" : "Off")); });
+        sankaku.setOnClickListener(v -> { useSankaku = !useSankaku; sankaku.setText("Sankaku Complex · " + (useSankaku ? "On" : "Off")); });
+        create.setOnClickListener(v -> { useCreateHentai = !useCreateHentai; create.setText("CreateHentai · " + (useCreateHentai ? "On" : "Off")); });
         Button apply = sheetButton("Apply and reload");
         body.addView(apply, sectionButtonParams());
-        apply.setOnClickListener(v -> {
-            dialog.dismiss();
-            runSearch(true);
-        });
-
+        apply.setOnClickListener(v -> { dialog.dismiss(); runSearch(true); });
         dialog.setContentView(body);
         dialog.show();
     }
