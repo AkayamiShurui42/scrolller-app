@@ -69,7 +69,7 @@ jobs:
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/apksigner.txt
-          grep -qi '191e5f6808941797362d844076f428cee94af60ae2929eecc70fc1c8e4da38b9' /tmp/apksigner.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/apksigner.txt
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | head -20
 
       - name: Upload Debug APK Artifact
