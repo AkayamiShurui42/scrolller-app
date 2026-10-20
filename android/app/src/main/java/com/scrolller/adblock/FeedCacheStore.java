@@ -106,6 +106,47 @@ final class FeedCacheStore extends SQLiteOpenHelper {
         });
     }
 
+    void searchAllAsync(
+            String query,
+            int limit,
+            LoadCallback callback) {
+        final String needle = query == null ? "" : query.trim();
+        final int boundedLimit = Math.max(1, Math.min(limit, 2000));
+
+        io.execute(() -> {
+            ArrayList<RedditPost> matches = new ArrayList<>();
+            String normalized = FuzzySearch.normalize(needle);
+            int threshold = FuzzySearch.thresholdFor(normalized.length());
+
+            try (Cursor cursor = getReadableDatabase().query(
+                    TABLE,
+                    new String[]{
+                            "id","title","author","subreddit","permalink","source_url",
+                            "score","comments","created_utc","nsfw","media_kind","image_urls",
+                            "video_url","poster_url","media_width","media_height",
+                            "duration_seconds","search_metadata","source_origin"
+                    },
+                    "nsfw=1",
+                    null,
+                    null,
+                    null,
+                    "cached_at DESC",
+                    "12000")) {
+                while (cursor.moveToNext() && matches.size() < boundedLimit) {
+                    RedditPost post = fromCursor(cursor);
+                    if (post == null) continue;
+                    if (!normalized.isEmpty()) {
+                        int score = cachedSearchScore(post, needle);
+                        if (score < threshold) continue;
+                    }
+                    matches.add(post);
+                }
+            } catch (Exception ignored) {}
+
+            if (callback != null) main.post(() -> callback.onLoaded(matches));
+        });
+    }
+
     void searchSubredditsAsync(
             Set<String> subreddits,
             String query,
