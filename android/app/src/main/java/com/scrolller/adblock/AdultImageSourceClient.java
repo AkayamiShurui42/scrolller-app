@@ -69,7 +69,9 @@ final class AdultImageSourceClient {
         EXECUTOR.execute(() -> {
             try {
                 if (source == Source.CREATEHENTAI) {
-                    throw new IllegalStateException("CreateHentai API contract unverified; no unrestricted fallback");
+                    ArrayList<RedditPost> posts = fetchCreateHentai(userQuery, page, limit);
+                    MAIN.post(() -> callback.onComplete(source, page, posts));
+                    return;
                 }
                 if (source == Source.SANKAKU) {
                     ArrayList<RedditPost> posts = fetchSankaku(userQuery, page, limit);
@@ -101,6 +103,50 @@ final class AdultImageSourceClient {
                 MAIN.post(() -> callback.onError(source, page, message));
             }
         });
+    }
+
+    // Endpoint and query parameters verified against CreateHentai's search-page bundle.
+    // Response schema has not been independently verified; reject unknown formats.
+    private static ArrayList<RedditPost> fetchCreateHentai(String query, int page, int limit) throws Exception {
+        if (page < 0 || page > 20) throw new IllegalArgumentException("Page out of range");
+        String clean = query == null ? "" : query.trim();
+        if (clean.length() > 1000) clean = clean.substring(0, 1000);
+        String url = "https://api.createporn.com/post/search?limit=20&include=userLikes&sort=topall";
+        if (!clean.isEmpty()) url += "&searchQuery=" + enc(clean);
+        // Search bundle exposes no offset or cursor argument. Do not silently repeat page one.
+        if (page != 0) throw new IllegalStateException("CreateHentai pagination contract not verified");
+        String body = get(url);
+        JSONObject root;
+        try { root = new JSONObject(body); }
+        catch (Exception ex) { throw new IllegalStateException("Unrecognized CreateHentai response format"); }
+        JSONArray rows = root.optJSONArray("posts");
+        if (rows == null) rows = root.optJSONArray("data");
+        if (rows == null) throw new IllegalStateException("CreateHentai post schema not verified");
+        ArrayList<RedditPost> result = new ArrayList<>();
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject p = rows.optJSONObject(i);
+            if (p == null) continue;
+            // Only accept posts with independently visible provenance and safety tags.
+            String tags = firstNonEmpty(p.optString("tags", ""), p.optString("tag_string", ""));
+            if (!hasVerifiedAiTag(tags) || !allowedTags(tags)) continue;
+            String rating = p.optString("rating", "");
+            if (!"explicit".equalsIgnoreCase(rating) && !"e".equalsIgnoreCase(rating)) continue;
+            String file = firstNonEmpty(p.optString("file_url", ""), p.optString("imageUrl", ""));
+            if (!staticImage(file) || !file.startsWith("https://")) continue;
+            String id = p.optString("id", "");
+            if (id.isEmpty()) continue;
+            ArrayList<String> images = new ArrayList<>();
+            images.add(file);
+            RedditPost post = new RedditPost("createhentai:" + id, promptTitle(tags, 1),
+                    "", "CreateHentai", "https://www.createhentai.com/post/" + enc(id),
+                    file, p.optInt("score", 0), 0, parseTime(p.optString("created_at", "")),
+                    false, true, RedditPost.MediaKind.IMAGE, images, "", file,
+                    p.optInt("width", 0), p.optInt("height", 0));
+            post.sourceOrigin = "createhentai";
+            post.searchMetadata = tags;
+            result.add(post);
+        }
+        return result;
     }
 
     // Public Sankaku keyset API. Fail closed on missing post-level AI provenance.
