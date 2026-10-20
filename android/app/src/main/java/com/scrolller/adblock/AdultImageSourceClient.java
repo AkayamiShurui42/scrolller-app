@@ -51,7 +51,10 @@ final class AdultImageSourceClient {
                 "minors", "child", "children", "childlike", "preteen", "teen",
                 "teenager", "young", "young_looking", "baby", "infant", "toddler",
                 "cub", "age_regression", "schoolgirl", "schoolboy",
-                "real_person", "celebrity", "deepfake", "ai_deepfake");
+                "real_person", "celebrity", "deepfake", "ai_deepfake",
+                "gore", "blood", "guro", "snuff", "mutilation", "dismemberment",
+                "decapitation", "corpse", "necrophilia", "rape", "noncon",
+                "non-consensual", "forced", "bestiality", "zoophilia");
     }
 
     private AdultImageSourceClient() {}
@@ -118,7 +121,7 @@ final class AdultImageSourceClient {
 
         // Rule34 has a large AI-tagged corpus. Gelbooru's AI corpus is much less
         // reliable, so AI is a preference there rather than a hard dependency.
-        if (aiOnly && source == Source.RULE34) q.append(" ai_generated");
+        if (source == Source.RULE34) q.append(" ai_generated");
 
         if (!user.isEmpty()) q.append(' ').append(user);
 
@@ -148,11 +151,10 @@ final class AdultImageSourceClient {
             String tags = firstNonEmpty(
                     o.optString("tags", ""),
                     o.optString("tag_string", ""));
-            if (!allowedTags(tags)) continue;
+            if (!allowedTags(tags) || !hasVerifiedAiTag(tags)) continue;
 
             String rating = o.optString("rating", "");
-            if (!rating.isEmpty()
-                    && !rating.equalsIgnoreCase("explicit")
+            if (!rating.equalsIgnoreCase("explicit")
                     && !rating.equalsIgnoreCase("e")) continue;
 
             String file = firstNonEmpty(
@@ -261,9 +263,18 @@ final class AdultImageSourceClient {
         return title.length() == 0 ? "AI image" : title.toString();
     }
 
+    private static boolean hasVerifiedAiTag(String tags) {
+        if (tags == null) return false;
+        for (String tag : tags.toLowerCase(Locale.US).split("\\s+")) {
+            if ("ai_generated".equals(tag) || "ai-generated".equals(tag)
+                    || "ai_created".equals(tag) || "ai-created".equals(tag)) return true;
+        }
+        return false;
+    }
+
     private static boolean allowedTags(String tags) {
         String lower = tags == null ? "" : tags.toLowerCase(Locale.US);
-        if (lower.isEmpty()) return true;
+        if (lower.isEmpty()) return false;
         for (String blocked : BLOCKED_TAGS) {
             String pattern = "(^|\\s)" + java.util.regex.Pattern.quote(blocked) + "(\\s|$)";
             if (lower.matches(".*" + pattern + ".*")) return false;
