@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.30: search backends are equal layers merged through one term/scope/filter pipeline.
+// v3.9.30: equal candidate layers; term/scope/media/read filters are applied locally after merge.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -3039,7 +3039,7 @@ private void loadQualityCollection(boolean reset) {
 
     private void loadSearchInternal() {
         if (tryHistoricalDirectSearch()) return;
-        if (!engine.isReady() || query.isEmpty()) return;
+        if (query.isEmpty()) return;
         screen = Screen.SEARCH;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
@@ -3081,51 +3081,143 @@ private void loadQualityCollection(boolean reset) {
             return;
         }
 
-        if (searchScope.equals("category")) {
-            ArrayList<String> groups = categorySearchGroups();
-            if (groups.isEmpty()) {
-                loading = false;
-                searchLoading = false;
-                setStatus("This category has no communities to search.", false);
-                return;
-            }
-            fetchRemoteSearchGroup(
-                    generation, groups, 0, "", new ArrayList<>(),
-                    new HashSet<>(), new HashSet<>(), 0, 0);
+        if (searchScope.equals("category")
+                || searchScope.equals("subreddit")
+                || searchScope.equals("subscribed")
+                || searchScope.equals("global")) {
+            startEqualSearchLayers(generation, false);
             return;
         }
 
-        if (searchScope.equals("subreddit")) {
-            String target = cleanSubredditName(searchSubreddit);
-            if (target.isEmpty()) {
-                loading = false;
-                searchLoading = false;
-                setStatus("Choose a subreddit in Search source first.", false);
-                return;
-            }
-            ArrayList<String> groups = new ArrayList<>();
-            groups.add(target);
-            fetchRemoteSearchGroup(
-                    generation, groups, 0, "", new ArrayList<>(),
-                    new HashSet<>(), new HashSet<>(), 0, 0);
-            return;
-        }
-
-        if (searchScope.equals("subscribed")) {
-            startSubscribedSearch(generation, false);
-            return;
-        }
-
-        ArrayList<String> global = new ArrayList<>();
-        global.add("__global__");
-        fetchRemoteSearchGroup(
-                generation, global, 0, "", new ArrayList<>(),
-                new HashSet<>(), new HashSet<>(), 0, 0);
+        searchLoading = false;
+        loading = false;
+        setStatus("Unsupported search scope.", false);
     }
 
     private boolean searchStillValid(int generation) {
         return generation == searchGeneration && screen == Screen.SEARCH;
     }
+
+    private void startEqualSearchLayers(int generation, boolean refreshedJoined) {
+        if (!searchStillValid(generation)) return;
+
+        LinkedHashSet<String> allowed = new LinkedHashSet<>();
+        if (searchScope.equals("subscribed")) {
+            allowed.addAll(joinedSubredditSnapshot());
+            if (allowed.isEmpty()) {
+                if (!refreshedJoined && !username.isEmpty()) {
+                    setStatus("Refreshing joined filter…", true);
+                    loadSubscriptions(() -> {
+                        if (!searchStillValid(generation)) return;
+                        startEqualSearchLayers(generation, true);
+                    });
+                    return;
+                }
+                loading = false;
+                searchLoading = false;
+                setStatus("No joined communities are available for this filter.", false);
+                return;
+            }
+            searchJoinedSnapshot.clear();
+            searchJoinedSnapshot.addAll(allowed);
+        } else if (searchScope.equals("subreddit")) {
+            String target = cleanSubredditName(searchSubreddit).toLowerCase(Locale.US);
+            if (target.isEmpty()) {
+                loading = false;
+                searchLoading = false;
+                setStatus("Choose a community for this filter.", false);
+                return;
+            }
+            allowed.add(target);
+        } else if (searchScope.equals("category")) {
+            for (String value : searchCategoryCommunities) {
+                String target = cleanSubredditName(value).toLowerCase(Locale.US);
+                if (!target.isEmpty()) allowed.add(target);
+            }
+            if (allowed.isEmpty()) {
+                loading = false;
+                searchLoading = false;
+                setStatus("This category has no communities to search.", false);
+                return;
+            }
+        }
+
+        // Already-discovered posts are one layer, equal to every remote/cache layer.
+        mergeSearchLayerResults(generation, new ArrayList<>(searchCollectorSnapshot));
+
+        // Persistent cache is another layer. Scope is applied here only as an
+        // efficient prefilter; mergeSearchLayerResults re-applies the exact same
+        // term/scope/media/read/content contract to every returned post.
+        if (feedCacheStore != null) {
+            if (allowed.isEmpty()) {
+                feedCacheStore.searchAllAsync(query, 1000,
+                        cached -> mergeSearchLayerResults(generation, cached));
+            } else {
+                feedCacheStore.searchSubredditsAsync(allowed, query, 1000,
+                        cached -> mergeSearchLayerResults(generation, cached));
+            }
+        }
+
+        // PullPush is an equal candidate layer. It does not own ranking or
+        // filtering; returned posts still go through the local property matcher.
+        if (allowed.isEmpty()) {
+            PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
+                @Override
+                public void onComplete(JSONArray items) {
+                    if (!searchStillValid(generation)) return;
+                    mergeSearchLayerResults(generation, postsFromPullPush(items));
+                }
+
+                @Override
+                public void onError(String error) {
+                    // One layer failing must not invalidate the other layers.
+                }
+            });
+        } else {
+            ArrayList<String> communities = new ArrayList<>(allowed);
+            for (String target : communities) {
+                PullPushClient.searchSubreddit(target, query, 100, new PullPushClient.Callback() {
+                    @Override
+                    public void onComplete(JSONArray items) {
+                        if (!searchStillValid(generation)) return;
+                        mergeSearchLayerResults(generation, postsFromPullPush(items));
+                    }
+
+                    @Override
+                    public void onError(String error) {
+                        // Equal-layer failure is isolated to this source request.
+                    }
+                });
+            }
+        }
+
+        // The term search itself is local. No source-specific search result is
+        // trusted until the post properties pass searchLayerCandidateAccepted().
+        searchLoading = false;
+        loading = false;
+        if (root != null) {
+            root.postDelayed(() -> {
+                if (!searchStillValid(generation)) return;
+                if (searchLayerResults.isEmpty()) {
+                    setStatus("No matching media found for “" + query + "” in "
+                            + searchScopeDescription() + ".", false);
+                }
+            }, 10000L);
+        }
+    }
+
+    private ArrayList<RedditPost> postsFromPullPush(JSONArray items) {
+        ArrayList<RedditPost> posts = new ArrayList<>();
+        if (items == null) return posts;
+        for (int i = 0; i < items.length(); i++) {
+            RedditPost post = redditPostFromArcticArchive(items.optJSONObject(i));
+            if (post == null) continue;
+            post.sourceOrigin = "pullpush";
+            posts.add(post);
+        }
+        return posts;
+    }
+
 
 
     private boolean searchLayerCandidateAccepted(RedditPost post) {
@@ -3245,6 +3337,9 @@ private void loadQualityCollection(boolean reset) {
 
     private void startSubscribedSearch(int generation, boolean refreshedOnce) {
         if (!searchStillValid(generation) || !searchScope.equals("subscribed")) return;
+        startEqualSearchLayers(generation, refreshedOnce);
+        return;
+        /*
 
         if (username.isEmpty()) {
             loading = false;
@@ -3298,6 +3393,7 @@ private void loadQualityCollection(boolean reset) {
             if (!searchStillValid(generation) || !searchScope.equals("subscribed")) return;
             startSubscribedSearch(generation, true);
         });
+        */
     }
 
     private void startJoinedPullPushSearch(
