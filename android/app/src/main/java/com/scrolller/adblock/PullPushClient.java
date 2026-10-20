@@ -61,6 +61,33 @@ final class PullPushClient {
         });
     }
 
+    static void searchSubreddit(
+            String subreddit,
+            String query,
+            int size,
+            Callback callback) {
+        EXECUTOR.execute(() -> {
+            try {
+                int bounded = Math.max(1, Math.min(size, 100));
+                StringBuilder url = new StringBuilder(BASE)
+                        .append("?subreddit=").append(enc(subreddit))
+                        .append("&q=").append(enc(query))
+                        .append("&size=").append(bounded)
+                        .append("&sort=desc")
+                        .append("&sort_type=created_utc");
+
+                JSONObject root = getJson(url.toString());
+                JSONArray data = root.optJSONArray("data");
+                JSONArray result = data != null ? data : new JSONArray();
+                MAIN.post(() -> callback.onComplete(result));
+            } catch (Exception e) {
+                String message = e.getMessage() == null
+                        ? "PullPush subreddit search failed" : e.getMessage();
+                MAIN.post(() -> callback.onError(message));
+            }
+        });
+    }
+
     static void searchSubmissions(
             String query,
             int size,
@@ -95,7 +122,7 @@ final class PullPushClient {
         connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("Accept-Encoding", "identity");
         connection.setRequestProperty(
-                "User-Agent", "RedditMedia/3.9.28 Android archive-fallback");
+                "User-Agent", "RedditMedia/3.9.30 Android archive-fallback");
 
         int status = connection.getResponseCode();
         InputStream stream = status >= 200 && status < 300
