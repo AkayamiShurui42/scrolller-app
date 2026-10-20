@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.28
+name: Build Reddit Media v3.9.29
 
 on:
   push:
@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.28-${{ github.ref }}
+  group: reddit-media-v3.9.29-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,15 +34,15 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.28 invariants
+      - name: Validate v3.9.29 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 75' android/app/build.gradle
-          grep -q 'versionName "3.9.28"' android/app/build.gradle
+          grep -q 'versionCode 76' android/app/build.gradle
+          grep -q 'versionName "3.9.29"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -71,9 +71,11 @@ jobs:
           grep -q 'if (joined.isEmpty()) return false;' "$MAIN"
           grep -q 'joinedSubredditsV1' "$MAIN"
           grep -q 'finishSubscriptions(done, pendingSubscriptions, pendingNames);' "$MAIN"
-          grep -q 'groups.add("__global__");' "$MAIN"
           grep -q 'startJoinedPullPushSearch(generation, joined);' "$MAIN"
-          grep -q 'searchScope.equals("subscribed") ? 8' "$MAIN"
+          grep -q 'groups.addAll(subscriptionSearchGroups());' "$MAIN"
+          grep -q 'searchScope.equals("subscribed") ? 1' "$MAIN"
+          grep -q 'restrict_sr=" + (global ? "off" : "on")' "$MAIN"
+          ! grep -A20 'private void startSubscribedSearch' "$MAIN" | grep -q 'groups.add("__global__")'
           grep -q 'static void searchSubmissions' "$PULL"
 
           # Home membership action includes explicit Join/Leave.
@@ -149,15 +151,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='75'" /tmp/badging.txt
-          grep -q "versionName='3.9.28'" /tmp/badging.txt
+          grep -q "versionCode='76'" /tmp/badging.txt
+          grep -q "versionName='3.9.29'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.28-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.29-debug.apk
 
-      - name: Upload v3.9.28 APK
+      - name: Upload v3.9.29 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.28-debug-apk
-          path: dist/Reddit-Media-v3.9.28-debug.apk
+          name: reddit-media-v3.9.29-debug-apk
+          path: dist/Reddit-Media-v3.9.29-debug.apk
           if-no-files-found: error
           retention-days: 30
