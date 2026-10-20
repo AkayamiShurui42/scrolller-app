@@ -50,6 +50,57 @@ final class ArcticShiftClient {
         crawl("author", author, maxItems, callback);
     }
 
+    static void searchPosts(String query, int maxItems, CrawlCallback callback) {
+        EXECUTOR.execute(() -> {
+            try {
+                int delivered = 0;
+                String before = "";
+                Set<String> seenBefore = new HashSet<>();
+                while (delivered < maxItems) {
+                    int limit = Math.min(100, maxItems - delivered);
+                    StringBuilder url = new StringBuilder(BASE)
+                            .append("/posts/search?query=").append(enc(query))
+                            .append("&limit=").append(limit)
+                            .append("&sort=desc");
+                    if (!before.isEmpty()) url.append("&before=").append(enc(before));
+
+                    JSONObject root = getJson(url.toString());
+                    JSONArray data = root.optJSONArray("data");
+                    if (data == null || data.length() == 0) break;
+
+                    delivered += data.length();
+                    JSONArray batch = data;
+                    if (!deliverBatchBlocking(callback, batch)) {
+                        throw new IllegalStateException("Arctic Shift UI delivery timed out");
+                    }
+
+                    long oldest = Long.MAX_VALUE;
+                    for (int i = 0; i < data.length(); i++) {
+                        JSONObject item = data.optJSONObject(i);
+                        if (item == null) continue;
+                        long created = createdUtc(item.opt("created_utc"));
+                        if (created > 0 && created < oldest) oldest = created;
+                    }
+
+                    if (oldest == Long.MAX_VALUE || data.length() < limit) break;
+                    String nextBefore = isoUtc(Math.max(1L, oldest - 1L));
+                    if (nextBefore.isEmpty() || !seenBefore.add(nextBefore)) break;
+                    before = nextBefore;
+
+                    try { Thread.sleep(180L); } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                MAIN.post(callback::onComplete);
+            } catch (Exception e) {
+                String message = e.getMessage() == null
+                        ? "Arctic Shift search failed" : e.getMessage();
+                MAIN.post(() -> callback.onError(message));
+            }
+        });
+    }
+
     static void lookupPost(String redditId, LookupCallback callback) {
         EXECUTOR.execute(() -> {
             try {
