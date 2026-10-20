@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.28: make Joined search/filter persistent, atomic, cache-first, live-filtered, and archive-backed.
+// v3.9.29: Joined search directly queries only joined subreddits.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -3191,10 +3191,10 @@ private void loadQualityCollection(boolean reset) {
 
         LinkedHashSet<String> joined = joinedSubredditSnapshot();
         ArrayList<String> groups = new ArrayList<>();
-        groups.add("__global__");
         if (!joined.isEmpty()) {
             searchJoinedSnapshot.clear();
             searchJoinedSnapshot.addAll(joined);
+            groups.addAll(subscriptionSearchGroups());
             setStatus("Searching " + joined.size() + " joined subreddits for “"
                     + query + "”…", true);
 
@@ -3382,9 +3382,8 @@ private void loadQualityCollection(boolean reset) {
             String next = data != null ? data.optString("after", "") : "";
             int nextRawFetched = rawFetched + pageRawCount;
             boolean deepSingleSource = searchScope.equals("global")
-                    || searchScope.equals("subreddit")
-                    || (searchScope.equals("subscribed") && group.equals("__global__"));
-            int maxPages = searchScope.equals("subscribed") ? 8
+                    || searchScope.equals("subreddit");
+            int maxPages = searchScope.equals("subscribed") ? 1
                     : deepSingleSource ? 4 : 1;
             boolean canContinue = !next.isEmpty()
                     && !seenCursors.contains(next)
@@ -3399,8 +3398,13 @@ private void loadQualityCollection(boolean reset) {
 
             if (groupIndex + 1 < groups.size()) {
                 final int nextGroup = groupIndex + 1;
-                setStatus("Searching " + searchScopeDescription() + " · "
-                        + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                if (searchScope.equals("subscribed")) {
+                    setStatus("Searching joined · r/" + groups.get(nextGroup)
+                            + " · " + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                } else {
+                    setStatus("Searching " + searchScopeDescription() + " · "
+                            + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                }
                 root.postDelayed(() -> fetchRemoteSearchGroup(
                         generation, groups, nextGroup, "", collected,
                         seenPostIds, new HashSet<>(), 0, 0), 220L);
