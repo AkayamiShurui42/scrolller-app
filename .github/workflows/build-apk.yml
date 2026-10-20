@@ -34,93 +34,11 @@ jobs:
           node --check public/app.js
           node --check public/website-parity.js
 
-      - name: Verify preload, website parity, account actions and safe insets
+      - name: Validate Android package configuration
         run: |
-          grep -q 'const PRELOAD_LIMIT = 5000' public/app.js
-          grep -q 'iterator: null' public/app.js
-          grep -q 'preloadSubreddit' public/app.js
-          grep -q 'preloadUserCollection' public/app.js
-          ! grep -q 'loadMoreCurrentCollection' public/app.js
-          grep -q 'AddFavorite' public/app.js
-          grep -q 'RemoveFavorite' public/app.js
-          grep -q 'AddPostToCollection' public/app.js
-          grep -q 'saveCollectionResults' public/index.html
-          grep -q 'savePostTitle' public/index.html
-          grep -q 'favorite.active' public/style.css
-          grep -q 'Scrolller gallery' public/website-parity.js
-          grep -q 'server ordering intact' public/website-parity.js
-          grep -q "state.sort = 'RANDOM'" public/website-parity.js
-          grep -q 'native-safe.css' public/index.html
-          grep -q 'WindowInsets.Type.systemBars' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'lp.topMargin = top' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'lp.leftMargin = 0' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          grep -q 'MutationObserver' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
-          grep -q '__scrolllerLoginGuard' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
-          grep -q 'SCROLLLER_LOGIN_DEV' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
-          grep -q 'returnToApp' android/app/src/main/java/com/scrolller/adblock/AuthBridge.java
-          grep -q 'Bearer ' android/app/src/main/java/com/scrolller/adblock/MediaBridge.java
-          grep -q 'versionName "1.4.0"' android/app/build.gradle
-
-      - name: Smoke test live Scrolller APIs
-        run: |
-          python3 - <<'PY'
-          import json, urllib.request, urllib.error
-
-          endpoint='https://api.scrolller.com/admin'
-          ua='Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36'
-
-          def request(query, variables):
-              body=json.dumps({'query':query,'variables':variables}).encode()
-              req=urllib.request.Request(endpoint,data=body,headers={'Content-Type':'application/json','Accept':'application/json','User-Agent':ua})
-              try:
-                  with urllib.request.urlopen(req,timeout=30) as r:
-                      raw=r.read().decode()
-              except urllib.error.HTTPError as e:
-                  raw=e.read().decode()
-              data=json.loads(raw or '{}')
-              return data
-
-          def gql(query, variables):
-              data=request(query, variables)
-              if data.get('errors'):
-                  raise RuntimeError(' · '.join(str(x.get('message','GraphQL error')) for x in data['errors']))
-              return data.get('data') or {}
-
-          def assert_schema(query, variables):
-              data=request(query, variables)
-              messages=' · '.join(str(x.get('message','')) for x in (data.get('errors') or []))
-              forbidden=('Cannot query field','Unknown argument','Unknown type','Unknown field')
-              assert not any(x in messages for x in forbidden), messages
-              return messages
-
-          search='query SearchSubredditsQuery($query:String!,$limit:Int!,$isNsfw:Boolean!,$pageIndex:Int!){searchSubreddits(data:{query:$query,isNsfw:$isNsfw,limit:$limit,pageIndex:$pageIndex}){id title url description is_nsfw item_count}}'
-          result=gql(search,{'query':'walkthrough','limit':20,'isNsfw':True,'pageIndex':0}).get('searchSubreddits') or []
-          assert len(result)>=2, f'walkthrough gallery search returned only {len(result)} results'
-          assert any((x.get('url') or '').lower()=='walkthrough' for x in result), 'expected walkthrough gallery missing from pageIndex 0'
-
-          sub='query SubredditQuery($url:String!,$iterator:String,$sortBy:GallerySortBy,$filter:GalleryFilter,$limit:Int!){getSubreddit(data:{url:$url,iterator:$iterator,filter:$filter,limit:$limit,sortBy:$sortBy}){url title children{iterator items{id url title subredditTitle subredditUrl favoriteCount isFavorite mediaSources{url width height}}}}}'
-          candidate=next((x for x in result if x.get('item_count')!=0 and x.get('url')),None)
-          assert candidate, 'no usable walkthrough gallery candidate'
-          for sort_by in ('RANDOM','HOT','NEW','TOP'):
-              d=gql(sub,{'url':candidate['url'],'iterator':None,'sortBy':sort_by,'filter':None,'limit':40})
-              items=((d.get('getSubreddit') or {}).get('children') or {}).get('items') or []
-              assert items, f'{sort_by} one-shot gallery load returned no posts'
-              assert all('subredditUrl' in x for x in items[:3]), 'post gallery provenance missing'
-              assert all('isFavorite' in x and 'favoriteCount' in x for x in items[:3]), 'favorite fields unavailable'
-
-          cats='query GetCategories($is_nsfw:Boolean!){categories(data:{is_nsfw:$is_nsfw}){title}}'
-          categories=gql(cats,{'is_nsfw':False}).get('categories') or []
-          assert len(categories)>=5, 'website category list unavailable'
-
-          add_fav='mutation AddFavorite($url:String!){addFavorite(url:$url)}'
-          remove_fav='mutation RemoveFavorite($url:String!){removeFavorite(url:$url)}'
-          add_collection='mutation AddPostToCollection($postId:Int!,$collectionId:Int!){addPostToCollection(data:{postId:$postId,collectionId:$collectionId})}'
-          assert_schema(add_fav,{'url':'__scrolller_schema_probe__'})
-          assert_schema(remove_fav,{'url':'__scrolller_schema_probe__'})
-          assert_schema(add_collection,{'postId':0,'collectionId':0})
-
-          print('Live Scrolller smoke test passed:',len(result),'walkthrough gallery matches,',len(categories),'SFW categories, all website sort modes, one-shot loads and save schemas valid')
-          PY
+          grep -q 'applicationId "com.crimson.aigallery"' android/app/build.gradle
+          grep -q 'versionName "1.0.0"' android/app/build.gradle
+          test -s AI_GALLERY_REQUIREMENTS.md
 
       - name: Prepare stable debug signing key
         run: |
@@ -157,7 +75,7 @@ jobs:
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: scrolller-pro-website-parity-safe-insets-android16-apk
+          name: ai-gallery-development-android16-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
