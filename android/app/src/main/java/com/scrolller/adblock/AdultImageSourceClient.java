@@ -29,7 +29,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 final class AdultImageSourceClient {
-    enum Source { RULE34, GELBOORU }
+    enum Source { RULE34, SANKAKU, CREATEHENTAI }
 
     interface Callback {
         void onComplete(Source source, int page, ArrayList<RedditPost> posts);
@@ -68,8 +68,11 @@ final class AdultImageSourceClient {
             Callback callback) {
         EXECUTOR.execute(() -> {
             try {
-                String tags = buildQuery(userQuery, aiOnly, source);
-                int bounded = Math.max(1, Math.min(limit, source == Source.RULE34 ? 250 : 100));
+                if (source != Source.RULE34) {
+                    throw new IllegalStateException(source.name() + " API adapter not yet verified; no unfiltered fallback permitted");
+                }
+                String tags = buildQuery(userQuery, true, source);
+                int bounded = Math.max(1, Math.min(limit, 250));
                 String url;
 
                 if (source == Source.RULE34) {
@@ -214,12 +217,10 @@ final class AdultImageSourceClient {
             RedditPost.MediaKind kind = urls.size() > 1
                     ? RedditPost.MediaKind.GALLERY
                     : RedditPost.MediaKind.IMAGE;
-            String sourceName = source == Source.RULE34 ? "Rule34" : "Gelbooru";
+            String sourceName = "Rule34";
             String id = source.name().toLowerCase(Locale.US) + ":"
                     + (first.parent > 0 ? "set:" + first.parent : first.id);
-            String permalink = source == Source.RULE34
-                    ? "https://rule34.xxx/index.php?page=post&s=view&id=" + first.id
-                    : "https://gelbooru.com/index.php?page=post&s=view&id=" + first.id;
+            String permalink = "https://rule34.xxx/index.php?page=post&s=view&id=" + first.id;
 
             RedditPost post = new RedditPost(
                     id,
