@@ -68,8 +68,13 @@ final class AdultImageSourceClient {
             Callback callback) {
         EXECUTOR.execute(() -> {
             try {
-                if (source != Source.RULE34) {
-                    throw new IllegalStateException(source.name() + " API adapter not yet verified; no unfiltered fallback permitted");
+                if (source == Source.CREATEHENTAI) {
+                    throw new IllegalStateException("CreateHentai API contract unverified; no unrestricted fallback");
+                }
+                if (source == Source.SANKAKU) {
+                    ArrayList<RedditPost> posts = fetchSankaku(userQuery, page, limit);
+                    MAIN.post(() -> callback.onComplete(source, page, posts));
+                    return;
                 }
                 String tags = buildQuery(userQuery, true, source);
                 int bounded = Math.max(1, Math.min(limit, 250));
@@ -96,6 +101,65 @@ final class AdultImageSourceClient {
                 MAIN.post(() -> callback.onError(source, page, message));
             }
         });
+    }
+
+    // Public Sankaku keyset API. Fail closed on missing post-level AI provenance.
+    private static ArrayList<RedditPost> fetchSankaku(String query, int page, int limit) throws Exception {
+        String clean = normalizeUserQuery(query).replaceAll("[^a-z0-9_\\- ]", " ").trim();
+        String tags = "ai-created rating:explicit order:quality threshold:0";
+        if (!clean.isEmpty()) tags += " " + clean;
+        String next = "";
+        ArrayList<RedditPost> result = new ArrayList<>();
+        for (int index = 0; index <= Math.min(page, 20); index++) {
+            String url = "https://sankakuapi.com/v2/posts/keyset?lang=en&limit="
+                    + Math.max(1, Math.min(limit, 100)) + "&tags=" + enc(tags);
+            if (!next.isEmpty()) url += "&next=" + enc(next);
+            JSONObject root = new JSONObject(get(url));
+            JSONArray posts = root.optJSONArray("data");
+            if (posts == null) posts = root.optJSONArray("posts");
+            if (posts == null) throw new IllegalStateException("Unexpected Sankaku response schema");
+            if (index == Math.min(page, 20)) result = parseSankakuPosts(posts);
+            String cursor = root.optString("next", "");
+            if (cursor.isEmpty()) cursor = root.optString("next_cursor", "");
+            if (cursor.isEmpty()) break;
+            next = cursor;
+        }
+        return result;
+    }
+
+    private static ArrayList<RedditPost> parseSankakuPosts(JSONArray posts) {
+        ArrayList<RedditPost> result = new ArrayList<>();
+        for (int i = 0; i < posts.length(); i++) {
+            JSONObject p = posts.optJSONObject(i);
+            if (p == null || !p.optString("rating", "").equalsIgnoreCase("explicit")) continue;
+            JSONArray tagRows = p.optJSONArray("tags");
+            if (tagRows == null || tagRows.length() == 0) continue;
+            StringBuilder tagText = new StringBuilder();
+            for (int j = 0; j < tagRows.length(); j++) {
+                JSONObject tag = tagRows.optJSONObject(j);
+                String name = tag != null ? firstNonEmpty(tag.optString("name_en", ""), tag.optString("name", "")) : tagRows.optString(j, "");
+                if (!name.isEmpty()) tagText.append(name.toLowerCase(Locale.US)).append(' ');
+            }
+            String tags = tagText.toString().trim();
+            if (!allowedTags(tags) || !hasVerifiedAiTag(tags)) continue;
+            String file = p.optString("file_url", "");
+            if (!staticImage(file)) continue;
+            String id = p.optString("id", "");
+            if (id.isEmpty()) continue;
+            ArrayList<String> images = new ArrayList<>();
+            images.add(file);
+            RedditPost post = new RedditPost("sankaku:" + id,
+                    promptTitle(tags, 1), "", "Sankaku Complex",
+                    "https://www.sankakucomplex.com/posts/" + id, file,
+                    p.optInt("total_score", 0), 0, parseTime(p.optString("created_at", "")),
+                    false, true, RedditPost.MediaKind.IMAGE, images, "",
+                    firstNonEmpty(p.optString("sample_url", ""), p.optString("preview_url", ""), file),
+                    p.optInt("width", 0), p.optInt("height", 0));
+            post.sourceOrigin = "sankaku";
+            post.searchMetadata = tags;
+            result.add(post);
+        }
+        return result;
     }
 
     static String normalizeUserQuery(String raw) {
