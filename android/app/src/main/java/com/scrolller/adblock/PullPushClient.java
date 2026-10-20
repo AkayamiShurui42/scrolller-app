@@ -92,6 +92,14 @@ final class PullPushClient {
             String query,
             int size,
             Callback callback) {
+        searchSubmissions(query, size, 0L, callback);
+    }
+
+    static void searchSubmissions(
+            String query,
+            int size,
+            long beforeUtc,
+            Callback callback) {
         EXECUTOR.execute(() -> {
             try {
                 int bounded = Math.max(1, Math.min(size, 100));
@@ -100,6 +108,7 @@ final class PullPushClient {
                         .append("&size=").append(bounded)
                         .append("&sort=desc")
                         .append("&sort_type=created_utc");
+                if (beforeUtc > 0L) url.append("&before=").append(beforeUtc);
 
                 JSONObject root = getJson(url.toString());
                 JSONArray data = root.optJSONArray("data");
