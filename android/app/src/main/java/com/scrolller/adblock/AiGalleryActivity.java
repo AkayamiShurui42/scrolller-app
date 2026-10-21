@@ -65,6 +65,7 @@ public final class AiGalleryActivity extends AppCompatActivity
     private boolean chromeVisible = true;
 
     private final java.util.ArrayList<String> sourceErrors = new java.util.ArrayList<>();
+    private final java.util.LinkedHashMap<String, Integer> sourceCounts = new java.util.LinkedHashMap<>();
     private int generation = 0;
     private int pendingSources = 0;
     private int rule34Page = 0;
@@ -168,6 +169,7 @@ public final class AiGalleryActivity extends AppCompatActivity
         if (reset) {
             generation++;
             sourceErrors.clear();
+            sourceCounts.clear();
             results.clear();
             resultIds.clear();
             rule34Page = 0;
@@ -230,6 +232,7 @@ public final class AiGalleryActivity extends AppCompatActivity
                     int page,
                     ArrayList<RedditPost> posts) {
                 if (requestGeneration != generation || libraryMode != LibraryMode.NONE) return;
+                sourceCounts.put(source.name(), posts == null ? 0 : posts.size());
                 mergeResults(posts);
                 sourceFinished();
             }
@@ -256,10 +259,11 @@ public final class AiGalleryActivity extends AppCompatActivity
 
         if (pagerAdapter.getItemCount() == 0) {
             if (!sourceErrors.isEmpty()) {
-                showStatus("Source error: " + String.join(" | ", sourceErrors));
+                showStatus("Source errors: " + String.join(" | ", sourceErrors)
+                        + " | Accepted: " + sourceCounts.toString());
             } else {
                 showStatus(query.isEmpty()
-                        ? "No verified AI images returned. Try a search or another source."
+                        ? "No verified AI images. Accepted per source: " + sourceCounts.toString()
                         : "No verified results for “" + query + "”.");
             }
         } else {
