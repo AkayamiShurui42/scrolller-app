@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Report build revision
+        run: echo "Building commit $GITHUB_SHA on ref $GITHUB_REF"
+
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
