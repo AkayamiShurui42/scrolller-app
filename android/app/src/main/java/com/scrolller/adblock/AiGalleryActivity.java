@@ -58,11 +58,12 @@ public final class AiGalleryActivity extends AppCompatActivity
     private String layoutMode = "fullscreen";
     private final boolean aiOnly = true;
     private boolean useRule34 = true;
-    private boolean useSankaku = true;
-    private boolean useCreateHentai = true;
+    private boolean useSankaku = false;
+    private boolean useCreateHentai = false;
     private boolean includeViewed = false;
     private boolean chromeVisible = true;
 
+    private final java.util.ArrayList<String> sourceErrors = new java.util.ArrayList<>();
     private int generation = 0;
     private int pendingSources = 0;
     private int rule34Page = 0;
@@ -164,6 +165,7 @@ public final class AiGalleryActivity extends AppCompatActivity
     private void runSearch(boolean reset) {
         if (reset) {
             generation++;
+            sourceErrors.clear();
             results.clear();
             resultIds.clear();
             rule34Page = 0;
@@ -230,6 +232,7 @@ public final class AiGalleryActivity extends AppCompatActivity
                     int page,
                     String error) {
                 if (requestGeneration != generation || libraryMode != LibraryMode.NONE) return;
+                sourceErrors.add(source.name() + ": " + (error == null ? "Unknown request error" : error));
                 sourceFinished();
             }
         };
@@ -244,9 +247,13 @@ public final class AiGalleryActivity extends AppCompatActivity
         replaceVisible(filteredResults());
 
         if (pagerAdapter.getItemCount() == 0) {
-            showStatus(query.isEmpty()
-                    ? "No adult AI images returned."
-                    : "No results for “" + query + "”.");
+            if (!sourceErrors.isEmpty()) {
+                showStatus("Source error: " + String.join(" | ", sourceErrors));
+            } else {
+                showStatus(query.isEmpty()
+                        ? "No verified AI images returned. Try a search or another source."
+                        : "No verified results for “" + query + "”.");
+            }
         } else {
             hideStatus();
         }
