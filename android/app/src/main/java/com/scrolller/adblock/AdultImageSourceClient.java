@@ -29,7 +29,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 final class AdultImageSourceClient {
-    enum Source { RULE34, SANKAKU, CREATEHENTAI }
+    enum Source { RULE34, SANKAKU, CREATEHENTAI, REDDIT }
 
     interface Callback {
         void onComplete(Source source, int page, ArrayList<RedditPost> posts);
@@ -68,6 +68,11 @@ final class AdultImageSourceClient {
             Callback callback) {
         EXECUTOR.execute(() -> {
             try {
+                if (source == Source.REDDIT) {
+                    ArrayList<RedditPost> posts = fetchReddit(userQuery, page, limit);
+                    MAIN.post(() -> callback.onComplete(source, page, posts));
+                    return;
+                }
                 if (source == Source.CREATEHENTAI) {
                     ArrayList<RedditPost> posts = fetchCreateHentai(userQuery, page, limit);
                     MAIN.post(() -> callback.onComplete(source, page, posts));
@@ -103,6 +108,59 @@ final class AdultImageSourceClient {
                 MAIN.post(() -> callback.onError(source, page, message));
             }
         });
+    }
+
+    // Reddit public JSON search. A result is accepted only with explicit AI
+    // provenance, NSFW marking, an image URL, and no blocked metadata.
+    private static ArrayList<RedditPost> fetchReddit(String query, int page, int limit) throws Exception {
+        if (page < 0 || page > 20) throw new IllegalArgumentException("Reddit page out of range");
+        String clean = normalizeUserQuery(query).replaceAll("[^a-z0-9_\\\\- ]", " ").trim();
+        String search = clean.isEmpty()
+                ? "(ai_generated OR ai_art OR stable_diffusion OR aiart) nsfw:yes"
+                : "(" + clean.replace(" ", " AND ") + ") (ai_generated OR ai_art OR stable_diffusion OR aiart) nsfw:yes";
+        String url = "https://www.reddit.com/search.json?restrict_sr=false&type=link&sort=new"
+                + "&limit=" + Math.max(1, Math.min(limit, 100))
+                + "&q=" + enc(search);
+        // Public Reddit listing pagination requires the previous page's 'after'
+        // token; do not silently serve page one for later requests.
+        if (page != 0) throw new IllegalStateException("Reddit pagination requires a cursor");
+        JSONObject root = new JSONObject(get(url));
+        JSONObject data = root.optJSONObject("data");
+        JSONArray children = data == null ? null : data.optJSONArray("children");
+        if (children == null) throw new IllegalStateException("Unexpected Reddit listing schema");
+        ArrayList<RedditPost> result = new ArrayList<>();
+        for (int i = 0; i < children.length(); i++) {
+            JSONObject wrapper = children.optJSONObject(i);
+            JSONObject p = wrapper == null ? null : wrapper.optJSONObject("data");
+            if (p == null || !p.optBoolean("over_18", false)) continue;
+            if (p.optBoolean("is_video", false) || p.optBoolean("is_self", false)) continue;
+            String title = p.optString("title", "");
+            String subreddit = p.optString("subreddit", "");
+            String flair = p.optString("link_flair_text", "");
+            String metadata = title + " " + subreddit + " " + flair;
+            if (!allowedTags(metadata.replace(' ', '_') + " " + metadata)) continue;
+            String proof = metadata.toLowerCase(Locale.US);
+            if (!(proof.contains("ai generated") || proof.contains("ai-generated")
+                    || proof.contains("ai_generated") || proof.contains("ai art")
+                    || proof.contains("aiart") || proof.contains("stable diffusion"))) continue;
+            String file = p.optString("url_overridden_by_dest", "");
+            if (!staticImage(file) || !file.startsWith("https://")) continue;
+            String id = p.optString("id", "");
+            if (id.isEmpty()) continue;
+            ArrayList<String> images = new ArrayList<>();
+            images.add(file);
+            String permalink = p.optString("permalink", "");
+            if (permalink.startsWith("/")) permalink = "https://www.reddit.com" + permalink;
+            RedditPost post = new RedditPost("reddit:" + id, title,
+                    p.optString("author", ""), "r/" + subreddit, permalink,
+                    file, p.optInt("score", 0), p.optInt("num_comments", 0),
+                    p.optLong("created_utc", 0), false, true,
+                    RedditPost.MediaKind.IMAGE, images, "", file, 0, 0);
+            post.sourceOrigin = "reddit";
+            post.searchMetadata = metadata;
+            result.add(post);
+        }
+        return result;
     }
 
     // Endpoint and query parameters verified against CreateHentai's search-page bundle.
