@@ -114,7 +114,7 @@ final class AdultImageSourceClient {
     // provenance, NSFW marking, an image URL, and no blocked metadata.
     private static ArrayList<RedditPost> fetchReddit(String query, int page, int limit) throws Exception {
         if (page < 0 || page > 20) throw new IllegalArgumentException("Reddit page out of range");
-        String clean = normalizeUserQuery(query).replaceAll("[^a-z0-9_\\\\- ]", " ").trim();
+        String clean = normalizeUserQuery(query).replaceAll("[^a-z0-9_ -]", " ").trim();
         String search = clean.isEmpty()
                 ? "(ai_generated OR ai_art OR stable_diffusion OR aiart) nsfw:yes"
                 : "(" + clean.replace(" ", " AND ") + ") (ai_generated OR ai_art OR stable_diffusion OR aiart) nsfw:yes";
