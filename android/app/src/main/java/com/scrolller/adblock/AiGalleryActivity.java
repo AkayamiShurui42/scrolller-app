@@ -60,6 +60,7 @@ public final class AiGalleryActivity extends AppCompatActivity
     private boolean useRule34 = true;
     private boolean useSankaku = true;
     private boolean useCreateHentai = true;
+    private boolean useReddit = true;
     private boolean includeViewed = false;
     private boolean chromeVisible = true;
 
@@ -69,6 +70,7 @@ public final class AiGalleryActivity extends AppCompatActivity
     private int rule34Page = 0;
     private int sankakuPage = 0;
     private int createHentaiPage = 0;
+    private int redditPage = 0;
     private boolean loadingMore = false;
     private LibraryMode libraryMode = LibraryMode.NONE;
 
@@ -171,6 +173,7 @@ public final class AiGalleryActivity extends AppCompatActivity
             rule34Page = 0;
             sankakuPage = 0;
             createHentaiPage = 0;
+            redditPage = 0;
             loadingMore = false;
             libraryMode = LibraryMode.NONE;
             pagerAdapter.setHiddenMode(false);
@@ -182,7 +185,7 @@ public final class AiGalleryActivity extends AppCompatActivity
     private void fetchPage(int requestGeneration) {
         if (loadingMore || requestGeneration != generation) return;
 
-        int count = (useRule34 ? 1 : 0) + (useSankaku ? 1 : 0) + (useCreateHentai ? 1 : 0);
+        int count = (useRule34 ? 1 : 0) + (useSankaku ? 1 : 0) + (useCreateHentai ? 1 : 0) + (useReddit && redditPage == 0 ? 1 : 0);
         if (count == 0) {
             showStatus("Enable at least one source.");
             return;
@@ -194,6 +197,11 @@ public final class AiGalleryActivity extends AppCompatActivity
                 ? (query.isEmpty() ? "Loading AI images…" : "Searching tags…")
                 : "Loading more…");
 
+        if (useReddit && redditPage == 0) {
+            redditPage++;
+            AdultImageSourceClient.fetch(AdultImageSourceClient.Source.REDDIT,
+                    query, true, 0, 100, sourceCallback(requestGeneration));
+        }
         if (useRule34) {
             final int page = rule34Page++;
             AdultImageSourceClient.fetch(
@@ -545,6 +553,9 @@ public final class AiGalleryActivity extends AppCompatActivity
         body.addView(r34, sectionButtonParams());
         body.addView(sankaku, sectionButtonParams());
         body.addView(create, sectionButtonParams());
+        Button reddit = sheetButton("Reddit AI NSFW · " + (useReddit ? "On" : "Off"));
+        body.addView(reddit, sectionButtonParams());
+        reddit.setOnClickListener(v -> { useReddit = !useReddit; reddit.setText("Reddit AI NSFW · " + (useReddit ? "On" : "Off")); });
         r34.setOnClickListener(v -> { useRule34 = !useRule34; r34.setText("Rule34 · " + (useRule34 ? "On" : "Off")); });
         sankaku.setOnClickListener(v -> { useSankaku = !useSankaku; sankaku.setText("Sankaku Complex · " + (useSankaku ? "On" : "Off")); });
         create.setOnClickListener(v -> { useCreateHentai = !useCreateHentai; create.setText("CreateHentai · " + (useCreateHentai ? "On" : "Off")); });
