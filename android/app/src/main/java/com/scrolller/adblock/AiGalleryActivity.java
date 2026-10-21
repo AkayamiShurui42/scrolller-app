@@ -58,8 +58,8 @@ public final class AiGalleryActivity extends AppCompatActivity
     private String layoutMode = "fullscreen";
     private final boolean aiOnly = true;
     private boolean useRule34 = true;
-    private boolean useSankaku = false;
-    private boolean useCreateHentai = false;
+    private boolean useSankaku = true;
+    private boolean useCreateHentai = true;
     private boolean includeViewed = false;
     private boolean chromeVisible = true;
 
