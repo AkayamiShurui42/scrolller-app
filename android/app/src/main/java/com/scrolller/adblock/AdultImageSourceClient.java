@@ -238,9 +238,9 @@ final class AdultImageSourceClient {
 
         if (!user.isEmpty()) q.append(' ').append(user);
 
-        for (String blocked : BLOCKED_TAGS) {
-            q.append(" -").append(blocked);
-        }
+        // Enforce exclusions on each returned post, not through dozens of
+        // server-side negative tags. Long booru queries can be rejected or
+        // unexpectedly produce zero results.
         return q.toString();
     }
 
