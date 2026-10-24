@@ -637,6 +637,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void restoreState(NavState state) {
+        cancelContentRequests();
         screen = state.screen;
         context = state.context;
         subreddit = state.subreddit;
@@ -979,7 +980,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                         if (items != null) {
                             for (int i = 0; i < items.length(); i++) {
                                 RedditPost post = archivePost(items.optJSONObject(i));
-                                if (post == null || !matchesMedia(post) || isSeen(post)) continue;
+                                if (post == null || !matchesMedia(post)
+                                        || !withinTopTime(post)
+                                        || isSeen(post)) continue;
                                 additions.add(post);
                             }
                         }
@@ -987,6 +990,19 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                         archiveBefore = nextBefore == null ? "" : nextBefore;
                         if (items == null || items.length() == 0 || archiveBefore.isEmpty()) {
                             archiveFeedExhausted = true;
+                        } else if (sort.equals("top") && !topTime.equals("all")) {
+                            long cutoff = topTimeCutoffUtc();
+                            long oldest = Long.MAX_VALUE;
+                            for (int i = 0; i < items.length(); i++) {
+                                JSONObject item = items.optJSONObject(i);
+                                if (item == null) continue;
+                                long created = ArcticShiftClient.createdUtc(item.opt("created_utc"));
+                                if (created > 0L && created < oldest) oldest = created;
+                            }
+                            if (cutoff > 0L && oldest != Long.MAX_VALUE && oldest < cutoff) {
+                                archiveFeedExhausted = true;
+                                archiveBefore = "";
+                            }
                         }
 
                         sortFeedBatch(additions);
@@ -1514,19 +1530,22 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 .trim();
     }
 
-    private boolean withinTopTime(RedditPost post) {
-        if (!sort.equals("top") || topTime.equals("all")) return true;
+    private long topTimeCutoffUtc() {
+        if (!sort.equals("top") || topTime.equals("all")) return 0L;
         long seconds;
         if (topTime.equals("hour")) seconds = 3600L;
         else if (topTime.equals("day")) seconds = 86400L;
         else if (topTime.equals("week")) seconds = 604800L;
         else if (topTime.equals("month")) seconds = 2678400L;
         else if (topTime.equals("year")) seconds = 31536000L;
-        else return true;
+        else return 0L;
+        return System.currentTimeMillis() / 1000L - seconds;
+    }
 
-        long now = System.currentTimeMillis() / 1000L;
-        return post != null && post.createdUtc > 0L
-                && now - post.createdUtc <= seconds;
+    private boolean withinTopTime(RedditPost post) {
+        long cutoff = topTimeCutoffUtc();
+        if (cutoff <= 0L) return true;
+        return post != null && post.createdUtc > 0L && post.createdUtc >= cutoff;
     }
 
     private void loadUserProfileInternal() {
