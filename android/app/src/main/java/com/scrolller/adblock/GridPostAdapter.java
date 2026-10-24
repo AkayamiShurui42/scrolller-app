@@ -45,6 +45,17 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         notifyItemRangeInserted(start, items.size());
     }
 
+    public RedditPost getPost(int position) {
+        return position >= 0 && position < posts.size() ? posts.get(position) : null;
+    }
+
+    public void dropPrefix(int count) {
+        if (count <= 0 || posts.isEmpty()) return;
+        int remove = Math.min(count, posts.size());
+        posts.subList(0, remove).clear();
+        notifyDataSetChanged();
+    }
+
     @Override
     public long getItemId(int position) {
         String id = posts.get(position).id;
