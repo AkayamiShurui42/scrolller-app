@@ -681,6 +681,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void navigateHome(String which, boolean pushHistory) {
+        cancelContentRequests();
         if (pushHistory && !(screen == Screen.HOME && context.equals(which) && subreddit.isEmpty())) {
             pushCurrentState();
         }
@@ -697,6 +698,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void openSubredditFeed(String name) {
         if (name == null || name.isEmpty()) return;
+        cancelContentRequests();
         pushCurrentState();
         screen = Screen.HOME;
         context = "subreddit";
@@ -710,6 +712,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void openSearchScreen() {
+        cancelContentRequests();
         if (screen != Screen.SEARCH) pushCurrentState();
         screen = Screen.SEARCH;
         context = "search";
@@ -740,12 +743,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
         query = next;
         prefs.edit().putString("lastSearch", query).apply();
+        cancelContentRequests();
         screen = Screen.SEARCH;
         loadSearchInternal();
     }
 
     private void openUserProfile(String name) {
         if (name == null || name.isEmpty()) return;
+        cancelContentRequests();
         pushCurrentState();
         screen = Screen.USER;
         profileUser = name;
@@ -1574,6 +1579,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void loadFavorites() {
+        cancelContentRequests();
         if (screen != Screen.FAVORITES) pushCurrentState();
         screen = Screen.FAVORITES;
         profileUser = "";
@@ -1622,6 +1628,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void showAccount() {
+        cancelContentRequests();
         if (screen != Screen.ACCOUNT) pushCurrentState();
         screen = Screen.ACCOUNT;
         profileUser = "";
@@ -1784,7 +1791,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         String[][] values = {
                 {"all", "All media"},
                 {"image", "Images"},
-                {"video", "Video"}
+                {"video", "GIFs & Videos"}
         };
         for (String[] pair : values) {
             Button b = sheetButton(pair[1] + (media.equals(pair[0]) ? "  ✓" : ""));
@@ -1831,7 +1838,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         LinearLayout body = sheetBody("Search scope");
         String[][] values = {
                 {"global", "Global"},
-                {"subscribed", "Subscribed only"}
+                {"subscribed", "Joined subreddits"}
         };
         for (String[] pair : values) {
             Button b = sheetButton(pair[1] + (searchScope.equals(pair[0]) ? "  ✓" : ""));
@@ -1849,11 +1856,22 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void reloadCurrent() {
+        cancelContentRequests();
         updateChrome();
         if (screen == Screen.SEARCH) loadSearchInternal();
         else if (screen == Screen.FAVORITES) loadFavoritesInternal();
         else if (screen == Screen.USER) loadUserProfileInternal();
         else if (screen == Screen.HOME) loadFeed(true);
+    }
+
+    private void cancelContentRequests() {
+        feedGeneration++;
+        searchGeneration++;
+        feedLoading = false;
+        searchLoading = false;
+        loading = false;
+        archiveFeedLoading = false;
+        if (engine != null) engine.cancelPendingRequests();
     }
 
     private void updateChrome() {
@@ -1877,11 +1895,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         topTitle.setText(title);
 
         feedButton.setText(screen == Screen.SEARCH
-                ? (searchScope.equals("global") ? "Global" : "Subs")
+                ? (searchScope.equals("global") ? "Global" : "Joined")
                 : "Feed");
         sortButton.setText(label(sort));
         filterButton.setText(media.equals("all") ? "All media"
-                : media.equals("image") ? "Images" : "Video");
+                : media.equals("image") ? "Images" : "GIFs/Video");
         layoutButton.setText(layoutMode.equals("grid") ? "Grid" : "Fullscreen");
 
         controlRow.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
