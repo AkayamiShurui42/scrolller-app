@@ -757,27 +757,52 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void loadFeed(boolean reset) {
-        if (loading || !engine.isReady()) return;
-        loading = true;
+        if (!engine.isReady()) return;
+
+        if (context.equals("subreddit")) {
+            loadSubredditExhaustive(reset);
+            return;
+        }
+
+        if (feedLoading) return;
+        feedLoading = true;
         if (reset) {
+            feedGeneration++;
             after = "";
+            feedSeenCursors.clear();
             replacePosts(new ArrayList<>());
             pager.setCurrentItem(0, false);
             setStatus("Loading media…", true);
         }
-        fetchFeedPages(reset, new ArrayList<>(), 0);
+        fetchOrdinaryFeedPages(feedGeneration, reset, new ArrayList<>(), 0);
     }
 
-    private void fetchFeedPages(boolean reset, ArrayList<RedditPost> collected, int page) {
-        String path = listingPath(after);
-        engine.get(path, result -> {
+    private void fetchOrdinaryFeedPages(
+            int generation,
+            boolean reset,
+            ArrayList<RedditPost> collected,
+            int page) {
+        if (generation != feedGeneration || screen != Screen.HOME) return;
+
+        String cursor = after == null ? "" : after;
+        if (!cursor.isEmpty() && !feedSeenCursors.add(cursor)) {
+            after = "";
+            feedLoading = false;
+            if (reset) replacePosts(collected); else appendUnique(collected);
+            finishOrdinaryFeedUi();
+            return;
+        }
+
+        engine.get(listingPath(cursor), result -> {
+            if (generation != feedGeneration || screen != Screen.HOME) return;
             if (!result.ok) {
-                loading = false;
+                feedLoading = false;
                 if (postAdapter.getItemCount() == 0) {
                     setStatus("Reddit feed failed: " + friendlyError(result), false);
                 }
                 return;
             }
+
             JSONObject root = result.jsonObject();
             JSONObject data = root != null ? root.optJSONObject("data") : null;
             JSONArray children = data != null ? data.optJSONArray("children") : null;
@@ -787,21 +812,323 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     if (post != null && matchesMedia(post)) collected.add(post);
                 }
             }
+
             after = data != null ? data.optString("after", "") : "";
-            if (collected.size() < 12 && !after.isEmpty() && page < 4) {
-                fetchFeedPages(reset, collected, page + 1);
+            if (collected.size() < 20 && !after.isEmpty() && page < 4) {
+                fetchOrdinaryFeedPages(generation, reset, collected, page + 1);
                 return;
             }
-            loading = false;
+
+            feedLoading = false;
             if (reset) replacePosts(collected); else appendUnique(collected);
-            if (postAdapter.getItemCount() == 0) {
-                setStatus("No media posts match this feed/filter.", false);
-            } else {
-                hideStatus();
+            finishOrdinaryFeedUi();
+        });
+    }
+
+    private void finishOrdinaryFeedUi() {
+        if (postAdapter.getItemCount() == 0) {
+            setStatus("No media posts match this feed/filter.", false);
+        } else {
+            hideStatus();
+        }
+        updateChrome();
+        restorePendingPosition();
+    }
+
+    private void loadSubredditExhaustive(boolean reset) {
+        if (subreddit == null || subreddit.isEmpty()) return;
+
+        if (reset) {
+            feedGeneration++;
+            feedLoading = false;
+            archiveFeedLoading = false;
+            liveFeedExhausted = false;
+            archiveFeedExhausted = false;
+            subredditClearedShown = false;
+            after = "";
+            archiveBefore = "";
+            feedSeenCursors.clear();
+            feedQueuedIds.clear();
+            feedReservoir.clear();
+            replacePosts(new ArrayList<>());
+            pager.setCurrentItem(0, false);
+            setStatus("Loading unread r/" + subreddit + "…", true);
+        }
+
+        ensureSubredditSupply(Math.max(0, pager.getCurrentItem()));
+    }
+
+    private void ensureSubredditSupply(int position) {
+        if (screen != Screen.HOME || !context.equals("subreddit")
+                || subreddit == null || subreddit.isEmpty()) return;
+
+        drainFeedReservoir(position);
+
+        int ahead = Math.max(0, postAdapter.getItemCount() - position - 1);
+        if (feedReservoir.size() >= FEED_RESERVOIR_LOW && ahead >= 20) return;
+
+        if (!liveFeedExhausted) {
+            if (!feedLoading) fetchNextLiveSubredditPage(feedGeneration);
+            return;
+        }
+
+        if (!archiveFeedExhausted) {
+            if (!archiveFeedLoading) fetchNextArchiveSubredditPage(feedGeneration);
+            return;
+        }
+
+        if (feedReservoir.isEmpty() && ahead <= 0) {
+            showSubredditCleared();
+        }
+    }
+
+    private void fetchNextLiveSubredditPage(int generation) {
+        if (generation != feedGeneration
+                || screen != Screen.HOME
+                || !context.equals("subreddit")) return;
+
+        String cursor = after == null ? "" : after;
+        if (!cursor.isEmpty() && !feedSeenCursors.add(cursor)) {
+            liveFeedExhausted = true;
+            feedLoading = false;
+            ensureSubredditSupply(Math.max(0, pager.getCurrentItem()));
+            return;
+        }
+
+        feedLoading = true;
+        engine.get(listingPath(cursor), result -> {
+            if (generation != feedGeneration
+                    || screen != Screen.HOME
+                    || !context.equals("subreddit")) return;
+
+            feedLoading = false;
+            if (!result.ok) {
+                liveFeedExhausted = true;
+                setStatus("Live Reddit ended; checking archive…", true);
+                ensureSubredditSupply(Math.max(0, pager.getCurrentItem()));
+                return;
             }
+
+            JSONObject root = result.jsonObject();
+            JSONObject data = root != null ? root.optJSONObject("data") : null;
+            JSONArray children = data != null ? data.optJSONArray("children") : null;
+            ArrayList<RedditPost> additions = new ArrayList<>();
+
+            if (children != null) {
+                for (int i = 0; i < children.length(); i++) {
+                    RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
+                    if (post == null || !matchesMedia(post) || isSeen(post)) continue;
+                    additions.add(post);
+                }
+            }
+
+            String next = data != null ? data.optString("after", "") : "";
+            if (next.isEmpty() || next.equals(cursor)) {
+                after = "";
+                liveFeedExhausted = true;
+            } else {
+                after = next;
+            }
+
+            sortFeedBatch(additions);
+            enqueueUnreadFeed(additions);
+            drainFeedReservoir(Math.max(0, pager.getCurrentItem()));
+
+            if (postAdapter.getItemCount() > 0) hideStatus();
             updateChrome();
             restorePendingPosition();
+
+            if (feedReservoir.size() < FEED_RESERVOIR_LOW) {
+                ensureSubredditSupply(Math.max(0, pager.getCurrentItem()));
+            }
         });
+    }
+
+    private void fetchNextArchiveSubredditPage(int generation) {
+        if (generation != feedGeneration
+                || screen != Screen.HOME
+                || !context.equals("subreddit")
+                || archiveFeedExhausted
+                || archiveFeedLoading) return;
+
+        archiveFeedLoading = true;
+        final String targetSubreddit = subreddit;
+        final String before = archiveBefore;
+
+        ArcticShiftClient.fetchSubredditPage(
+                targetSubreddit,
+                before,
+                100,
+                new ArcticShiftClient.PageCallback() {
+                    @Override
+                    public void onComplete(JSONArray items, String nextBefore) {
+                        if (generation != feedGeneration
+                                || screen != Screen.HOME
+                                || !context.equals("subreddit")
+                                || !targetSubreddit.equalsIgnoreCase(subreddit)) return;
+
+                        archiveFeedLoading = false;
+                        ArrayList<RedditPost> additions = new ArrayList<>();
+                        if (items != null) {
+                            for (int i = 0; i < items.length(); i++) {
+                                RedditPost post = archivePost(items.optJSONObject(i));
+                                if (post == null || !matchesMedia(post) || isSeen(post)) continue;
+                                additions.add(post);
+                            }
+                        }
+
+                        archiveBefore = nextBefore == null ? "" : nextBefore;
+                        if (items == null || items.length() == 0 || archiveBefore.isEmpty()) {
+                            archiveFeedExhausted = true;
+                        }
+
+                        sortFeedBatch(additions);
+                        enqueueUnreadFeed(additions);
+                        drainFeedReservoir(Math.max(0, pager.getCurrentItem()));
+
+                        if (postAdapter.getItemCount() > 0) hideStatus();
+                        if (feedReservoir.size() < FEED_RESERVOIR_LOW) {
+                            ensureSubredditSupply(Math.max(0, pager.getCurrentItem()));
+                        }
+                    }
+
+                    @Override
+                    public void onError(String error) {
+                        if (generation != feedGeneration) return;
+                        archiveFeedLoading = false;
+                        archiveFeedExhausted = true;
+                        ensureSubredditSupply(Math.max(0, pager.getCurrentItem()));
+                    }
+                });
+    }
+
+    private RedditPost archivePost(JSONObject item) {
+        if (item == null) return null;
+        try {
+            JSONObject data = new JSONObject(item.toString());
+            String id = data.optString("id", "");
+            if (id.isEmpty()) return null;
+            if (data.optString("name", "").isEmpty()) data.put("name", "t3_" + id);
+            if (data.optString("permalink", "").isEmpty()) {
+                data.put("permalink", "/r/" + data.optString("subreddit", "")
+                        + "/comments/" + id + "/");
+            }
+            if (data.optString("url_overridden_by_dest", "").isEmpty()
+                    && !data.optString("url", "").isEmpty()) {
+                data.put("url_overridden_by_dest", data.optString("url", ""));
+            }
+            long created = ArcticShiftClient.createdUtc(data.opt("created_utc"));
+            if (created > 0L) data.put("created_utc", created);
+
+            JSONObject child = new JSONObject();
+            child.put("data", data);
+            RedditPost post = RedditPost.fromChild(child);
+            if (post != null) post.sourceOrigin = "archive";
+            return post;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void sortFeedBatch(ArrayList<RedditPost> posts) {
+        if (posts == null || posts.size() < 2) return;
+        if (sort.equals("new") || sort.equals("rising")) {
+            posts.sort((a, b) -> Long.compare(b.createdUtc, a.createdUtc));
+        } else if (sort.equals("top")) {
+            posts.sort((a, b) -> Integer.compare(b.score, a.score));
+        } else {
+            posts.sort((a, b) -> Double.compare(localHotScore(b), localHotScore(a)));
+        }
+    }
+
+    private void enqueueUnreadFeed(List<RedditPost> incoming) {
+        if (incoming == null || incoming.isEmpty()) return;
+
+        for (RedditPost post : incoming) {
+            if (feedReservoir.size() >= FEED_RESERVOIR_MAX) break;
+            if (post == null || post.id == null || post.id.isEmpty()) continue;
+            if (!matchesMedia(post) || isSeen(post)) continue;
+
+            String id = normalizePostId(post.id);
+            if (id.isEmpty() || feedQueuedIds.contains(id)) continue;
+            feedQueuedIds.add(id);
+            feedReservoir.add(post);
+        }
+    }
+
+    private void drainFeedReservoir(int currentPosition) {
+        if (screen != Screen.HOME || !context.equals("subreddit")) return;
+
+        int current = Math.max(0, currentPosition);
+        int ahead = Math.max(0, postAdapter.getItemCount() - current - 1);
+        int needed = Math.max(0, FEED_VISIBLE_AHEAD - ahead);
+        if (postAdapter.getItemCount() == 0) needed = FEED_VISIBLE_AHEAD;
+
+        ArrayList<RedditPost> release = new ArrayList<>();
+        while (needed > 0 && !feedReservoir.isEmpty()) {
+            RedditPost post = feedReservoir.remove(0);
+            if (post == null || isSeen(post)) continue;
+            release.add(post);
+            needed--;
+        }
+
+        if (!release.isEmpty()) appendUnique(release);
+    }
+
+    private void showSubredditCleared() {
+        if (subredditClearedShown) return;
+        subredditClearedShown = true;
+        setStatus("r/" + subreddit + " cleared · no unread media remains.", false);
+    }
+
+    private boolean isSeen(RedditPost post) {
+        if (post == null || post.id == null || post.id.isEmpty()) return false;
+        return seenPostIds.contains(normalizePostId(post.id));
+    }
+
+    private void markSeen(RedditPost post) {
+        if (post == null || post.id == null || post.id.isEmpty()) return;
+        String id = normalizePostId(post.id);
+        if (id.isEmpty() || !seenPostIds.add(id)) return;
+        if (seenPostStore != null) seenPostStore.markSeenAsync(post);
+    }
+
+    private String normalizePostId(String id) {
+        if (id == null) return "";
+        String clean = id.trim().toLowerCase(Locale.US);
+        if (clean.startsWith("t3_")) clean = clean.substring(3);
+        return clean;
+    }
+
+    private void trimFullscreenWindowIfNeeded() {
+        int position = pager.getCurrentItem();
+        if (position <= FEED_KEEP_BEHIND * 2) return;
+
+        int drop = position - FEED_KEEP_BEHIND;
+        postAdapter.dropPrefix(drop);
+        gridAdapter.dropPrefix(drop);
+        int target = Math.min(FEED_KEEP_BEHIND, Math.max(0, postAdapter.getItemCount() - 1));
+        pager.setCurrentItem(target, false);
+        postAdapter.setActivePosition(target);
+        ensureSubredditSupply(target);
+    }
+
+    private void trimGridWindowIfNeeded(int firstVisible) {
+        if (layoutMode.equals("fullscreen") || firstVisible <= FEED_KEEP_BEHIND * 2) return;
+
+        int drop = firstVisible - FEED_KEEP_BEHIND;
+        postAdapter.dropPrefix(drop);
+        gridAdapter.dropPrefix(drop);
+        int target = Math.min(FEED_KEEP_BEHIND, Math.max(0, gridAdapter.getItemCount() - 1));
+        gridView.scrollToPosition(target);
+        ensureSubredditSupply(target);
+    }
+
+    private double localHotScore(RedditPost post) {
+        long now = System.currentTimeMillis() / 1000L;
+        long age = Math.max(1L, now - Math.max(0L, post.createdUtc));
+        double hours = age / 3600.0;
+        return (Math.max(0, post.score) + 1.0) / Math.pow(hours + 2.0, 0.82);
     }
 
     private String listingPath(String cursor) {
