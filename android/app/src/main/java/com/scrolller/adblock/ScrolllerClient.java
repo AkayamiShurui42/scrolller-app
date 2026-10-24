@@ -13,8 +13,10 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 final class ScrolllerClient {
     interface Callback {
@@ -70,7 +72,9 @@ final class ScrolllerClient {
                 if (items != null && items.length() > 0) {
                     delivered += items.length();
                     JSONArray batch = items;
-                    MAIN.post(() -> callback.onBatch(batch));
+                    if (!deliverBatchBlocking(callback, batch)) {
+                        throw new IllegalStateException("Scrolller UI delivery timed out");
+                    }
                 }
                 String iterator = children.optString("iterator", "");
 
@@ -93,7 +97,9 @@ final class ScrolllerClient {
                     if (nextItems != null && nextItems.length() > 0) {
                         delivered += nextItems.length();
                         JSONArray batch = nextItems;
-                        MAIN.post(() -> callback.onBatch(batch));
+                        if (!deliverBatchBlocking(callback, batch)) {
+                            throw new IllegalStateException("Scrolller UI delivery timed out");
+                        }
                     }
                     String nextIterator = listing.optString("iterator", "");
                     if (nextIterator.isEmpty() || nextIterator.equals(iterator)) break;
@@ -105,6 +111,24 @@ final class ScrolllerClient {
                 MAIN.post(() -> callback.onError(message));
             }
         });
+    }
+
+    private static boolean deliverBatchBlocking(
+            Callback callback, JSONArray batch) {
+        CountDownLatch latch = new CountDownLatch(1);
+        MAIN.post(() -> {
+            try {
+                callback.onBatch(batch);
+            } finally {
+                latch.countDown();
+            }
+        });
+        try {
+            return latch.await(30L, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private static JSONObject request(String query, JSONObject variables) throws Exception {
