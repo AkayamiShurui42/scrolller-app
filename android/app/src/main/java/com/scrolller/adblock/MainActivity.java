@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v4.0.1: equal candidate layers; term/scope/media/read filters are applied locally after merge.
+// v4.0.2: deterministic Joined search, AI SFW/NSFW categories, content-safety mode, and RP blocking.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -72,7 +72,20 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             {"NSFW", "Adult", "Lingerie", "lingerie"},
             {"NSFW", "Adult", "Curvy", "gonewildcurvy,curvy"},
             {"NSFW", "Adult", "Petite", "petitegonewild"},
-            {"NSFW", "Adult", "Artistic", "NSFWart,ArtisticNSFW"}
+            {"NSFW", "Adult", "Artistic", "NSFWart,ArtisticNSFW"},
+
+            // AI-generated media. SFW and NSFW are deliberately separate so the
+            // category tree follows the user's content-safety mode.
+            {"SFW", "AI-generated", "General art", "aiArt,AIArtwork,AIArtShowcase,ImageGenerators"},
+            {"SFW", "AI-generated", "Stable Diffusion / local", "StableDiffusion,sdforall,StableDiffusionInfo,StableDiffusion_AI,comfyui"},
+            {"SFW", "AI-generated", "FLUX / Z-Image", "FluxAI,ZImageAI"},
+            {"SFW", "AI-generated", "Midjourney / DALL-E", "midjourney,dalle,dalle2"},
+            {"SFW", "AI-generated", "Classic / experimental", "deepdream,bigsleep,MediaSynthesis,DiscoDiffusion,nightcafe,craiyon,Wombodream,womboai,ImagenAI"},
+            {"SFW", "AI-generated", "Video", "AiVideos"},
+            {"SFW", "AI-generated", "General generative", "generativeAI,generateforme"},
+
+            {"NSFW", "AI-generated", "Adult AI", "sdnsfw,unstable_diffusion,AI_NSFW"},
+            {"NSFW", "AI-generated", "Anime / waifu", "WaifuDiffusion"}
     };
     private static final String[] QUALITY_SEED_SUBREDDITS = {
             "NSFW", "gonewild", "RealGirls", "nsfw_gif", "couplesgonewild",
@@ -226,6 +239,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private boolean fullscreenChromeVisible = true;
     private boolean blockLgbtTopics = false;
     private boolean blockGoreContent = false;
+    private boolean blockRoleplayContent = false;
+    private String contentSafetyMode = "nsfw"; // sfw, nsfw, both
 
     // v3.9 discovery controls. A zero people/source mask means "all".
     private int peopleFilterMask = 0;
@@ -336,6 +351,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         blockLgbtTopics = false;
         prefs.edit().remove("blockLgbtTopics").apply();
         blockGoreContent = prefs.getBoolean("blockGoreContent", false);
+        blockRoleplayContent = prefs.getBoolean("blockRoleplayContentV1", false);
+        contentSafetyMode = prefs.getString("contentSafetyModeV1", "nsfw");
+        if (!contentSafetyMode.equals("sfw")
+                && !contentSafetyMode.equals("nsfw")
+                && !contentSafetyMode.equals("both")) {
+            contentSafetyMode = "nsfw";
+        }
         peopleFilterMask = prefs.getInt("peopleFilterMaskV1", 0);
         sourceFilterMask = prefs.getInt("sourceFilterMaskV1", 0);
         showViewedPosts = prefs.getBoolean("showViewedPostsV1", false);
@@ -1663,9 +1685,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private boolean isContentBlocked(RedditPost post) {
-        if (post != null && !post.nsfw) return true;
-
         if (post == null) return false;
+        if (!matchesContentSafety(post)) return true;
         if (!ContentTaxonomy.matches(post, peopleFilterMask)) return true;
         if (!passesDiscoveryFilters(post)) return true;
 
@@ -1699,6 +1720,30 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             };
             for (String fragment : blockedCommunityFragments) {
                 if (communityKey.contains(fragment)) return true;
+            }
+        }
+
+        if (blockRoleplayContent) {
+            if (communityKey.contains("roleplay")
+                    || communityKey.contains("roleplaying")
+                    || communityKey.contains("roleplaypartner")
+                    || communityKey.contains("roleplaypartners")
+                    || communityKey.contains("advancedliteraterp")
+                    || communityKey.contains("discordroleplay")
+                    || communityKey.contains("roleplaygroup")
+                    || communityKey.contains("roleplaykik")
+                    || communityKey.contains("nsfwroleplay")
+                    || communityKey.contains("eroticroleplay")) {
+                return true;
+            }
+
+            if (containsFilterPhrase(normalized,
+                    "roleplay partner", "role play partner", "roleplay prompt",
+                    "role play prompt", "roleplay request", "role play request",
+                    "looking for roleplay", "looking for a roleplay",
+                    "looking for rp partner", "rp partner",
+                    "erotic roleplay", "erp partner")) {
+                return true;
             }
         }
 
@@ -1742,6 +1787,25 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         return false;
     }
 
+    private boolean allowsSfwContent() {
+        return contentSafetyMode.equals("sfw") || contentSafetyMode.equals("both");
+    }
+
+    private boolean allowsNsfwContent() {
+        return contentSafetyMode.equals("nsfw") || contentSafetyMode.equals("both");
+    }
+
+    private boolean matchesContentSafety(RedditPost post) {
+        if (post == null) return false;
+        return post.nsfw ? allowsNsfwContent() : allowsSfwContent();
+    }
+
+    private String contentSafetyLabel() {
+        if (contentSafetyMode.equals("sfw")) return "SFW";
+        if (contentSafetyMode.equals("both")) return "SFW + NSFW";
+        return "NSFW";
+    }
+
     private void persistSavedPostIds() {
         prefs.edit().putStringSet("savedPostIds", new HashSet<>(savedPostIds)).apply();
     }
@@ -1772,11 +1836,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void replacePosts(List<RedditPost> items) {
         if (items != null) {
-            ArrayList<RedditPost> nsfwOnly = new ArrayList<>();
+            ArrayList<RedditPost> safetyFiltered = new ArrayList<>();
             for (RedditPost candidate : items) {
-                if (candidate != null && candidate.nsfw) nsfwOnly.add(candidate);
+                if (matchesContentSafety(candidate)) safetyFiltered.add(candidate);
             }
-            items = nsfwOnly;
+            items = safetyFiltered;
         }
 
         lastFullscreenPostId = "";
@@ -2796,11 +2860,11 @@ private void loadQualityCollection(boolean reset) {
 
     private void appendUniqueDirect(List<RedditPost> incoming) {
         if (incoming != null) {
-            ArrayList<RedditPost> nsfwOnly = new ArrayList<>();
+            ArrayList<RedditPost> safetyFiltered = new ArrayList<>();
             for (RedditPost candidate : incoming) {
-                if (candidate != null && candidate.nsfw) nsfwOnly.add(candidate);
+                if (matchesContentSafety(candidate)) safetyFiltered.add(candidate);
             }
-            incoming = nsfwOnly;
+            incoming = safetyFiltered;
         }
 
         if (showingHiddenLibrary() || incoming == null || incoming.isEmpty()) return;
@@ -3158,11 +3222,30 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
-        // Remote search is broad; scope is enforced locally by
-        // searchLayerCandidateAccepted(). This is especially important for
-        // Joined: issuing one request per subscribed subreddit is slow, fragile,
-        // and can wedge the request queue on accounts with many subscriptions.
-        if (allowed.isEmpty() || searchScope.equals("subscribed")) {
+        // Joined search must query joined communities directly. A global query
+        // followed by membership filtering can miss every valid joined result if
+        // none of the first global results happen to come from a joined subreddit.
+        if (searchScope.equals("subscribed")) {
+            ArrayList<String> communities = new ArrayList<>(allowed);
+            communities.sort(String.CASE_INSENSITIVE_ORDER);
+            startJoinedPullPushSearch(generation, communities, 0);
+
+            setStatus("Searching " + communities.size()
+                    + " joined subreddits for “" + query + "”…", true);
+            fetchRemoteSearchGroup(
+                    generation,
+                    communities,
+                    0,
+                    "",
+                    new ArrayList<>(),
+                    new HashSet<>(),
+                    new HashSet<>(),
+                    0,
+                    0);
+            return;
+        }
+
+        if (allowed.isEmpty()) {
             PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
                 @Override
                 public void onComplete(JSONArray items) {
@@ -3193,23 +3276,6 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
-        if (searchScope.equals("subscribed")) {
-            ArrayList<String> globalSearch = new ArrayList<>();
-            globalSearch.add("__global__");
-            setStatus("Searching joined subreddits for “" + query + "”…", true);
-            fetchRemoteSearchGroup(
-                    generation,
-                    globalSearch,
-                    0,
-                    "",
-                    new ArrayList<>(),
-                    new HashSet<>(),
-                    new HashSet<>(),
-                    0,
-                    0);
-            return;
-        }
-
         // The term matcher remains local and identical for every source.
         searchLoading = false;
         loading = false;
@@ -3222,6 +3288,41 @@ private void loadQualityCollection(boolean reset) {
                 }
             }, 10000L);
         }
+    }
+
+    private void startJoinedPullPushSearch(
+            int generation,
+            ArrayList<String> communities,
+            int index) {
+        if (!searchStillValid(generation)
+                || !searchScope.equals("subscribed")
+                || communities == null
+                || index >= communities.size()
+                || searchLayerResults.size() >= 250) return;
+
+        String target = communities.get(index);
+        PullPushClient.searchSubreddit(target, query, 100, new PullPushClient.Callback() {
+            @Override
+            public void onComplete(JSONArray items) {
+                if (!searchStillValid(generation)
+                        || !searchScope.equals("subscribed")) return;
+                mergeSearchLayerResults(generation, postsFromPullPush(items));
+                if (root != null) {
+                    root.postDelayed(() -> startJoinedPullPushSearch(
+                            generation, communities, index + 1), 90L);
+                }
+            }
+
+            @Override
+            public void onError(String error) {
+                if (!searchStillValid(generation)
+                        || !searchScope.equals("subscribed")) return;
+                if (root != null) {
+                    root.postDelayed(() -> startJoinedPullPushSearch(
+                            generation, communities, index + 1), 90L);
+                }
+            }
+        });
     }
 
     private ArrayList<RedditPost> postsFromPullPush(JSONArray items) {
@@ -3489,13 +3590,9 @@ private void loadQualityCollection(boolean reset) {
 
             String next = data != null ? data.optString("after", "") : "";
             int nextRawFetched = rawFetched + pageRawCount;
-            boolean joinedGlobal = searchScope.equals("subscribed")
-                    && "__global__".equals(group);
             boolean deepSingleSource = searchScope.equals("global")
-                    || searchScope.equals("subreddit")
-                    || joinedGlobal;
-            int maxPages = joinedGlobal ? 6
-                    : deepSingleSource ? 4 : 1;
+                    || searchScope.equals("subreddit");
+            int maxPages = deepSingleSource ? 4 : 1;
             boolean canContinue = !next.isEmpty()
                     && !seenCursors.contains(next)
                     && page + 1 < maxPages;
@@ -3615,7 +3712,7 @@ private void loadQualityCollection(boolean reset) {
     }
 
 private boolean matchesLocalSearch(RedditPost post, String value) {
-        if (post == null || !post.nsfw) return false;
+        if (post == null || !matchesContentSafety(post)) return false;
         String normalized = FuzzySearch.normalize(value);
         if (normalized.isEmpty()) return true;
         return fuzzyPostSearchScore(post, value) >= FuzzySearch.thresholdFor(normalized.length());
@@ -4255,7 +4352,31 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
     }
 
 private void showCategoryRoot() {
-        showCategorySafety("NSFW");
+        if (contentSafetyMode.equals("sfw")) {
+            showCategorySafety("SFW");
+            return;
+        }
+        if (contentSafetyMode.equals("nsfw")) {
+            showCategorySafety("NSFW");
+            return;
+        }
+
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout body = sheetBody("Categories · SFW + NSFW");
+        Button sfw = sheetButton("Safe for work");
+        Button nsfw = sheetButton("NSFW");
+        body.addView(sfw, sectionButtonParams());
+        body.addView(nsfw, sectionButtonParams());
+        sfw.setOnClickListener(v -> {
+            dialog.dismiss();
+            showCategorySafety("SFW");
+        });
+        nsfw.setOnClickListener(v -> {
+            dialog.dismiss();
+            showCategorySafety("NSFW");
+        });
+        dialog.setContentView(body);
+        dialog.show();
     }
 
 
@@ -6331,17 +6452,47 @@ private void installCompactNavigation() {
         dialog.show();
     }
 
+    private void showContentSafetySheet() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout body = sheetBody("Content safety");
+
+        String[][] values = {
+                {"sfw", "Safe for work"},
+                {"nsfw", "NSFW"},
+                {"both", "SFW + NSFW"}
+        };
+        for (String[] row : values) {
+            Button button = sheetButton(row[1]
+                    + (contentSafetyMode.equals(row[0]) ? "  ✓" : ""));
+            body.addView(button, sectionButtonParams());
+            button.setOnClickListener(v -> {
+                contentSafetyMode = row[0];
+                persistDiscoveryFilterPrefs();
+                dialog.dismiss();
+                scheduleFilterReload();
+            });
+        }
+
+        dialog.setContentView(body);
+        dialog.show();
+    }
+
     private void showViewFilterSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Filter");
+        Button safety = sheetButton("Content safety · " + contentSafetyLabel());
         Button sources = sheetButton("Sources · " + sourceFilterLabel());
         Button joined = sheetButton("Subreddits · " + (joinedOnlyFilter ? "Joined only" : "Any"));
+        Button roleplay = sheetButton("Roleplay · " + (blockRoleplayContent ? "Blocked" : "Allowed"));
         Button video = sheetButton("Video length / quality");
         Button advanced = sheetButton("Communities / blocked creators");
+        body.addView(safety, sectionButtonParams());
         body.addView(sources, sectionButtonParams());
         body.addView(joined, sectionButtonParams());
+        body.addView(roleplay, sectionButtonParams());
         body.addView(video, sectionButtonParams());
         body.addView(advanced, sectionButtonParams());
+        safety.setOnClickListener(v -> { dialog.dismiss(); showContentSafetySheet(); });
         sources.setOnClickListener(v -> { dialog.dismiss(); showSourceFilterSheet(); });
         joined.setOnClickListener(v -> {
             joinedOnlyFilter = !joinedOnlyFilter;
@@ -6358,6 +6509,12 @@ private void installCompactNavigation() {
             } else {
                 scheduleFilterReload();
             }
+        });
+        roleplay.setOnClickListener(v -> {
+            blockRoleplayContent = !blockRoleplayContent;
+            persistDiscoveryFilterPrefs();
+            roleplay.setText("Roleplay · " + (blockRoleplayContent ? "Blocked" : "Allowed"));
+            scheduleFilterReload();
         });
         video.setOnClickListener(v -> { dialog.dismiss(); showVideoFilterSheet(); });
         advanced.setOnClickListener(v -> { dialog.dismiss(); showAdvancedDiscoveryFilterSheet(); });
@@ -6431,7 +6588,7 @@ private void installCompactNavigation() {
     private void showCompactMainMenu() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         ScrollView scroll = new ScrollView(this);
-        LinearLayout body = sheetBody("Menu · NSFW only");
+        LinearLayout body = sheetBody("Menu · " + contentSafetyLabel());
         scroll.addView(body);
 
         String current = context.equals("subreddit") ? "r/" + subreddit
@@ -6570,7 +6727,7 @@ private void installCompactNavigation() {
 
     private void showSearchSubmenu() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
-        LinearLayout body = sheetBody("Fuzzy search · NSFW only");
+        LinearLayout body = sheetBody("Fuzzy search · " + contentSafetyLabel());
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setHint("Title, subreddit, creator, flair…");
@@ -6805,7 +6962,7 @@ private void installCompactNavigation() {
         applyLayoutVisibility();
         updateChrome();
         setStatus((presetName == null || presetName.isEmpty() ? "Preset" : presetName)
-                + " · " + clean.size() + " subreddits · NSFW only", true);
+                + " · " + clean.size() + " subreddits · " + contentSafetyLabel(), true);
         loadFeed(true);
     }
 
@@ -6916,7 +7073,7 @@ private void installCompactNavigation() {
                 if (children != null) {
                     for (int i = 0; i < children.length(); i++) {
                         RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                        if (post == null || !post.nsfw || !matchesMedia(post)) continue;
+                        if (post == null || !matchesContentSafety(post) || !matchesMedia(post)) continue;
                         if (post.id == null || post.id.isEmpty()) continue;
                         if (isReadHiddenForDiscovery(post)
                                 || isSavedForUnread(post)
@@ -6969,7 +7126,9 @@ private void installCompactNavigation() {
     private ArrayList<String> knownNsfwSubreddits() {
         LinkedHashMap<String, String> names = new LinkedHashMap<>();
         for (String[] row : CURATED_CATEGORY_ROWS) {
-            if (row.length < 4 || !"NSFW".equals(row[0])) continue;
+            if (row.length < 4) continue;
+            if ("SFW".equals(row[0]) && !allowsSfwContent()) continue;
+            if ("NSFW".equals(row[0]) && !allowsNsfwContent()) continue;
             for (String raw : row[3].split(",")) {
                 String clean = cleanSubredditName(raw);
                 if (!clean.isEmpty()) names.putIfAbsent(clean.toLowerCase(Locale.US), clean);
@@ -6992,7 +7151,7 @@ private void installCompactNavigation() {
     }
 
     private int fuzzyPostSearchScore(RedditPost post, String value) {
-        if (post == null || !post.nsfw) return 0;
+        if (post == null || !matchesContentSafety(post)) return 0;
         int subredditScore = FuzzySearch.score(value, post.subreddit);
         int titleScore = FuzzySearch.score(value, post.title);
         int authorScore = FuzzySearch.score(value, post.author);
@@ -7039,7 +7198,7 @@ private void installCompactNavigation() {
                     for (int i = 0; i < children.length(); i++) {
                         RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
                         if (post == null || !postAllowedBySearchScope(post)
-                                || !post.nsfw || !matchesMedia(post)
+                                || !matchesContentSafety(post) || !matchesMedia(post)
                                 || isContentBlocked(post)) continue;
                         additions.add(post);
                     }
@@ -7100,6 +7259,8 @@ private void installCompactNavigation() {
                 .putInt("sourceFilterMaskV1", sourceFilterMask)
                 .putBoolean("showViewedPostsV1", showViewedPosts)
                 .putBoolean("joinedOnlyFilterV1", joinedOnlyFilter)
+                .putBoolean("blockRoleplayContentV1", blockRoleplayContent)
+                .putString("contentSafetyModeV1", contentSafetyMode)
                 .putInt("minimumVideoHeightV1", minimumVideoHeight)
                 .putInt("videoLengthModeV1", videoLengthMode)
                 .putStringSet("favoriteSubredditsV1", new HashSet<>(favoriteSubreddits))
@@ -7524,6 +7685,8 @@ private void installCompactNavigation() {
         out.append("People: ").append(ContentTaxonomy.label(peopleFilterMask)).append('\n');
         out.append("Sources: ").append(sourceFilterLabel()).append('\n');
         out.append("Viewed: ").append(showViewedPosts ? "All" : "Unread only").append('\n');
+        out.append("Content safety: ").append(contentSafetyLabel()).append('\n');
+        out.append("Roleplay: ").append(blockRoleplayContent ? "Blocked" : "Allowed").append('\n');
         out.append("Subreddit scope: ");
         if (!joinedOnlyFilter) out.append("Any");
         else if (!shouldApplyJoinedOnlyFilter()) out.append("Joined only (ignored for explicit selection)");
@@ -7622,9 +7785,11 @@ private void installCompactNavigation() {
         Button sortMenu = sheetButton("Sort…");
         Button mediaMenu = sheetButton("Media filter…");
         Button peopleMenu = sheetButton("People · " + ContentTaxonomy.label(peopleFilterMask));
+        Button safetyMenu = sheetButton("Content safety · " + contentSafetyLabel());
         Button sourceMenu = sheetButton("Sources · " + sourceFilterLabel());
         Button viewedMenu = sheetButton("Viewed posts · " + (showViewedPosts ? "All" : "Unread only"));
         Button joinedMenu = sheetButton("Subreddits · " + (joinedOnlyFilter ? "Joined only" : "Any"));
+        Button roleplayMenu = sheetButton("Roleplay · " + (blockRoleplayContent ? "Blocked" : "Allowed"));
         Button videoMenu = sheetButton("Video length / quality…");
         Button advancedMenu = sheetButton("Include / exclude / blocked creators…");
         Button layoutMenu = sheetButton("Layout…");
@@ -7634,9 +7799,11 @@ private void installCompactNavigation() {
         body.addView(sortMenu, sectionButtonParams());
         body.addView(mediaMenu, sectionButtonParams());
         body.addView(peopleMenu, sectionButtonParams());
+        body.addView(safetyMenu, sectionButtonParams());
         body.addView(sourceMenu, sectionButtonParams());
         body.addView(viewedMenu, sectionButtonParams());
         body.addView(joinedMenu, sectionButtonParams());
+        body.addView(roleplayMenu, sectionButtonParams());
         body.addView(videoMenu, sectionButtonParams());
         body.addView(advancedMenu, sectionButtonParams());
         body.addView(layoutMenu, sectionButtonParams());
@@ -7646,6 +7813,7 @@ private void installCompactNavigation() {
         sortMenu.setOnClickListener(v -> { dialog.dismiss(); showSortSheet(); });
         mediaMenu.setOnClickListener(v -> { dialog.dismiss(); showMediaSheet(); });
         peopleMenu.setOnClickListener(v -> { dialog.dismiss(); showPeopleFilterSheet(); });
+        safetyMenu.setOnClickListener(v -> { dialog.dismiss(); showContentSafetySheet(); });
         sourceMenu.setOnClickListener(v -> { dialog.dismiss(); showSourceFilterSheet(); });
         viewedMenu.setOnClickListener(v -> {
             showViewedPosts = !showViewedPosts;
@@ -7668,6 +7836,12 @@ private void installCompactNavigation() {
             } else {
                 scheduleFilterReload();
             }
+        });
+        roleplayMenu.setOnClickListener(v -> {
+            blockRoleplayContent = !blockRoleplayContent;
+            persistDiscoveryFilterPrefs();
+            roleplayMenu.setText("Roleplay · " + (blockRoleplayContent ? "Blocked" : "Allowed"));
+            scheduleFilterReload();
         });
         videoMenu.setOnClickListener(v -> { dialog.dismiss(); showVideoFilterSheet(); });
         advancedMenu.setOnClickListener(v -> { dialog.dismiss(); showAdvancedDiscoveryFilterSheet(); });
