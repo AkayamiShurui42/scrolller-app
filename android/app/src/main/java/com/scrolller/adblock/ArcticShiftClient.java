@@ -19,8 +19,10 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 final class ArcticShiftClient {
     interface CrawlCallback {
@@ -46,6 +48,57 @@ final class ArcticShiftClient {
 
     static void crawlAuthor(String author, int maxItems, CrawlCallback callback) {
         crawl("author", author, maxItems, callback);
+    }
+
+    static void searchPosts(String query, int maxItems, CrawlCallback callback) {
+        EXECUTOR.execute(() -> {
+            try {
+                int delivered = 0;
+                String before = "";
+                Set<String> seenBefore = new HashSet<>();
+                while (delivered < maxItems) {
+                    int limit = Math.min(100, maxItems - delivered);
+                    StringBuilder url = new StringBuilder(BASE)
+                            .append("/posts/search?query=").append(enc(query))
+                            .append("&limit=").append(limit)
+                            .append("&sort=desc");
+                    if (!before.isEmpty()) url.append("&before=").append(enc(before));
+
+                    JSONObject root = getJson(url.toString());
+                    JSONArray data = root.optJSONArray("data");
+                    if (data == null || data.length() == 0) break;
+
+                    delivered += data.length();
+                    JSONArray batch = data;
+                    if (!deliverBatchBlocking(callback, batch)) {
+                        throw new IllegalStateException("Arctic Shift UI delivery timed out");
+                    }
+
+                    long oldest = Long.MAX_VALUE;
+                    for (int i = 0; i < data.length(); i++) {
+                        JSONObject item = data.optJSONObject(i);
+                        if (item == null) continue;
+                        long created = createdUtc(item.opt("created_utc"));
+                        if (created > 0 && created < oldest) oldest = created;
+                    }
+
+                    if (oldest == Long.MAX_VALUE || data.length() < limit) break;
+                    String nextBefore = isoUtc(Math.max(1L, oldest - 1L));
+                    if (nextBefore.isEmpty() || !seenBefore.add(nextBefore)) break;
+                    before = nextBefore;
+
+                    try { Thread.sleep(180L); } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                MAIN.post(callback::onComplete);
+            } catch (Exception e) {
+                String message = e.getMessage() == null
+                        ? "Arctic Shift search failed" : e.getMessage();
+                MAIN.post(() -> callback.onError(message));
+            }
+        });
     }
 
     static void lookupPost(String redditId, LookupCallback callback) {
@@ -86,7 +139,9 @@ final class ArcticShiftClient {
 
                     delivered += data.length();
                     JSONArray batch = data;
-                    MAIN.post(() -> callback.onBatch(batch));
+                    if (!deliverBatchBlocking(callback, batch)) {
+                        throw new IllegalStateException("Arctic Shift UI delivery timed out");
+                    }
 
                     long oldest = Long.MAX_VALUE;
                     for (int i = 0; i < data.length(); i++) {
@@ -111,6 +166,24 @@ final class ArcticShiftClient {
                 MAIN.post(() -> callback.onError(message));
             }
         });
+    }
+
+    private static boolean deliverBatchBlocking(
+            CrawlCallback callback, JSONArray batch) {
+        CountDownLatch latch = new CountDownLatch(1);
+        MAIN.post(() -> {
+            try {
+                callback.onBatch(batch);
+            } finally {
+                latch.countDown();
+            }
+        });
+        try {
+            return latch.await(30L, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private static JSONObject getJson(String url) throws Exception {
