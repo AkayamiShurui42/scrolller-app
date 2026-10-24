@@ -126,7 +126,7 @@ final class FeedCacheStore extends SQLiteOpenHelper {
                             "video_url","poster_url","media_width","media_height",
                             "duration_seconds","search_metadata","source_origin"
                     },
-                    "nsfw=1",
+                    null,
                     null,
                     null,
                     null,
@@ -181,7 +181,7 @@ final class FeedCacheStore extends SQLiteOpenHelper {
                             "video_url","poster_url","media_width","media_height",
                             "duration_seconds","search_metadata","source_origin"
                     },
-                    "nsfw=1",
+                    null,
                     null,
                     null,
                     null,
