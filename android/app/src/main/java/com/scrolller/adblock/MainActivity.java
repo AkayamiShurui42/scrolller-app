@@ -3244,6 +3244,8 @@ private void loadQualityCollection(boolean reset) {
             redditGroups.add("__global__");
             ArrayList<String> communities = new ArrayList<>(allowed);
             communities.sort(String.CASE_INSENSITIVE_ORDER);
+            setStatus("Searching " + communities.size()
+                    + " joined subreddits for “" + query + "”…", true);
             startJoinedPullPushSearch(generation, communities, 0);
             redditGroups.addAll(communities);
         } else {
