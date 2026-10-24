@@ -65,10 +65,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
-            {"SFW", "AI-generated", "Art & images", String.join(",", CommunityContentRules.AI_ART_SFW)},
-            {"SFW", "AI-generated", "Video & animation", String.join(",", CommunityContentRules.AI_VIDEO_SFW)},
-            {"SFW", "AI-generated", "Music", String.join(",", CommunityContentRules.AI_MUSIC_SFW)},
-            {"NSFW", "AI-generated", "Art & images", String.join(",", CommunityContentRules.AI_ART_NSFW)},
+            {"SFW", "AI-generated", "Art & images", android.text.TextUtils.join(",", CommunityContentRules.AI_ART_SFW)},
+            {"SFW", "AI-generated", "Video & animation", android.text.TextUtils.join(",", CommunityContentRules.AI_VIDEO_SFW)},
+            {"SFW", "AI-generated", "Music", android.text.TextUtils.join(",", CommunityContentRules.AI_MUSIC_SFW)},
+            {"NSFW", "AI-generated", "Art & images", android.text.TextUtils.join(",", CommunityContentRules.AI_ART_NSFW)},
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
             {"NSFW", "Adult", "GIF & video", "nsfw_gif,NSFW_GIF"},
             {"NSFW", "Adult", "Couples", "couplesgonewild"},
@@ -6995,7 +6995,9 @@ private void installCompactNavigation() {
             if (joined.length() > 0) joined.append('+');
             joined.append(clean);
         }
-        if (joined.length() == 0) return "/r/NSFW/new.json?limit=50&raw_json=1&show=all";
+        if (joined.length() == 0) return "SFW".equals(contentMode)
+                ? "/r/aiArt/new.json?limit=50&raw_json=1&show=all"
+                : "/r/NSFW/new.json?limit=50&raw_json=1&show=all";
         String path = "/r/" + joined + "/" + remoteSort + ".json?limit=100&raw_json=1&show=all";
         if (remoteSort.equals("top")) path += "&t=" + enc(topTime);
         if (cursor != null && !cursor.isEmpty()) path += "&after=" + enc(cursor);
@@ -7005,7 +7007,9 @@ private void installCompactNavigation() {
     private ArrayList<String> knownNsfwSubreddits() {
         LinkedHashMap<String, String> names = new LinkedHashMap<>();
         for (String[] row : CURATED_CATEGORY_ROWS) {
-            if (row.length < 4 || !"NSFW".equals(row[0])) continue;
+            if (row.length < 4) continue;
+            if ("SFW".equals(contentMode) && !"SFW".equals(row[0])) continue;
+            if ("NSFW".equals(contentMode) && !"NSFW".equals(row[0])) continue;
             for (String raw : row[3].split(",")) {
                 String clean = cleanSubredditName(raw);
                 if (!clean.isEmpty()) names.putIfAbsent(clean.toLowerCase(Locale.US), clean);
