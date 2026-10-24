@@ -1,4 +1,4 @@
-name: Build Reddit Media v4.0.1
+name: Build Reddit Media v4.0.2
 
 on:
   push:
@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v4.0.1-${{ github.ref }}
+  group: reddit-media-v4.0.2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,15 +34,15 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v4.0.1 invariants
+      - name: Validate v4.0.2 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 78' android/app/build.gradle
-          grep -q 'versionName "4.0.1"' android/app/build.gradle
+          grep -q 'versionCode 79' android/app/build.gradle
+          grep -q 'versionName "4.0.2"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -73,12 +73,11 @@ jobs:
           grep -q 'finishSubscriptions(done, pendingSubscriptions, pendingNames);' "$MAIN"
           grep -q 'restrict_sr=" + (global ? "off" : "on")' "$MAIN"
           grep -q 'static void searchSubmissions' "$PULL"
-          grep -q 'if (allowed.isEmpty() || searchScope.equals("subscribed"))' "$MAIN"
-          grep -q 'globalSearch.add("__global__");' "$MAIN"
-          grep -q 'Searching joined subreddits for' "$MAIN"
-          grep -q 'boolean joinedGlobal = searchScope.equals("subscribed")' "$MAIN"
-          grep -q 'int maxPages = joinedGlobal ? 6' "$MAIN"
-          ! grep -q 'private void startJoinedPullPushSearch' "$MAIN"
+          grep -q 'private void startJoinedPullPushSearch' "$MAIN"
+          grep -q 'startJoinedPullPushSearch(generation, communities, 0);' "$MAIN"
+          grep -q 'Searching " + communities.size()' "$MAIN"
+          ! grep -q 'globalSearch.add("__global__");' "$MAIN"
+          ! grep -q 'boolean joinedGlobal = searchScope.equals("subscribed")' "$MAIN"
 
           # Home membership action includes explicit Join/Leave.
           grep -q 'Leave subreddit' "$MAIN"
@@ -114,6 +113,17 @@ jobs:
 
           # Faster initial Top-All entry.
           grep -q 'topAll ? 4' "$MAIN"
+
+          # AI/SFW/NSFW categories and RP blocker.
+          grep -q '{"SFW", "AI-generated", "General art"' "$MAIN"
+          grep -q '{"NSFW", "AI-generated", "Adult AI"' "$MAIN"
+          grep -q 'contentSafetyMode = "nsfw"' "$MAIN"
+          grep -q 'private boolean matchesContentSafety(RedditPost post)' "$MAIN"
+          grep -q 'private void showContentSafetySheet()' "$MAIN"
+          grep -q 'blockRoleplayContentV1' "$MAIN"
+          grep -q 'roleplay partner' "$MAIN"
+          grep -q 'Roleplay · " + (blockRoleplayContent ? "Blocked" : "Allowed")' "$MAIN"
+          ! grep -q '"nsfw=1"' "$CACHE"
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -156,15 +166,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='78'" /tmp/badging.txt
-          grep -q "versionName='4.0.1'" /tmp/badging.txt
+          grep -q "versionCode='79'" /tmp/badging.txt
+          grep -q "versionName='4.0.2'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v4.0.1-debug.apk
+          cp "$APK" dist/Reddit-Media-v4.0.2-debug.apk
 
-      - name: Upload v4.0.1 APK
+      - name: Upload v4.0.2 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v4.0.1-debug-apk
-          path: dist/Reddit-Media-v4.0.1-debug.apk
+          name: reddit-media-v4.0.2-debug-apk
+          path: dist/Reddit-Media-v4.0.2-debug.apk
           if-no-files-found: error
           retention-days: 30
