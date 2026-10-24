@@ -69,6 +69,15 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
 
     public List<RedditPost> getPosts() { return posts; }
 
+    public void dropPrefix(int count) {
+        if (count <= 0 || posts.isEmpty()) return;
+        int remove = Math.min(count, posts.size());
+        releaseAll();
+        posts.subList(0, remove).clear();
+        activePosition = posts.isEmpty() ? 0 : Math.max(0, activePosition - remove);
+        notifyDataSetChanged();
+    }
+
     public RedditPost getPost(int position) {
         return position >= 0 && position < posts.size() ? posts.get(position) : null;
     }
