@@ -1197,62 +1197,295 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void loadSearchInternal() {
-        if (loading || !engine.isReady() || query.isEmpty()) return;
+        if (!engine.isReady() || query == null || query.trim().isEmpty()) return;
+
+        final int generation = ++searchGeneration;
+        searchLoading = true;
         screen = Screen.SEARCH;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
         replacePosts(new ArrayList<>());
         pager.setCurrentItem(0, false);
-        setStatus("Searching “" + query + "”…", true);
-        loading = true;
-        fetchSearchPage("", new ArrayList<>(), 0);
+        setStatus("Searching " + searchScopeLabel() + " for “" + query + "”…", true);
         updateChrome();
+
+        LinkedHashMap<String, RedditPost> collected = new LinkedHashMap<>();
+        if (searchScope.equals("subscribed")) {
+            ArrayList<String> groups = subscriptionSearchGroups();
+            if (groups.isEmpty()) {
+                searchLoading = false;
+                setStatus(username.isEmpty()
+                        ? "Sign in to search joined subreddits."
+                        : "No joined subreddits are available to search.", false);
+                return;
+            }
+            fetchSubscribedSearchGroup(generation, groups, 0, collected);
+        } else {
+            fetchGlobalSearchPage(generation, "", 0, collected);
+        }
     }
 
-    private void fetchSearchPage(String cursor, ArrayList<RedditPost> collected, int page) {
-        String searchSort = sort.equals("best") ? "relevance"
-                : (sort.equals("rising") ? "new" : sort);
-        String path = "/search.json?q=" + enc(query)
-                + "&type=link&limit=100&raw_json=1&sort=" + enc(searchSort);
+    private String searchScopeLabel() {
+        return searchScope.equals("subscribed") ? "joined subreddits" : "Reddit";
+    }
+
+    private ArrayList<String> subscriptionSearchGroups() {
+        ArrayList<String> groups = new ArrayList<>();
+        ArrayList<String> names = new ArrayList<>();
+        for (Subscription sub : subscriptions) {
+            if (sub == null || sub.name == null || sub.name.isEmpty()) continue;
+            names.add(sub.name);
+        }
+
+        final int groupSize = 20;
+        for (int i = 0; i < names.size(); i += groupSize) {
+            StringBuilder group = new StringBuilder();
+            int end = Math.min(names.size(), i + groupSize);
+            for (int j = i; j < end; j++) {
+                if (group.length() > 0) group.append('+');
+                group.append(names.get(j));
+            }
+            if (group.length() > 0) groups.add(group.toString());
+        }
+        return groups;
+    }
+
+    private void fetchSubscribedSearchGroup(
+            int generation,
+            ArrayList<String> groups,
+            int index,
+            LinkedHashMap<String, RedditPost> collected) {
+        if (!searchStillValid(generation)) return;
+        if (index >= groups.size()) {
+            fetchArchiveSearchPage(generation, "", 0, collected);
+            return;
+        }
+
+        String group = groups.get(index);
+        String searchSort = remoteSearchSort();
+        String path = "/r/" + group + "/search.json?q=" + enc(query)
+                + "&restrict_sr=1&include_over_18=on&type=link"
+                + "&limit=100&raw_json=1&sort=" + enc(searchSort);
         if (sort.equals("top")) path += "&t=" + enc(topTime);
-        if (!cursor.isEmpty()) path += "&after=" + enc(cursor);
 
         engine.get(path, result -> {
+            if (!searchStillValid(generation)) return;
+            if (result.ok) {
+                mergeSearchListing(result.jsonObject(), collected, true);
+            }
+            fetchSubscribedSearchGroup(generation, groups, index + 1, collected);
+        });
+    }
+
+    private void fetchGlobalSearchPage(
+            int generation,
+            String cursor,
+            int page,
+            LinkedHashMap<String, RedditPost> collected) {
+        if (!searchStillValid(generation)) return;
+
+        String path = "/search.json?q=" + enc(query)
+                + "&type=link&include_over_18=on&limit=100&raw_json=1"
+                + "&sort=" + enc(remoteSearchSort());
+        if (sort.equals("top")) path += "&t=" + enc(topTime);
+        if (cursor != null && !cursor.isEmpty()) path += "&after=" + enc(cursor);
+
+        engine.get(path, result -> {
+            if (!searchStillValid(generation)) return;
             if (!result.ok) {
-                loading = false;
-                setStatus("Search failed: " + friendlyError(result), false);
+                fetchArchiveSearchPage(generation, "", 0, collected);
                 return;
             }
+
             JSONObject root = result.jsonObject();
+            mergeSearchListing(root, collected, false);
             JSONObject data = root != null ? root.optJSONObject("data") : null;
-            JSONArray children = data != null ? data.optJSONArray("children") : null;
-            if (children != null) {
-                for (int i = 0; i < children.length(); i++) {
-                    RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                    if (post == null || !matchesMedia(post)) continue;
-                    if (searchScope.equals("subscribed")
-                            && !subscriptionNames.contains(post.subreddit.toLowerCase(Locale.US))) {
-                        continue;
+            String next = data != null ? data.optString("after", "") : "";
+
+            if (!next.isEmpty() && page < 5) {
+                fetchGlobalSearchPage(generation, next, page + 1, collected);
+            } else {
+                fetchArchiveSearchPage(generation, "", 0, collected);
+            }
+        });
+    }
+
+    private void fetchArchiveSearchPage(
+            int generation,
+            String before,
+            int page,
+            LinkedHashMap<String, RedditPost> collected) {
+        if (!searchStillValid(generation)) return;
+        if (page >= 5) {
+            finishSearchCollection(generation, collected);
+            return;
+        }
+
+        ArcticShiftClient.searchPage(query, before, 100, new ArcticShiftClient.PageCallback() {
+            @Override
+            public void onComplete(JSONArray items, String nextBefore) {
+                if (!searchStillValid(generation)) return;
+
+                if (items != null) {
+                    for (int i = 0; i < items.length(); i++) {
+                        RedditPost post = archivePost(items.optJSONObject(i));
+                        if (post == null || !matchesMedia(post) || !withinTopTime(post)) continue;
+                        if (searchScope.equals("subscribed")
+                                && !subscriptionNames.contains(
+                                post.subreddit.toLowerCase(Locale.US))) continue;
+                        if (searchRelevance(post) <= 0) continue;
+                        mergeSearchPost(collected, post);
                     }
-                    collected.add(post);
+                }
+
+                String next = nextBefore == null ? "" : nextBefore;
+                if (!next.isEmpty() && items != null && items.length() > 0) {
+                    fetchArchiveSearchPage(generation, next, page + 1, collected);
+                } else {
+                    finishSearchCollection(generation, collected);
                 }
             }
-            String next = data != null ? data.optString("after", "") : "";
-            int maxPages = searchScope.equals("subscribed") ? 8 : 5;
-            if (collected.size() < 30 && !next.isEmpty() && page + 1 < maxPages) {
-                fetchSearchPage(next, collected, page + 1);
-                return;
+
+            @Override
+            public void onError(String error) {
+                if (!searchStillValid(generation)) return;
+                finishSearchCollection(generation, collected);
             }
-            loading = false;
-            replacePosts(collected);
-            if (collected.isEmpty()) {
-                setStatus("No matching media found for “" + query + "”.", false);
-            } else {
-                hideStatus();
-            }
-            updateChrome();
-            restorePendingPosition();
         });
+    }
+
+    private void mergeSearchListing(
+            JSONObject root,
+            LinkedHashMap<String, RedditPost> collected,
+            boolean requireSubscribed) {
+        JSONObject data = root != null ? root.optJSONObject("data") : null;
+        JSONArray children = data != null ? data.optJSONArray("children") : null;
+        if (children == null) return;
+
+        for (int i = 0; i < children.length(); i++) {
+            RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
+            if (post == null || !matchesMedia(post) || !withinTopTime(post)) continue;
+            if (requireSubscribed
+                    && !subscriptionNames.contains(post.subreddit.toLowerCase(Locale.US))) {
+                continue;
+            }
+            mergeSearchPost(collected, post);
+        }
+    }
+
+    private void mergeSearchPost(
+            LinkedHashMap<String, RedditPost> collected,
+            RedditPost post) {
+        if (post == null || post.id == null || post.id.isEmpty()) return;
+        String id = normalizePostId(post.id);
+        if (id.isEmpty()) return;
+
+        RedditPost existing = collected.get(id);
+        if (existing == null || searchRelevance(post) > searchRelevance(existing)) {
+            collected.put(id, post);
+        }
+    }
+
+    private String remoteSearchSort() {
+        if (sort.equals("best")) return "relevance";
+        if (sort.equals("rising")) return "new";
+        return sort;
+    }
+
+    private boolean searchStillValid(int generation) {
+        return generation == searchGeneration
+                && screen == Screen.SEARCH
+                && query != null
+                && !query.isEmpty();
+    }
+
+    private void finishSearchCollection(
+            int generation,
+            LinkedHashMap<String, RedditPost> collected) {
+        if (!searchStillValid(generation)) return;
+
+        searchLoading = false;
+        ArrayList<RedditPost> results = new ArrayList<>(collected.values());
+        sortSearchResults(results);
+        replacePosts(results);
+
+        if (results.isEmpty()) {
+            setStatus("No matching media found for “" + query + "”.", false);
+        } else {
+            hideStatus();
+        }
+        updateChrome();
+        restorePendingPosition();
+    }
+
+    private void sortSearchResults(ArrayList<RedditPost> results) {
+        if (results == null || results.size() < 2) return;
+
+        if (sort.equals("new")) {
+            results.sort((a, b) -> Long.compare(b.createdUtc, a.createdUtc));
+        } else if (sort.equals("top")) {
+            results.sort((a, b) -> Integer.compare(b.score, a.score));
+        } else if (sort.equals("hot") || sort.equals("rising")) {
+            results.sort((a, b) -> Double.compare(localHotScore(b), localHotScore(a)));
+        } else {
+            results.sort((a, b) -> {
+                int relevance = Integer.compare(searchRelevance(b), searchRelevance(a));
+                if (relevance != 0) return relevance;
+                return Integer.compare(b.score, a.score);
+            });
+        }
+    }
+
+    private int searchRelevance(RedditPost post) {
+        if (post == null) return 0;
+        String needle = normalizeSearchText(query);
+        if (needle.isEmpty()) return 0;
+
+        String title = normalizeSearchText(post.title);
+        String subredditText = normalizeSearchText(post.subreddit);
+        String authorText = normalizeSearchText(post.author);
+        String metadata = normalizeSearchText(post.searchMetadata);
+        String all = (title + " " + subredditText + " " + authorText + " " + metadata).trim();
+
+        int score = 0;
+        if (title.equals(needle)) score += 160;
+        else if (title.contains(needle)) score += 100;
+        if (subredditText.equals(needle)) score += 80;
+        if (authorText.equals(needle)) score += 60;
+        if (metadata.contains(needle)) score += 45;
+
+        String[] terms = needle.split("\\s+");
+        for (String term : terms) {
+            if (term.isEmpty()) continue;
+            if (title.contains(term)) score += 22;
+            if (subredditText.contains(term)) score += 12;
+            if (authorText.contains(term)) score += 10;
+            if (metadata.contains(term)) score += 8;
+        }
+        return score;
+    }
+
+    private String normalizeSearchText(String value) {
+        if (value == null) return "";
+        return value.toLowerCase(Locale.US)
+                .replaceAll("[^a-z0-9_]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private boolean withinTopTime(RedditPost post) {
+        if (!sort.equals("top") || topTime.equals("all")) return true;
+        long seconds;
+        if (topTime.equals("hour")) seconds = 3600L;
+        else if (topTime.equals("day")) seconds = 86400L;
+        else if (topTime.equals("week")) seconds = 604800L;
+        else if (topTime.equals("month")) seconds = 2678400L;
+        else if (topTime.equals("year")) seconds = 31536000L;
+        else return true;
+
+        long now = System.currentTimeMillis() / 1000L;
+        return post != null && post.createdUtc > 0L
+                && now - post.createdUtc <= seconds;
     }
 
     private void loadUserProfileInternal() {
