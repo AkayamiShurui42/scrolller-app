@@ -163,6 +163,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private boolean liveFeedExhausted = false;
     private boolean archiveFeedExhausted = false;
     private boolean archiveFeedLoading = false;
+    private boolean archiveFeedFailed = false;
     private boolean subredditClearedShown = false;
     private String archiveBefore = "";
 
@@ -844,6 +845,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             archiveFeedLoading = false;
             liveFeedExhausted = false;
             archiveFeedExhausted = false;
+            archiveFeedFailed = false;
             subredditClearedShown = false;
             after = "";
             archiveBefore = "";
@@ -997,6 +999,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                         if (generation != feedGeneration) return;
                         archiveFeedLoading = false;
                         archiveFeedExhausted = true;
+                        archiveFeedFailed = true;
                         ensureSubredditSupply(Math.max(0, pager.getCurrentItem()));
                     }
                 });
@@ -1078,7 +1081,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private void showSubredditCleared() {
         if (subredditClearedShown) return;
         subredditClearedShown = true;
-        setStatus("r/" + subreddit + " cleared · no unread media remains.", false);
+        if (archiveFeedFailed) {
+            setStatus("Reached the end of available posts, but archive verification failed.", false);
+        } else {
+            setStatus("r/" + subreddit + " cleared · no unread media remains.", false);
+        }
     }
 
     private boolean isSeen(RedditPost post) {
@@ -1149,27 +1156,56 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private boolean matchesMedia(RedditPost post) {
+        if (post == null) return false;
         if (media.equals("all")) return true;
         if (media.equals("image")) {
             return post.mediaKind == RedditPost.MediaKind.IMAGE
                     || post.mediaKind == RedditPost.MediaKind.GALLERY;
         }
         return post.mediaKind == RedditPost.MediaKind.VIDEO
+                || post.mediaKind == RedditPost.MediaKind.GIF
                 || post.mediaKind == RedditPost.MediaKind.EXTERNAL;
     }
 
     private void replacePosts(List<RedditPost> items) {
         postAdapter.setPosts(items);
         gridAdapter.setPosts(items);
+        if (root != null && items != null && !items.isEmpty()) {
+            root.post(this::markCurrentlyVisiblePosts);
+        }
     }
 
     private void appendUnique(List<RedditPost> incoming) {
+        if (incoming == null || incoming.isEmpty()) return;
         Set<String> ids = new HashSet<>();
-        for (RedditPost post : postAdapter.getPosts()) ids.add(post.id);
+        for (RedditPost post : postAdapter.getPosts()) {
+            if (post != null) ids.add(normalizePostId(post.id));
+        }
         ArrayList<RedditPost> unique = new ArrayList<>();
-        for (RedditPost post : incoming) if (ids.add(post.id)) unique.add(post);
+        for (RedditPost post : incoming) {
+            if (post == null || post.id == null || post.id.isEmpty()) continue;
+            String id = normalizePostId(post.id);
+            if (!id.isEmpty() && ids.add(id)) unique.add(post);
+        }
+        if (unique.isEmpty()) return;
         postAdapter.appendPosts(unique);
         gridAdapter.appendPosts(unique);
+        if (root != null) root.post(this::markCurrentlyVisiblePosts);
+    }
+
+    private void markCurrentlyVisiblePosts() {
+        if (screen == Screen.FAVORITES || screen == Screen.ACCOUNT) return;
+        if (layoutMode.equals("fullscreen")) {
+            markSeen(postAdapter.getPost(Math.max(0, pager.getCurrentItem())));
+            return;
+        }
+        RecyclerView.LayoutManager lm = gridView.getLayoutManager();
+        if (!(lm instanceof GridLayoutManager)) return;
+        GridLayoutManager glm = (GridLayoutManager) lm;
+        int first = glm.findFirstVisibleItemPosition();
+        int last = glm.findLastVisibleItemPosition();
+        if (first < 0 || last < first) return;
+        for (int i = first; i <= last; i++) markSeen(gridAdapter.getPost(i));
     }
 
     private void openFullscreenAt(int position) {
