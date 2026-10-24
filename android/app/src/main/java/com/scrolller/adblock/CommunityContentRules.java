@@ -38,7 +38,7 @@ final class CommunityContentRules {
                     "roleplaygroup", "roleplaygroups", "roleplayheaven", "fandomroleplayers",
                     "fandomrp", "bad rper stories", "badrperstories", "roleplayooc",
                     "dirtypenpals", "nsfw_roleplay", "18above_roleplay",
-                    "gayrp", "hentaiandroleplay", "erp"
+                    "gayrp", "hentaiandroleplay"
             )));
 
     private CommunityContentRules() {}
