@@ -42,8 +42,10 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -129,6 +131,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private RedditSessionEngine engine;
     private SharedPreferences prefs;
+    private SeenPostStore seenPostStore;
 
     private Screen screen = Screen.HOME;
     private BrowserPurpose browserPurpose = BrowserPurpose.NONE;
@@ -145,8 +148,28 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private String modhash = "";
     private String after = "";
     private boolean loading;
+    private boolean feedLoading;
+    private boolean searchLoading;
     private boolean initialized;
     private boolean muted = true;
+
+    private static final int FEED_VISIBLE_AHEAD = 60;
+    private static final int FEED_RESERVOIR_LOW = 100;
+    private static final int FEED_RESERVOIR_MAX = 400;
+    private static final int FEED_KEEP_BEHIND = 18;
+
+    private int feedGeneration = 0;
+    private int searchGeneration = 0;
+    private boolean liveFeedExhausted = false;
+    private boolean archiveFeedExhausted = false;
+    private boolean archiveFeedLoading = false;
+    private boolean subredditClearedShown = false;
+    private String archiveBefore = "";
+
+    private final Set<String> seenPostIds = new HashSet<>();
+    private final Set<String> feedQueuedIds = new HashSet<>();
+    private final Set<String> feedSeenCursors = new HashSet<>();
+    private final ArrayList<RedditPost> feedReservoir = new ArrayList<>();
     private int systemTopPx;
     private int systemBottomPx;
     private int pendingRestorePosition = -1;
@@ -166,6 +189,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         prefs = getSharedPreferences("native-redview", MODE_PRIVATE);
+        seenPostStore = new SeenPostStore(this);
+        seenPostIds.addAll(seenPostStore.loadIds());
         sort = prefs.getString("sort", "best");
         topTime = prefs.getString("topTime", "day");
         media = prefs.getString("media", "all");
@@ -265,9 +290,27 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             @Override
             public void onPageSelected(int position) {
                 postAdapter.setActivePosition(layoutMode.equals("fullscreen") ? position : -1);
-                if (screen == Screen.HOME && !loading && !after.isEmpty()
+                if (layoutMode.equals("fullscreen")
+                        && screen != Screen.FAVORITES
+                        && screen != Screen.ACCOUNT) {
+                    markSeen(postAdapter.getPost(position));
+                }
+
+                if (screen == Screen.HOME && context.equals("subreddit")) {
+                    ensureSubredditSupply(position);
+                } else if (screen == Screen.HOME && !feedLoading && !after.isEmpty()
                         && position >= postAdapter.getItemCount() - 5) {
                     loadFeed(false);
+                }
+            }
+
+            @Override
+            public void onPageScrollStateChanged(int state) {
+                if (state == ViewPager2.SCROLL_STATE_IDLE
+                        && layoutMode.equals("fullscreen")
+                        && screen == Screen.HOME
+                        && context.equals("subreddit")) {
+                    trimFullscreenWindowIfNeeded();
                 }
             }
         });
@@ -284,8 +327,22 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
                 RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
                 if (!(lm instanceof GridLayoutManager)) return;
-                int last = ((GridLayoutManager) lm).findLastVisibleItemPosition();
-                if (screen == Screen.HOME && !loading && !after.isEmpty()
+                GridLayoutManager glm = (GridLayoutManager) lm;
+                int first = glm.findFirstVisibleItemPosition();
+                int last = glm.findLastVisibleItemPosition();
+
+                if (screen != Screen.FAVORITES && screen != Screen.ACCOUNT
+                        && first >= 0 && last >= first) {
+                    for (int i = first; i <= last; i++) markSeen(gridAdapter.getPost(i));
+                }
+
+                if (screen == Screen.HOME && context.equals("subreddit")) {
+                    ensureSubredditSupply(Math.max(0, last));
+                    if (first > FEED_KEEP_BEHIND * 2) {
+                        final int trimFrom = first;
+                        gridView.post(() -> trimGridWindowIfNeeded(trimFrom));
+                    }
+                } else if (screen == Screen.HOME && !feedLoading && !after.isEmpty()
                         && last >= gridAdapter.getItemCount() - 8) {
                     loadFeed(false);
                 }
