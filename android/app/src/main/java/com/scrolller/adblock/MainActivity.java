@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v4.0.2: deterministic Joined search, AI SFW/NSFW categories, content-safety mode, and RP blocking.
+// v4.0.3: restore primary Reddit search and streaming results while retaining AI, RP and Joined filters.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -1144,7 +1144,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
         query = next;
         prefs.edit().remove("lastSearch").apply();
-        searchInput.setText("");
+        // Keep the submitted term visible while incremental results load.
         screen = Screen.SEARCH;
         cancelObsoleteRedditRequests();
         loadSearchInternal();
@@ -3222,72 +3222,69 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
-        // Joined search must query joined communities directly. A global query
-        // followed by membership filtering can miss every valid joined result if
-        // none of the first global results happen to come from a joined subreddit.
-        if (searchScope.equals("subscribed")) {
+        // Restore the working primary Reddit search from the original native engine.
+        // Search cached media and PullPush alongside Reddit; do not substitute
+        // these secondary sources for the real search endpoint.
+        ArrayList<String> redditGroups = new ArrayList<>();
+        if (searchScope.equals("global")) {
+            redditGroups.add("__global__");
+            PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
+                @Override public void onComplete(JSONArray items) {
+                    if (searchStillValid(generation))
+                        mergeSearchLayerResults(generation, postsFromPullPush(items));
+                }
+                @Override public void onError(String error) {
+                    // An archive outage must never stop Reddit search.
+                }
+            });
+        } else if (searchScope.equals("subscribed")) {
+            // Restore a global lead-in to provide matching Joined results quickly.
+            // Membership is still enforced by searchLayerCandidateAccepted().
+            // Independent subreddit requests subsequently fill coverage gaps.
+            redditGroups.add("__global__");
             ArrayList<String> communities = new ArrayList<>(allowed);
             communities.sort(String.CASE_INSENSITIVE_ORDER);
             startJoinedPullPushSearch(generation, communities, 0);
-
-            setStatus("Searching " + communities.size()
-                    + " joined subreddits for “" + query + "”…", true);
-            fetchRemoteSearchGroup(
-                    generation,
-                    communities,
-                    0,
-                    "",
-                    new ArrayList<>(),
-                    new HashSet<>(),
-                    new HashSet<>(),
-                    0,
-                    0);
-            return;
-        }
-
-        if (allowed.isEmpty()) {
-            PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
-                @Override
-                public void onComplete(JSONArray items) {
-                    if (!searchStillValid(generation)) return;
-                    mergeSearchLayerResults(generation, postsFromPullPush(items));
-                }
-
-                @Override
-                public void onError(String error) {
-                    // One layer failing must not invalidate the other layers.
-                }
-            });
+            redditGroups.addAll(communities);
         } else {
-            ArrayList<String> communities = new ArrayList<>(allowed);
-            for (String target : communities) {
-                PullPushClient.searchSubreddit(target, query, 100, new PullPushClient.Callback() {
-                    @Override
-                    public void onComplete(JSONArray items) {
-                        if (!searchStillValid(generation)) return;
-                        mergeSearchLayerResults(generation, postsFromPullPush(items));
+            redditGroups.addAll(allowed);
+            // Secondary archive searches run independently of the primary Reddit
+            // result stream and never delay the first usable media page.
+            for (String target : allowed) {
+                PullPushClient.searchSubreddit(target, query, 100,
+                        new PullPushClient.Callback() {
+                    @Override public void onComplete(JSONArray items) {
+                        if (searchStillValid(generation))
+                            mergeSearchLayerResults(generation, postsFromPullPush(items));
                     }
-
-                    @Override
-                    public void onError(String error) {
-                        // Equal-layer failure is isolated to this source request.
+                    @Override public void onError(String error) {
+                        // One secondary source failed; continue normally.
                     }
                 });
             }
         }
 
-        // The term matcher remains local and identical for every source.
-        searchLoading = false;
-        loading = false;
-        if (root != null) {
-            root.postDelayed(() -> {
-                if (!searchStillValid(generation)) return;
-                if (searchLayerResults.isEmpty()) {
-                    setStatus("No matching media found for “" + query + "” in "
-                            + searchScopeDescription() + ".", false);
-                }
-            }, 10000L);
+        // Recover the old lazy/progressive behavior: display each successful
+        // batch immediately, then continue paging in the background.
+        if (!redditGroups.isEmpty()) {
+            fetchRemoteSearchGroup(generation, redditGroups, 0, "",
+                    new ArrayList<>(), new HashSet<>(), new HashSet<>(), 0, 0);
         }
+        // Metadata/community lead-ins may rescue queries that have no matching
+        // titles in the first API page. Only launch each lead-in family once.
+        if (root != null) {
+            root.postDelayed(() -> startSearchLeadInsOnce(generation), 1200L);
+        }
+    }
+
+    private int searchLeadInGeneration = -1;
+
+    private void startSearchLeadInsOnce(int generation) {
+        if (!searchStillValid(generation) || searchLeadInGeneration == generation) return;
+        searchLeadInGeneration = generation;
+        startHiddenSearchLeadIns(generation);
+        startCategoryMetadataLeadIns(generation);
+        startSubredditNameLeadIns(generation);
     }
 
     private void startJoinedPullPushSearch(
@@ -3556,12 +3553,12 @@ private void loadQualityCollection(boolean reset) {
                             seenPostIds, new HashSet<>(), 0, 0), 220L);
                     return;
                 }
-                if (!collected.isEmpty() || !searchLayerResults.isEmpty()) {
-                    finishSearchCollection(generation, collected);
-                } else {
-                    loading = false;
-                    searchLoading = false;
-                    setStatus("Search failed: " + friendlyError(result), false);
+                // Even when Reddit fails, complete the search pipeline so
+                // category names, cached media and archive lead-ins can finish.
+                finishSearchCollection(generation, collected);
+                if (searchLayerResults.isEmpty()) {
+                    setStatus("Reddit search failed: " + friendlyError(result)
+                            + " · checking other sources", false);
                 }
                 return;
             }
@@ -3591,7 +3588,8 @@ private void loadQualityCollection(boolean reset) {
             String next = data != null ? data.optString("after", "") : "";
             int nextRawFetched = rawFetched + pageRawCount;
             boolean deepSingleSource = searchScope.equals("global")
-                    || searchScope.equals("subreddit");
+                    || searchScope.equals("subreddit")
+                    || "__global__".equals(group);
             int maxPages = deepSingleSource ? 4 : 1;
             boolean canContinue = !next.isEmpty()
                     && !seenCursors.contains(next)
@@ -3646,9 +3644,7 @@ private void loadQualityCollection(boolean reset) {
         mergeSearchLayerResults(generation, collected);
         finishSearchUi(searchLayerResults.size());
 
-        startHiddenSearchLeadIns(generation);
-        startCategoryMetadataLeadIns(generation);
-        startSubredditNameLeadIns(generation);
+        startSearchLeadInsOnce(generation);
     }
 
     private void fetchFavoritesSearchPage(
