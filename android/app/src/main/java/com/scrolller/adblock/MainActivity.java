@@ -65,6 +65,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
+            {"SFW", "AI-generated", "Art & images", String.join(",", CommunityContentRules.AI_ART_SFW)},
+            {"SFW", "AI-generated", "Video & animation", String.join(",", CommunityContentRules.AI_VIDEO_SFW)},
+            {"SFW", "AI-generated", "Music", String.join(",", CommunityContentRules.AI_MUSIC_SFW)},
+            {"NSFW", "AI-generated", "Art & images", String.join(",", CommunityContentRules.AI_ART_NSFW)},
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
             {"NSFW", "Adult", "GIF & video", "nsfw_gif,NSFW_GIF"},
             {"NSFW", "Adult", "Couples", "couplesgonewild"},
@@ -226,6 +230,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private boolean fullscreenChromeVisible = true;
     private boolean blockLgbtTopics = false;
     private boolean blockGoreContent = false;
+    private boolean blockRoleplayContent = true;
+    // Legacy native feed was NSFW-only. Keep that default until changed explicitly.
+    private String contentMode = "NSFW"; // SFW, NSFW, ALL
 
     // v3.9 discovery controls. A zero people/source mask means "all".
     private int peopleFilterMask = 0;
@@ -336,6 +343,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         blockLgbtTopics = false;
         prefs.edit().remove("blockLgbtTopics").apply();
         blockGoreContent = prefs.getBoolean("blockGoreContent", false);
+        blockRoleplayContent = prefs.getBoolean("blockRoleplayContentV1", true);
+        contentMode = prefs.getString("contentModeV1", "NSFW");
+        if (!"SFW".equals(contentMode) && !"NSFW".equals(contentMode)
+                && !"ALL".equals(contentMode)) contentMode = "NSFW";
         peopleFilterMask = prefs.getInt("peopleFilterMaskV1", 0);
         sourceFilterMask = prefs.getInt("sourceFilterMaskV1", 0);
         showViewedPosts = prefs.getBoolean("showViewedPostsV1", false);
@@ -1645,10 +1656,17 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 && (post.saved || savedContainsPostId(post.id));
     }
 
-    private boolean isContentBlocked(RedditPost post) {
-        if (post != null && !post.nsfw) return true;
-
+    private boolean matchesContentMode(RedditPost post) {
         if (post == null) return false;
+        if ("SFW".equals(contentMode)) return !post.nsfw;
+        if ("NSFW".equals(contentMode)) return post.nsfw;
+        return true;
+    }
+
+    private boolean isContentBlocked(RedditPost post) {
+        if (post == null) return false;
+        if (!matchesContentMode(post)) return true;
+        if (blockRoleplayContent && CommunityContentRules.isRoleplay(post)) return true;
         if (!ContentTaxonomy.matches(post, peopleFilterMask)) return true;
         if (!passesDiscoveryFilters(post)) return true;
 
@@ -1755,11 +1773,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void replacePosts(List<RedditPost> items) {
         if (items != null) {
-            ArrayList<RedditPost> nsfwOnly = new ArrayList<>();
+            ArrayList<RedditPost> safetyFiltered = new ArrayList<>();
             for (RedditPost candidate : items) {
-                if (candidate != null && candidate.nsfw) nsfwOnly.add(candidate);
+                if (candidate != null && (screen == Screen.FAVORITES
+                        || matchesContentMode(candidate))) safetyFiltered.add(candidate);
             }
-            items = nsfwOnly;
+            items = safetyFiltered;
         }
 
         lastFullscreenPostId = "";
@@ -2779,11 +2798,12 @@ private void loadQualityCollection(boolean reset) {
 
     private void appendUniqueDirect(List<RedditPost> incoming) {
         if (incoming != null) {
-            ArrayList<RedditPost> nsfwOnly = new ArrayList<>();
+            ArrayList<RedditPost> safetyFiltered = new ArrayList<>();
             for (RedditPost candidate : incoming) {
-                if (candidate != null && candidate.nsfw) nsfwOnly.add(candidate);
+                if (candidate != null && (screen == Screen.FAVORITES
+                        || matchesContentMode(candidate))) safetyFiltered.add(candidate);
             }
-            incoming = nsfwOnly;
+            incoming = safetyFiltered;
         }
 
         if (showingHiddenLibrary() || incoming == null || incoming.isEmpty()) return;
@@ -3633,7 +3653,7 @@ private void loadQualityCollection(boolean reset) {
     }
 
 private boolean matchesLocalSearch(RedditPost post, String value) {
-        if (post == null || !post.nsfw) return false;
+        if (!matchesContentMode(post)) return false;
         String normalized = FuzzySearch.normalize(value);
         if (normalized.isEmpty()) return true;
         return fuzzyPostSearchScore(post, value) >= FuzzySearch.thresholdFor(normalized.length());
@@ -4130,6 +4150,16 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
             renderAccount();
         });
 
+        Button roleplayFilter = sheetButton("Roleplay / RP · "
+                + (blockRoleplayContent ? "Blocked" : "Allowed"));
+        body.addView(roleplayFilter, sectionButtonParams());
+        roleplayFilter.setOnClickListener(v -> {
+            blockRoleplayContent = !blockRoleplayContent;
+            prefs.edit().putBoolean("blockRoleplayContentV1", blockRoleplayContent).apply();
+            renderAccount();
+            scheduleFilterReload();
+        });
+
         if (username.isEmpty()) {
             body.addView(bodyText("Sign in to use Favorites and browse your subscribed communities."));
             Button login = sheetButton("Sign in to Reddit");
@@ -4273,7 +4303,18 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
     }
 
 private void showCategoryRoot() {
-        showCategorySafety("NSFW");
+        if ("SFW".equals(contentMode)) { showCategorySafety("SFW"); return; }
+        if ("NSFW".equals(contentMode)) { showCategorySafety("NSFW"); return; }
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout body = sheetBody("Categories · All content");
+        Button sfw = sheetButton("Safe for work");
+        Button nsfw = sheetButton("NSFW (18+)");
+        body.addView(sfw, sectionButtonParams());
+        body.addView(nsfw, sectionButtonParams());
+        sfw.setOnClickListener(v -> { dialog.dismiss(); showCategorySafety("SFW"); });
+        nsfw.setOnClickListener(v -> { dialog.dismiss(); showCategorySafety("NSFW"); });
+        dialog.setContentView(body);
+        dialog.show();
     }
 
 
@@ -6426,7 +6467,7 @@ private void installCompactNavigation() {
     private void showCompactMainMenu() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         ScrollView scroll = new ScrollView(this);
-        LinearLayout body = sheetBody("Menu · NSFW only");
+        LinearLayout body = sheetBody("Menu · " + contentMode);
         scroll.addView(body);
 
         String current = context.equals("subreddit") ? "r/" + subreddit
@@ -6485,7 +6526,7 @@ private void installCompactNavigation() {
 
         Button home = sheetButton("Browse all / Home");
         Button subredditButton = sheetButton("Find / open subreddit…");
-        Button categories = sheetButton("NSFW categories…");
+        Button categories = sheetButton("Categories…");
         body.addView(home, sectionButtonParams());
         body.addView(subredditButton, sectionButtonParams());
         body.addView(categories, sectionButtonParams());
@@ -6529,7 +6570,7 @@ private void installCompactNavigation() {
     private void showOpenSubredditSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         ScrollView scroll = new ScrollView(this);
-        LinearLayout body = sheetBody("Find / open subreddit · NSFW posts only");
+        LinearLayout body = sheetBody("Find / open subreddit · " + contentMode);
         scroll.addView(body);
 
         AutoCompleteTextView input = new AutoCompleteTextView(this);
@@ -6565,7 +6606,7 @@ private void installCompactNavigation() {
 
     private void showSearchSubmenu() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
-        LinearLayout body = sheetBody("Fuzzy search · NSFW only");
+        LinearLayout body = sheetBody("Fuzzy search · " + contentMode);
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setHint("Title, subreddit, creator, flair…");
@@ -6800,7 +6841,7 @@ private void installCompactNavigation() {
         applyLayoutVisibility();
         updateChrome();
         setStatus((presetName == null || presetName.isEmpty() ? "Preset" : presetName)
-                + " · " + clean.size() + " subreddits · NSFW only", true);
+                + " · " + clean.size() + " subreddits · " + contentMode, true);
         loadFeed(true);
     }
 
@@ -6911,7 +6952,7 @@ private void installCompactNavigation() {
                 if (children != null) {
                     for (int i = 0; i < children.length(); i++) {
                         RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                        if (post == null || !post.nsfw || !matchesMedia(post)) continue;
+                        if (!matchesContentMode(post) || !matchesMedia(post)) continue;
                         if (post.id == null || post.id.isEmpty()) continue;
                         if (isReadHiddenForDiscovery(post)
                                 || isSavedForUnread(post)
@@ -6987,7 +7028,7 @@ private void installCompactNavigation() {
     }
 
     private int fuzzyPostSearchScore(RedditPost post, String value) {
-        if (post == null || !post.nsfw) return 0;
+        if (!matchesContentMode(post)) return 0;
         int subredditScore = FuzzySearch.score(value, post.subreddit);
         int titleScore = FuzzySearch.score(value, post.title);
         int authorScore = FuzzySearch.score(value, post.author);
@@ -7034,7 +7075,7 @@ private void installCompactNavigation() {
                     for (int i = 0; i < children.length(); i++) {
                         RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
                         if (post == null || !postAllowedBySearchScope(post)
-                                || !post.nsfw || !matchesMedia(post)
+                                || !matchesContentMode(post) || !matchesMedia(post)
                                 || isContentBlocked(post)) continue;
                         additions.add(post);
                     }
@@ -7608,6 +7649,29 @@ private void installCompactNavigation() {
         persistPresetFilterSnapshots();
     }
 
+    private void showContentModeSheet() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout body = sheetBody("Content visibility");
+        body.addView(bodyText("SFW / NSFW is evaluated from each post's Reddit flag, even inside mixed communities."));
+        for (String value : new String[] {"SFW", "NSFW", "ALL"}) {
+            String label = "SFW".equals(value) ? "Safe for work"
+                    : "NSFW".equals(value) ? "NSFW (18+)" : "Both SFW and NSFW";
+            Button option = sheetButton(label + (value.equals(contentMode) ? "  ✓" : ""));
+            body.addView(option, sectionButtonParams());
+            option.setOnClickListener(v -> {
+                if (!value.equals(contentMode)) {
+                    contentMode = value;
+                    prefs.edit().putString("contentModeV1", value).apply();
+                    scheduleFilterReload();
+                }
+                dialog.dismiss();
+                showDisplaySubmenu();
+            });
+        }
+        dialog.setContentView(body);
+        dialog.show();
+    }
+
     private void showDisplaySubmenu() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         ScrollView scroll = new ScrollView(this);
@@ -7617,6 +7681,9 @@ private void installCompactNavigation() {
         Button sortMenu = sheetButton("Sort…");
         Button mediaMenu = sheetButton("Media filter…");
         Button peopleMenu = sheetButton("People · " + ContentTaxonomy.label(peopleFilterMask));
+        Button contentModeMenu = sheetButton("Content · " + contentMode);
+        Button roleplayMenu = sheetButton("Roleplay / RP communities · "
+                + (blockRoleplayContent ? "Blocked" : "Allowed"));
         Button sourceMenu = sheetButton("Sources · " + sourceFilterLabel());
         Button viewedMenu = sheetButton("Viewed posts · " + (showViewedPosts ? "All" : "Unread only"));
         Button joinedMenu = sheetButton("Subreddits · " + (joinedOnlyFilter ? "Joined only" : "Any"));
@@ -7629,6 +7696,8 @@ private void installCompactNavigation() {
         body.addView(sortMenu, sectionButtonParams());
         body.addView(mediaMenu, sectionButtonParams());
         body.addView(peopleMenu, sectionButtonParams());
+        body.addView(contentModeMenu, sectionButtonParams());
+        body.addView(roleplayMenu, sectionButtonParams());
         body.addView(sourceMenu, sectionButtonParams());
         body.addView(viewedMenu, sectionButtonParams());
         body.addView(joinedMenu, sectionButtonParams());
@@ -7641,6 +7710,14 @@ private void installCompactNavigation() {
         sortMenu.setOnClickListener(v -> { dialog.dismiss(); showSortSheet(); });
         mediaMenu.setOnClickListener(v -> { dialog.dismiss(); showMediaSheet(); });
         peopleMenu.setOnClickListener(v -> { dialog.dismiss(); showPeopleFilterSheet(); });
+        contentModeMenu.setOnClickListener(v -> { dialog.dismiss(); showContentModeSheet(); });
+        roleplayMenu.setOnClickListener(v -> {
+            blockRoleplayContent = !blockRoleplayContent;
+            prefs.edit().putBoolean("blockRoleplayContentV1", blockRoleplayContent).apply();
+            roleplayMenu.setText("Roleplay / RP communities · "
+                    + (blockRoleplayContent ? "Blocked" : "Allowed"));
+            scheduleFilterReload();
+        });
         sourceMenu.setOnClickListener(v -> { dialog.dismiss(); showSourceFilterSheet(); });
         viewedMenu.setOnClickListener(v -> {
             showViewedPosts = !showViewedPosts;
