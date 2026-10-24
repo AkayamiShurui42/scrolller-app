@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.30: equal candidate layers; term/scope/media/read filters are applied locally after merge.
+// v4.0.1: equal candidate layers; term/scope/media/read filters are applied locally after merge.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -3158,10 +3158,11 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
-        // PullPush is an equal candidate layer. Joined search is deliberately
-        // serialized one community at a time so hundreds of subscriptions cannot
-        // flood the fallback executor and make Search look hung.
-        if (allowed.isEmpty()) {
+        // Remote search is broad; scope is enforced locally by
+        // searchLayerCandidateAccepted(). This is especially important for
+        // Joined: issuing one request per subscribed subreddit is slow, fragile,
+        // and can wedge the request queue on accounts with many subscriptions.
+        if (allowed.isEmpty() || searchScope.equals("subscribed")) {
             PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
                 @Override
                 public void onComplete(JSONArray items) {
@@ -3174,8 +3175,6 @@ private void loadQualityCollection(boolean reset) {
                     // One layer failing must not invalidate the other layers.
                 }
             });
-        } else if (searchScope.equals("subscribed")) {
-            startJoinedPullPushSearch(generation, allowed);
         } else {
             ArrayList<String> communities = new ArrayList<>(allowed);
             for (String target : communities) {
@@ -3194,17 +3193,13 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
-        // Joined must query Reddit too. The previous active path built the correct
-        // Joined allow-list but never invoked the per-community Reddit search
-        // loop, leaving Joined dependent on cache/PullPush only.
         if (searchScope.equals("subscribed")) {
-            ArrayList<String> redditGroups = new ArrayList<>(allowed);
-            redditGroups.sort(String.CASE_INSENSITIVE_ORDER);
-            setStatus("Searching " + redditGroups.size()
-                    + " joined subreddits for “" + query + "”…", true);
+            ArrayList<String> globalSearch = new ArrayList<>();
+            globalSearch.add("__global__");
+            setStatus("Searching joined subreddits for “" + query + "”…", true);
             fetchRemoteSearchGroup(
                     generation,
-                    redditGroups,
+                    globalSearch,
                     0,
                     "",
                     new ArrayList<>(),
@@ -3422,65 +3417,6 @@ private void loadQualityCollection(boolean reset) {
         */
     }
 
-    private void startJoinedPullPushSearch(
-            int generation,
-            Set<String> joined) {
-        if (!searchStillValid(generation)
-                || !searchScope.equals("subscribed")
-                || joined == null
-                || joined.isEmpty()
-                || query == null
-                || query.trim().isEmpty()) return;
-
-        ArrayList<String> communities = new ArrayList<>(joined);
-        communities.sort(String.CASE_INSENSITIVE_ORDER);
-        searchJoinedPullPushNext(generation, communities, 0);
-    }
-
-    private void searchJoinedPullPushNext(
-            int generation,
-            ArrayList<String> communities,
-            int index) {
-        if (!searchStillValid(generation)
-                || !searchScope.equals("subscribed")
-                || communities == null
-                || index >= communities.size()) return;
-
-        final String target = communities.get(index);
-        PullPushClient.searchSubreddit(target, query, 100, new PullPushClient.Callback() {
-            @Override
-            public void onComplete(JSONArray items) {
-                if (!searchStillValid(generation)
-                        || !searchScope.equals("subscribed")) return;
-
-                ArrayList<RedditPost> additions = new ArrayList<>();
-                if (items != null) {
-                    for (int i = 0; i < items.length(); i++) {
-                        RedditPost post = redditPostFromArcticArchive(items.optJSONObject(i));
-                        if (post == null) continue;
-                        post.sourceOrigin = "pullpush";
-                        additions.add(post);
-                    }
-                }
-                mergeSearchLayerResults(generation, additions);
-
-                if (root != null) {
-                    root.postDelayed(() -> searchJoinedPullPushNext(
-                            generation, communities, index + 1), 90L);
-                }
-            }
-
-            @Override
-            public void onError(String error) {
-                if (!searchStillValid(generation)) return;
-                if (root != null) {
-                    root.postDelayed(() -> searchJoinedPullPushNext(
-                            generation, communities, index + 1), 90L);
-                }
-            }
-        });
-    }
-
     private void fetchRemoteSearchGroup(
             int generation,
             ArrayList<String> groups,
@@ -3553,9 +3489,12 @@ private void loadQualityCollection(boolean reset) {
 
             String next = data != null ? data.optString("after", "") : "";
             int nextRawFetched = rawFetched + pageRawCount;
+            boolean joinedGlobal = searchScope.equals("subscribed")
+                    && "__global__".equals(group);
             boolean deepSingleSource = searchScope.equals("global")
-                    || searchScope.equals("subreddit");
-            int maxPages = searchScope.equals("subscribed") ? 1
+                    || searchScope.equals("subreddit")
+                    || joinedGlobal;
+            int maxPages = joinedGlobal ? 6
                     : deepSingleSource ? 4 : 1;
             boolean canContinue = !next.isEmpty()
                     && !seenCursors.contains(next)
