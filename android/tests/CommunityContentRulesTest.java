@@ -31,6 +31,8 @@ public final class CommunityContentRulesTest {
                 new RedditPost("corporate", "This is sharp", "")), "RP shouldn't match substrings");
         check(false, CommunityContentRules.isRoleplay(
                 new RedditPost("OnePlus", "A normal game", "")), "No RP false positive");
+        check(false, CommunityContentRules.isRoleplay(
+                new RedditPost("ERP", "Enterprise resource planning", "")), "ERP is not roleplay");
         check(false, CommunityContentRules.isRoleplay(null), "Null safety");
         if (CommunityContentRules.aiCommunities("Art & images", false).length < 8)
             throw new AssertionError("SFW art discovery seeds missing");
