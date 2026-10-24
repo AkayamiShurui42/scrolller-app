@@ -11,6 +11,8 @@ import org.json.JSONObject;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class RedditSessionEngine {
     public interface Callback {
@@ -26,18 +28,37 @@ public final class RedditSessionEngine {
         public final int status;
         public final String body;
         public final String error;
+        private final JSONObject parsedObject;
 
         ApiResult(boolean ok, int status, String body, String error) {
+            this(ok, status, body, error, null);
+        }
+
+        ApiResult(
+                boolean ok,
+                int status,
+                String body,
+                String error,
+                JSONObject parsedObject) {
             this.ok = ok;
             this.status = status;
             this.body = body == null ? "" : body;
             this.error = error == null ? "" : error;
+            this.parsedObject = parsedObject;
         }
 
         public JSONObject jsonObject() {
+            if (parsedObject != null) return parsedObject;
             try { return new JSONObject(body); } catch (Exception ignored) { return null; }
         }
     }
+
+    private static final ExecutorService RESPONSE_PARSER =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "reddit-response-parser");
+                t.setDaemon(true);
+                return t;
+            });
 
     private final WebView webView;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -66,6 +87,10 @@ public final class RedditSessionEngine {
 
     public void postForm(String path, String body, Callback callback) {
         request(path, "POST", body, callback);
+    }
+
+    public void cancelPendingRequests() {
+        callbacks.clear();
     }
 
     public void request(String path, String method, String body, Callback callback) {
@@ -109,20 +134,31 @@ public final class RedditSessionEngine {
     private final class Bridge {
         @JavascriptInterface
         public void deliver(String token, String payload) {
-            handler.post(() -> {
-                Callback callback = callbacks.remove(token);
-                if (callback == null) return;
+            RESPONSE_PARSER.execute(() -> {
+                ApiResult parsed;
                 try {
                     JSONObject result = new JSONObject(payload);
-                    callback.onResult(new ApiResult(
+                    String responseBody = result.optString("body", "");
+                    JSONObject parsedBody = null;
+                    if (!responseBody.isEmpty()) {
+                        try { parsedBody = new JSONObject(responseBody); }
+                        catch (Exception ignored) {}
+                    }
+                    parsed = new ApiResult(
                             result.optBoolean("ok", false),
                             result.optInt("status", 0),
-                            result.optString("body", ""),
-                            result.optString("error", "")
-                    ));
+                            responseBody,
+                            result.optString("error", ""),
+                            parsedBody);
                 } catch (Exception e) {
-                    callback.onResult(new ApiResult(false, 0, "", e.getMessage()));
+                    parsed = new ApiResult(false, 0, "", e.getMessage());
                 }
+
+                ApiResult finalParsed = parsed;
+                handler.post(() -> {
+                    Callback callback = callbacks.remove(token);
+                    if (callback != null) callback.onResult(finalParsed);
+                });
             });
         }
     }
