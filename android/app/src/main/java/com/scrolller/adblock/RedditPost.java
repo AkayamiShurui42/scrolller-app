@@ -28,6 +28,8 @@ public final class RedditPost {
     public final String posterUrl;
     public final int mediaWidth;
     public final int mediaHeight;
+    public String searchMetadata = "";
+    public String sourceOrigin = "reddit";
 
     private RedditPost(
             String id,
@@ -81,7 +83,7 @@ public final class RedditPost {
         }
         if (media == null) return null;
 
-        return new RedditPost(
+        RedditPost post = new RedditPost(
                 data.optString("name", ""),
                 decode(data.optString("title", "")),
                 data.optString("author", ""),
@@ -100,6 +102,12 @@ public final class RedditPost {
                 media.width,
                 media.height
         );
+        post.searchMetadata = decode(data.optString("selftext", "")) + " "
+                + decode(data.optString("link_flair_text", "")) + " "
+                + decode(data.optString("author_flair_text", "")) + " "
+                + data.optString("domain", "") + " "
+                + data.optString("subreddit_name_prefixed", "");
+        return post;
     }
 
     private static ParsedMedia parseMedia(JSONObject d) {
