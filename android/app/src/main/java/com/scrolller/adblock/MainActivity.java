@@ -3158,8 +3158,9 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
-        // PullPush is an equal candidate layer. It does not own ranking or
-        // filtering; returned posts still go through the local property matcher.
+        // PullPush is an equal candidate layer. Joined search is deliberately
+        // serialized one community at a time so hundreds of subscriptions cannot
+        // flood the fallback executor and make Search look hung.
         if (allowed.isEmpty()) {
             PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
                 @Override
@@ -3173,6 +3174,8 @@ private void loadQualityCollection(boolean reset) {
                     // One layer failing must not invalidate the other layers.
                 }
             });
+        } else if (searchScope.equals("subscribed")) {
+            startJoinedPullPushSearch(generation, allowed);
         } else {
             ArrayList<String> communities = new ArrayList<>(allowed);
             for (String target : communities) {
@@ -3191,8 +3194,28 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
-        // The term search itself is local. No source-specific search result is
-        // trusted until the post properties pass searchLayerCandidateAccepted().
+        // Joined must query Reddit too. The previous active path built the correct
+        // Joined allow-list but never invoked the per-community Reddit search
+        // loop, leaving Joined dependent on cache/PullPush only.
+        if (searchScope.equals("subscribed")) {
+            ArrayList<String> redditGroups = new ArrayList<>(allowed);
+            redditGroups.sort(String.CASE_INSENSITIVE_ORDER);
+            setStatus("Searching " + redditGroups.size()
+                    + " joined subreddits for “" + query + "”…", true);
+            fetchRemoteSearchGroup(
+                    generation,
+                    redditGroups,
+                    0,
+                    "",
+                    new ArrayList<>(),
+                    new HashSet<>(),
+                    new HashSet<>(),
+                    0,
+                    0);
+            return;
+        }
+
+        // The term matcher remains local and identical for every source.
         searchLoading = false;
         loading = false;
         if (root != null) {
@@ -3326,7 +3349,10 @@ private void loadQualityCollection(boolean reset) {
     }
 
     private ArrayList<String> subscriptionSearchGroups() {
-        ArrayList<String> names = new ArrayList<>(joinedSubredditSnapshot());
+        Set<String> joined = !searchJoinedSnapshot.isEmpty()
+                ? searchJoinedSnapshot
+                : joinedSubredditSnapshot();
+        ArrayList<String> names = new ArrayList<>(joined);
         names.sort(String.CASE_INSENSITIVE_ORDER);
 
         // Search each joined community independently. Reddit's combined
@@ -3493,7 +3519,7 @@ private void loadQualityCollection(boolean reset) {
                             seenPostIds, new HashSet<>(), 0, 0), 220L);
                     return;
                 }
-                if (!collected.isEmpty()) {
+                if (!collected.isEmpty() || !searchLayerResults.isEmpty()) {
                     finishSearchCollection(generation, collected);
                 } else {
                     loading = false;
