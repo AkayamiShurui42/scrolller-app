@@ -28,7 +28,11 @@ jobs:
             android/app/src/main/java/com/scrolller/adblock/CommunityContentRules.java \
             android/tests/CommunityContentRulesTest.java
           java -cp /tmp/reddit-rules-test com.scrolller.adblock.CommunityContentRulesTest
-      - uses: android-actions/setup-android@v3
+      - name: Check existing runner Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          command -v sdkmanager
+          test -d "$ANDROID_HOME"
       - name: Install compile SDK
         run: |
           yes | sdkmanager --licenses >/dev/null || true
