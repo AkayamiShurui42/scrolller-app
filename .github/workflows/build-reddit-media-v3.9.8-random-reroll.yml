@@ -1,4 +1,4 @@
-name: Build Reddit Media v3.9.29
+name: Build Reddit Media v3.9.30
 
 on:
   push:
@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v3.9.29-${{ github.ref }}
+  group: reddit-media-v3.9.30-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,15 +34,15 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v3.9.29 invariants
+      - name: Validate v3.9.30 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 76' android/app/build.gradle
-          grep -q 'versionName "3.9.29"' android/app/build.gradle
+          grep -q 'versionCode 77' android/app/build.gradle
+          grep -q 'versionName "3.9.30"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -101,6 +101,11 @@ jobs:
 
           # Read/hide behavior and media categories remain intact.
           grep -q 'private void markVisiblePostRead(int position)' "$MAIN"
+          grep -q 'startJoinedPullPushSearch(generation, allowed);' "$MAIN"
+          grep -q 'ArrayList<String> redditGroups = new ArrayList<>(allowed);' "$MAIN"
+          grep -q 'fetchRemoteSearchGroup(' "$MAIN"
+          grep -q 'searchScope.equals("subscribed")' "$MAIN"
+          grep -q 'searchJoinedSnapshot' "$MAIN"
           grep -q 'sessionReadMediaKeys = new HashSet' "$MAIN"
           grep -q '{"all", "All media"}' "$MAIN"
           grep -q '{"image", "Images"}' "$MAIN"
@@ -151,15 +156,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='76'" /tmp/badging.txt
-          grep -q "versionName='3.9.29'" /tmp/badging.txt
+          grep -q "versionCode='77'" /tmp/badging.txt
+          grep -q "versionName='3.9.30'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.29-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.30-debug.apk
 
-      - name: Upload v3.9.29 APK
+      - name: Upload v3.9.30 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.29-debug-apk
-          path: dist/Reddit-Media-v3.9.29-debug.apk
+          name: reddit-media-v3.9.30-debug-apk
+          path: dist/Reddit-Media-v3.9.30-debug.apk
           if-no-files-found: error
           retention-days: 30
