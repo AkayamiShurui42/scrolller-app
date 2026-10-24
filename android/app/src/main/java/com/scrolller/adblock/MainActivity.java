@@ -59,8 +59,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v3.9.13: harden direct post Save/Unsave with canonical Reddit IDs and feedback.
+// v3.9.30: equal candidate layers; term/scope/media/read filters are applied locally after merge.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
+    // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
+
     private static final String REDDIT = "https://www.reddit.com";
     private static final String[][] CURATED_CATEGORY_ROWS = {
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
@@ -181,16 +183,17 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private RedditSessionEngine engine;
     private SharedPreferences prefs;
     private ReadHideStore readHideStore;
+    private FeedCacheStore feedCacheStore;
 
     private Screen screen = Screen.HOME;
     private BrowserPurpose browserPurpose = BrowserPurpose.NONE;
     private String context = "home";
     private String subreddit = "";
     private String sort = "random";
-    private String topTime = "day";
+    private String topTime = "all";
     private String media = "all";
     private String layoutMode = "fullscreen";
-    private String favoriteSort = "random";
+    private String favoriteSort = "saved_newest";
     private String favoritesView = "saved";
     private String searchScope = "global";
     private String searchSubreddit = "";
@@ -202,13 +205,22 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private int homeRandomGeneration = 0;
     private int homeRandomRequestsThisLoad = 0;
     private final ArrayList<RedditPost> searchCollectorSnapshot = new ArrayList<>();
+    private final LinkedHashMap<String, RedditPost> searchLayerResults = new LinkedHashMap<>();
+    private final HashSet<String> searchLayerMediaKeys = new HashSet<>();
     private int searchGeneration = 0;
     private String query = "";
     private String profileUser = "";
     private String username = "";
     private String modhash = "";
     private String after = "";
+    // Legacy aggregate status only. Never use this as a cross-screen request gate.
     private boolean loading;
+    private boolean feedLoading;
+    private boolean searchLoading;
+    private boolean profileLoading;
+    private boolean favoritesLoading;
+    private Runnable pendingFilterReload;
+    private int filterReloadToken = 0;
     private boolean initialized;
     private boolean muted = true;
     private boolean fullscreenChromeVisible = true;
@@ -234,17 +246,26 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private final ArrayList<Subscription> subscriptions = new ArrayList<>();
     private final Set<String> subscriptionNames = new HashSet<>();
+    private final Set<String> searchJoinedSnapshot = new HashSet<>();
     private final Set<String> feedSeenPostIds = new HashSet<>();
     private final Set<String> feedSeenCursors = new HashSet<>();
     private final Set<String> savedPostIds = new HashSet<>();
     private final ArrayList<RedditPost> deferredAppends = new ArrayList<>();
     private boolean deferredAppendScheduled = false;
+    private static final int FEED_VISIBLE_AHEAD_TARGET = 40;
+    private static final int FEED_RESERVOIR_REFILL_LOW = 100;
+    private static final int FEED_RESERVOIR_MAX = 500;
+    private final ArrayList<RedditPost> feedReservoir = new ArrayList<>();
+    private final HashSet<String> feedReservoirIds = new HashSet<>();
     private boolean archivePrefetchRunning = false;
     private boolean archivePrefetchDone = false;
     private boolean scrolllerPrefetchRunning = false;
     private boolean scrolllerPrefetchDone = false;
     private boolean historicalPrefetchRunning = false;
     private boolean historicalPrefetchDone = false;
+    private boolean pullPushPrefetchRunning = false;
+    private boolean pullPushPrefetchDone = false;
+    private long pullPushBeforeUtc = 0L;
     private boolean topAllArchiveRunning = false;
     private boolean topAllArchiveDone = false;
     private int feedGeneration = 0;
@@ -258,7 +279,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private int qualityCrawlGeneration = 0;
     private int archivePrefetchGeneration = 0;
     private final LinkedHashMap<String, RedditPost> hiddenPosts = new LinkedHashMap<>();
+    private final Set<String> hiddenMediaKeys = new HashSet<>();
     private final LinkedHashMap<String, RedditPost> sessionReadCatalog = new LinkedHashMap<>();
+    private final Set<String> sessionReadMediaKeys = new HashSet<>();
     private final Set<String> mediaReadyPostIds = new HashSet<>();
     private final Set<String> mediaFailedPostIds = new HashSet<>();
     private String lastFullscreenPostId = "";
@@ -285,11 +308,21 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         });
 
         readHideStore = new ReadHideStore(this);
+        feedCacheStore = new FeedCacheStore(this);
         LegacyHiddenPrefsPreflight.migrateIfNeeded(this, readHideStore);
         prefs = getSharedPreferences("native-redview", MODE_PRIVATE);
+        Set<String> persistedJoined = prefs.getStringSet("joinedSubredditsV1", null);
+        if (persistedJoined != null) {
+            for (String value : persistedJoined) {
+                String clean = cleanSubredditName(value);
+                if (clean.isEmpty()) continue;
+                String key = clean.toLowerCase(Locale.US);
+                if (subscriptionNames.add(key)) subscriptions.add(new Subscription(clean, ""));
+            }
+        }
         loadSubredditPresets();
         sort = "random";
-        topTime = prefs.getString("topTime", "day");
+        topTime = prefs.getString("topTime", "all");
         media = prefs.getString("media", "all");
         layoutMode = prefs.getString("layout", "fullscreen");
         if (!layoutMode.equals("grid")) layoutMode = "fullscreen";
@@ -333,55 +366,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             return insets;
         });
 
-        sessionView = new WebView(this);
-        sessionView.setBackgroundColor(Color.BLACK);
-        root.addView(sessionView, match());
-
-        WebSettings settings = sessionView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setSupportMultipleWindows(false);
-        settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        settings.setUseWideViewPort(true);
-        settings.setLoadWithOverviewMode(false);
-
-        CookieManager cookies = CookieManager.getInstance();
-        cookies.setAcceptCookie(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            cookies.setAcceptThirdPartyCookies(sessionView, true);
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        }
-
-        engine = new RedditSessionEngine(sessionView, this::onSessionReady);
-        sessionView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return handleWebNavigation(request.getUrl() != null ? request.getUrl().toString() : null);
-            }
-
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return handleWebNavigation(url);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                engine.markReady(url);
-                if (browserPurpose == BrowserPurpose.LOGIN && !isLoginUrl(url)) {
-                    refreshIdentity(() -> {
-                        if (!username.isEmpty()) {
-                            closeBrowser();
-                            loadSubscriptions(null);
-                            if (screen == Screen.FAVORITES) loadFavoritesInternal();
-                        }
-                    });
-                }
-            }
-        });
+        installSessionTransport(false);
 
         buildNativeUi();
         root.requestApplyInsets();
@@ -438,12 +423,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                         && screen != Screen.ACCOUNT
                         && screen != Screen.FAVORITES;
                 if (readEligible) {
+                    // Read classification happens as soon as a post becomes the
+                    // active on-screen page. The live pager remains unchanged;
+                    // persistence waits for a real subreddit/content-tab boundary.
+                    markVisiblePostRead(position);
                     if (fullscreenUserGesture) {
-                        // The real read transition is committed only once the swipe settles.
                         pendingUserFullscreenPosition = position;
                     } else {
-                        // Programmatic selections establish a baseline only. They never mark
-                        // a post read and never mark a post read.
                         setFullscreenReadBaseline(position);
                     }
                 } else {
@@ -451,13 +437,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     pendingUserFullscreenPosition = -1;
                 }
                 updateSaveCommandState();
-                if (screen == Screen.HOME
-                        && position >= Math.max(0, postAdapter.getItemCount() - 8)) {
-                    armFeedRecoveryWatchdog();
-                    if (!loading && !after.isEmpty()) loadFeed(false);
-                } else if (screen == Screen.HOME && !loading && !after.isEmpty()
-                        && position >= postAdapter.getItemCount() - 60) {
-                    loadFeed(false);
+                if (screen == Screen.HOME) {
+                    int ahead = Math.max(0, postAdapter.getItemCount() - position - 1);
+                    if (ahead <= 20) drainFeedReservoir();
+                    if (ahead <= 8 && feedReservoir.isEmpty()) {
+                        armFeedRecoveryWatchdog();
+                        maybeRefillFeedReservoir();
+                    }
                 }
             }
         });
@@ -476,10 +462,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
                 if (!(lm instanceof GridLayoutManager)) return;
                 int last = ((GridLayoutManager) lm).findLastVisibleItemPosition();
-                if (screen == Screen.HOME
-                        && last >= Math.max(0, gridAdapter.getItemCount() - 3)) {
-                    armFeedRecoveryWatchdog();
-                    if (!loading && !after.isEmpty()) loadFeed(false);
+                if (screen == Screen.HOME) {
+                    int ahead = Math.max(0, gridAdapter.getItemCount() - last - 1);
+                    if (ahead <= 20) drainFeedReservoir();
+                    if (ahead <= 3 && feedReservoir.isEmpty()) {
+                        armFeedRecoveryWatchdog();
+                        maybeRefillFeedReservoir();
+                    }
                 }
             }
         });
@@ -558,30 +547,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             else if (screen == Screen.HOME && context.equals("subreddit")) openSearchScreen();
         });
 
-        controlRow = new LinearLayout(this);
-        controlRow.setOrientation(LinearLayout.HORIZONTAL);
-        controlRow.setGravity(Gravity.CENTER);
-        topBar.addView(controlRow, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
-
-        feedButton = topPill("Feed");
-        sortButton = topPill("Best");
-        filterButton = topPill("All media");
-        layoutButton = topPill("Fullscreen");
-        controlRow.addView(feedButton, controlButtonParams());
-        controlRow.addView(sortButton, controlButtonParams());
-        controlRow.addView(filterButton, controlButtonParams());
-        controlRow.addView(layoutButton, controlButtonParams());
-
-        feedButton.setOnClickListener(v -> {
-            if (screen == Screen.SEARCH) showScopeSheet();
-            else if (screen == Screen.FAVORITES) showFavoritesViewSheet();
-            else if (screen == Screen.HOME && context.equals("quality")) showQualityBrowseSheet();
-            else showFeedSheet();
-        });
-        sortButton.setOnClickListener(v -> showSortSheet());
-        filterButton.setOnClickListener(v -> showMediaSheet());
-        layoutButton.setOnClickListener(v -> showLayoutSheet());
+        // Bottom pullout UI is the only control surface.
+        // Feed / Sort / Media / Layout live under Home/View/Settings below.
+        controlRow = null;
+        feedButton = null;
+        sortButton = null;
+        filterButton = null;
+        layoutButton = null;
 
         bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -672,7 +644,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         updateChrome();
         applyLayoutVisibility();
     
-        // Fullscreen opens clean. One media tap reveals the thumb-first command bar.
+        // Fullscreen opens clean. One media tap reveals the bottom pullout command bar.
         setFullscreenChrome(!layoutMode.equals("fullscreen"));
 }
 
@@ -728,6 +700,119 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (compactMenuButton != null) compactMenuButton.setVisibility(View.GONE);
 }
 
+    private void installSessionTransport(boolean loadNow) {
+        WebView oldView = sessionView;
+        RedditSessionEngine oldEngine = engine;
+
+        if (oldEngine != null) {
+            try { oldEngine.cancelPendingRequests(); } catch (Exception ignored) {}
+        }
+
+        if (oldView != null) {
+            try { oldView.stopLoading(); } catch (Exception ignored) {}
+            try { oldView.removeJavascriptInterface("NativeRedditBridge"); } catch (Exception ignored) {}
+            try { root.removeView(oldView); } catch (Exception ignored) {}
+            try { oldView.destroy(); } catch (Exception ignored) {}
+        }
+
+        sessionView = new WebView(this);
+        sessionView.setBackgroundColor(Color.BLACK);
+        sessionView.setVisibility(browserPurpose == BrowserPurpose.NONE ? View.GONE : View.VISIBLE);
+
+        WebSettings settings = sessionView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setSupportMultipleWindows(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(false);
+
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            cookies.setAcceptThirdPartyCookies(sessionView, true);
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        }
+
+        engine = new RedditSessionEngine(sessionView, this::onSessionReady);
+        sessionView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return handleWebNavigation(request.getUrl() != null ? request.getUrl().toString() : null);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleWebNavigation(url);
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                if (view != sessionView || engine == null) return;
+                engine.markReady(url);
+                if (browserPurpose == BrowserPurpose.LOGIN && !isLoginUrl(url)) {
+                    refreshIdentity(() -> {
+                        if (!username.isEmpty()) {
+                            closeBrowser();
+                            loadSubscriptions(null);
+                            if (screen == Screen.FAVORITES) loadFavoritesInternal();
+                        }
+                    });
+                }
+            }
+        });
+
+        FrameLayout.LayoutParams params = match();
+        root.addView(sessionView, 0, params);
+
+        if (loadNow) {
+            initialized = false;
+            browserPurpose = BrowserPurpose.NONE;
+            sessionView.setVisibility(View.GONE);
+            sessionView.loadUrl(REDDIT + "/");
+        }
+    }
+
+    private void hardResetRedditTransport() {
+        if (root == null) return;
+
+        cancelObsoleteRedditRequests();
+        loading = false;
+        feedLoading = false;
+        feedRecoveryRetried = false;
+        feedRecoveryToken++;
+        if (feedRecoveryRunnable != null) {
+            root.removeCallbacks(feedRecoveryRunnable);
+            feedRecoveryRunnable = null;
+        }
+
+        setFullscreenChrome(true);
+        if (recoveryHud != null) {
+            recoveryHud.setText("Reconnecting Reddit session…");
+            recoveryHud.setVisibility(View.VISIBLE);
+            recoveryHud.bringToFront();
+        }
+
+        setStatus("Reconnecting Reddit session…", true);
+        installSessionTransport(true);
+
+        root.postDelayed(() -> {
+            if (engine != null && !engine.isReady() && screen == Screen.HOME) {
+                if (recoveryHud != null) {
+                    recoveryHud.setText("Session reconnect failed · Tap to retry");
+                    recoveryHud.setVisibility(View.VISIBLE);
+                    recoveryHud.bringToFront();
+                }
+                setStatus("Reddit session did not reconnect.", false);
+                setFullscreenChrome(true);
+            }
+        }, 12000L);
+    }
+
     private void onSessionReady(String url) {
         if (initialized || browserPurpose != BrowserPurpose.NONE) return;
         initialized = true;
@@ -769,24 +854,37 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void loadSubscriptions(@Nullable Runnable done) {
-        subscriptions.clear();
-        subscriptionNames.clear();
         if (username.isEmpty()) {
             if (done != null) done.run();
             if (screen == Screen.ACCOUNT) renderAccount();
             return;
         }
-        loadSubscriptionsPage("", 0, done);
+        loadSubscriptionsPage(
+                "", 0, done, new ArrayList<>(), new LinkedHashSet<>());
     }
 
-    private void loadSubscriptionsPage(String cursor, int page, @Nullable Runnable done) {
+    private void loadSubscriptionsPage(
+            String cursor,
+            int page,
+            @Nullable Runnable done,
+            ArrayList<Subscription> pendingSubscriptions,
+            LinkedHashSet<String> pendingNames) {
         if (page >= 12) {
-            finishSubscriptions(done);
+            finishSubscriptions(done, pendingSubscriptions, pendingNames);
             return;
         }
         String path = "/subreddits/mine/subscriber.json?limit=100&raw_json=1";
         if (!cursor.isEmpty()) path += "&after=" + enc(cursor);
         engine.get(path, result -> {
+            if (!result.ok) {
+                // Keep the last known-good Joined snapshot. A failed refresh must
+                // never temporarily turn Joined-only into an empty/allow-all set.
+                if (done != null) done.run();
+                if (screen == Screen.ACCOUNT) renderAccount();
+                updateChrome();
+                return;
+            }
+
             JSONObject root = result.jsonObject();
             JSONObject data = root != null ? root.optJSONObject("data") : null;
             JSONArray children = data != null ? data.optJSONArray("children") : null;
@@ -795,21 +893,39 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     JSONObject d = children.optJSONObject(i) != null
                             ? children.optJSONObject(i).optJSONObject("data") : null;
                     if (d == null) continue;
-                    String name = d.optString("display_name", "");
+                    String name = cleanSubredditName(d.optString("display_name", ""));
                     if (name.isEmpty()) continue;
-                    subscriptions.add(new Subscription(
+                    String key = name.toLowerCase(Locale.US);
+                    if (!pendingNames.add(key)) continue;
+                    pendingSubscriptions.add(new Subscription(
                             name,
                             RedditPost.decode(d.optString("title", ""))));
-                    subscriptionNames.add(name.toLowerCase(Locale.US));
                 }
             }
             String next = data != null ? data.optString("after", "") : "";
-            if (!next.isEmpty()) loadSubscriptionsPage(next, page + 1, done);
-            else finishSubscriptions(done);
+            if (!next.isEmpty()) {
+                loadSubscriptionsPage(
+                        next, page + 1, done, pendingSubscriptions, pendingNames);
+            } else {
+                finishSubscriptions(done, pendingSubscriptions, pendingNames);
+            }
         });
     }
 
-    private void finishSubscriptions(@Nullable Runnable done) {
+    private void finishSubscriptions(
+            @Nullable Runnable done,
+            ArrayList<Subscription> pendingSubscriptions,
+            LinkedHashSet<String> pendingNames) {
+        if (pendingNames != null && !pendingNames.isEmpty()) {
+            subscriptions.clear();
+            subscriptionNames.clear();
+            subscriptions.addAll(pendingSubscriptions);
+            subscriptionNames.addAll(pendingNames);
+            prefs.edit()
+                    .putStringSet("joinedSubredditsV1", new HashSet<>(subscriptionNames))
+                    .apply();
+        }
+
         subscriptions.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
         if (done != null) done.run();
         if (screen == Screen.ACCOUNT) renderAccount();
@@ -901,6 +1017,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void navigateHome(String which, boolean pushHistory) {
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         if ("quality".equals(which)) which = "home";
         if (pushHistory && !(screen == Screen.HOME && context.equals(which) && subreddit.isEmpty())) {
@@ -920,9 +1037,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void openSubredditFeed(String name) {
         if (name == null || name.isEmpty()) return;
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         history.clear();
-        sort = "random";
+        sort = "top";
+        topTime = "all";
         screen = Screen.HOME;
         context = "subreddit";
         subreddit = name;
@@ -935,6 +1054,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void openSearchScreen() {
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         boolean subredditEntry = screen == Screen.HOME
                 && context.equals("subreddit")
@@ -987,11 +1107,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         prefs.edit().remove("lastSearch").apply();
         searchInput.setText("");
         screen = Screen.SEARCH;
+        cancelObsoleteRedditRequests();
         loadSearchInternal();
     }
 
     private void openUserProfile(String name) {
         if (name == null || name.isEmpty()) return;
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         loading = false;
         feedGeneration++;
@@ -1007,9 +1129,29 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         loadUserProfileInternal();
     }
 
+    private void cancelObsoleteRedditRequests() {
+        if (engine != null) engine.cancelPendingRequests();
+        loading = false;
+        feedLoading = false;
+        searchLoading = false;
+        profileLoading = false;
+        favoritesLoading = false;
+    }
+
     private void loadFeed(boolean reset) {
-        if (!engine.isReady()) return;
-        if (loading && !reset) return;
+        if (reset && screen == Screen.HOME
+                && context.equals("subreddit")
+                && subreddit != null
+                && !subreddit.isEmpty()) {
+            hydrateSubredditCache(subreddit);
+        }
+
+        if (engine == null || !engine.isReady()) {
+            if (screen == Screen.HOME && initialized) hardResetRedditTransport();
+            return;
+        }
+        if (reset) cancelObsoleteRedditRequests();
+        if (feedLoading && !reset) return;
         armFeedRecoveryWatchdog();
 
         if (screen == Screen.HOME && context.equals("multi")) {
@@ -1038,10 +1180,15 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             scrolllerPrefetchDone = false;
             historicalPrefetchRunning = false;
             historicalPrefetchDone = false;
+            pullPushPrefetchRunning = false;
+            pullPushPrefetchDone = false;
+            pullPushBeforeUtc = 0L;
             topAllArchiveRunning = false;
             topAllArchiveDone = false;
             deferredAppends.clear();
             deferredAppendScheduled = false;
+            feedReservoir.clear();
+            feedReservoirIds.clear();
             replacePosts(new ArrayList<>());
             pager.setCurrentItem(0, false);
             setStatus("Loading media…", true);
@@ -1049,6 +1196,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
         final int generation = feedGeneration;
         loading = true;
+        feedLoading = true;
         fetchFeedPages(generation, reset, new ArrayList<>(), 0);
     }
 
@@ -1089,9 +1237,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     return;
                 }
                 loading = false;
+                feedLoading = false;
                 if (context.equals("subreddit") && subreddit != null && !subreddit.isEmpty()) {
-                    setStatus("Live Reddit unavailable; loading historical r/" + subreddit + "…", true);
+                    setStatus("Live Reddit unavailable; loading cached/archive r/" + subreddit + "…", true);
+                    hydrateSubredditCache(subreddit);
                     prefetchHistoricalSubredditIfNeeded(true);
+                    prefetchPullPushSubredditIfNeeded();
                     return;
                 }
                 if (postAdapter.getItemCount() == 0) {
@@ -1123,9 +1274,15 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             // anything reaches the screen. Previously page 0 was shown in Reddit's
             // remote "new" order and only later pages were shuffled.
             if (reset && page == 0 && !collected.isEmpty()) {
-                ArrayList<RedditPost> firstVisible = new ArrayList<>(collected);
-                if (sort.equals("random")) Collections.shuffle(firstVisible);
-                replacePosts(firstVisible);
+                ArrayList<RedditPost> firstBatch = new ArrayList<>(collected);
+                if (sort.equals("random")) Collections.shuffle(firstBatch);
+
+                int visibleCount = Math.min(FEED_VISIBLE_AHEAD_TARGET, firstBatch.size());
+                replacePosts(new ArrayList<>(firstBatch.subList(0, visibleCount)));
+                if (firstBatch.size() > visibleCount) {
+                    enqueueFeedReservoir(
+                            new ArrayList<>(firstBatch.subList(visibleCount, firstBatch.size())));
+                }
                 hideStatus();
                 updateChrome();
             }
@@ -1134,8 +1291,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             boolean random = sort.equals("random");
             boolean oldest = sort.equals("oldest");
             boolean multi = context.equals("multi");
-            int target = multi ? 100 : oldest ? 350 : random ? 120 : 30;
-            int pageLimit = multi ? 1 : topAll ? 12 : oldest ? 5 : random ? 3 : 4;
+            int target = multi ? 180 : oldest ? 350 : random ? 320 : 60;
+            int pageLimit = multi ? 2 : topAll ? 4 : oldest ? 5 : random ? 6 : 5;
             boolean canContinue = !next.isEmpty()
                     && !feedSeenCursors.contains(next)
                     && page + 1 < pageLimit;
@@ -1238,6 +1395,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             ArrayList<RedditPost> collected) {
         if (generation != feedGeneration || screen != Screen.HOME) return;
         loading = false;
+        feedLoading = false;
 
         if (sort.equals("random")) {
             Collections.shuffle(collected);
@@ -1245,8 +1403,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             collected.sort((a, b) -> Long.compare(a.createdUtc, b.createdUtc));
         }
 
-        if (reset && postAdapter.getItemCount() == 0) replacePosts(collected);
-        else appendUnique(collected);
+        if (screen == Screen.HOME) {
+            enqueueFeedReservoir(collected);
+            drainFeedReservoir();
+        } else if (reset && postAdapter.getItemCount() == 0) {
+            replacePosts(collected);
+        } else {
+            appendUnique(collected);
+        }
 
         if (postAdapter.getItemCount() == 0) {
             setStatus("No unique media posts match this feed/filter.", false);
@@ -1272,7 +1436,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void loadHomeSubscriptionRandom(boolean reset) {
         if (!engine.isReady()) return;
-        if (loading && !reset) return;
+        if (reset) cancelObsoleteRedditRequests();
+        if (feedLoading && !reset) return;
 
         if (reset) {
             feedGeneration++;
@@ -1286,6 +1451,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             feedSeenCursors.clear();
             deferredAppends.clear();
             deferredAppendScheduled = false;
+            feedReservoir.clear();
+            feedReservoirIds.clear();
+            pullPushPrefetchRunning = false;
+            pullPushPrefetchDone = false;
+            pullPushBeforeUtc = 0L;
             replacePosts(new ArrayList<>());
             pager.setCurrentItem(0, false);
             setStatus("Shuffling subscriptions…", true);
@@ -1296,6 +1466,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
         if (homeRandomRound.isEmpty()) {
             loading = false;
+            feedLoading = false;
             setStatus("No subscriptions are available for Random.", false);
             return;
         }
@@ -1304,6 +1475,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         final int randomGen = homeRandomGeneration;
         homeRandomRequestsThisLoad = 0;
         loading = true;
+        feedLoading = true;
         fetchHomeRandomRoundNext(feedGen, randomGen);
     }
 
@@ -1330,6 +1502,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (!homeRandomContextValid(feedGen, randomGen)) return;
         if (homeRandomRoundIndex >= homeRandomRound.size()) {
             loading = false;
+            feedLoading = false;
             after = "home-random-round";
             if (postAdapter.getItemCount() == 0) {
                 setStatus("No matching media was found across your subscriptions.", false);
@@ -1440,6 +1613,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         return hiddenPosts.containsKey(bare) || hiddenPosts.containsKey("t3_" + bare);
     }
 
+    private boolean hiddenContainsMedia(RedditPost post) {
+        if (post == null) return false;
+        String mediaKey = canonicalMediaKey(post);
+        return !mediaKey.isEmpty() && hiddenMediaKeys.contains(mediaKey);
+    }
+
     private boolean savedContainsPostId(String id) {
         if (id == null || id.isEmpty()) return false;
         if (savedPostIds.contains(id)) return true;
@@ -1451,6 +1630,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private boolean sessionReadContainsPostId(String id) {
         String bare = barePostId(id);
         return !bare.isEmpty() && sessionReadCatalog.containsKey(bare);
+    }
+
+    private boolean sessionReadContainsMedia(RedditPost post) {
+        if (post == null) return false;
+        String mediaKey = canonicalMediaKey(post);
+        return !mediaKey.isEmpty() && sessionReadMediaKeys.contains(mediaKey);
     }
 
     private boolean isSavedForUnread(RedditPost post) {
@@ -1610,22 +1795,153 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (!visible.isEmpty()) {
             noteFeedContentAvailable();
             hideStatus();
+            if (layoutMode.equals("fullscreen") && root != null) {
+                root.post(() -> {
+                    if (pager == null || postAdapter.getItemCount() == 0) return;
+                    int position = Math.max(0,
+                            Math.min(pager.getCurrentItem(), postAdapter.getItemCount() - 1));
+                    markVisiblePostRead(position);
+                    setFullscreenReadBaseline(position);
+                });
+            }
         }
+    }
+
+    private void hydrateSubredditCache(String targetSubreddit) {
+        if (feedCacheStore == null || targetSubreddit == null || targetSubreddit.isEmpty()) return;
+        final String target = targetSubreddit;
+        feedCacheStore.loadSubredditAsync(target, 1200, cached -> {
+            if (screen != Screen.HOME
+                    || !context.equals("subreddit")
+                    || subreddit == null
+                    || !subreddit.equalsIgnoreCase(target)) return;
+            if (cached == null || cached.isEmpty()) return;
+
+            ArrayList<RedditPost> usable = new ArrayList<>();
+            for (RedditPost post : cached) {
+                if (post == null || !matchesMedia(post)) continue;
+                if (!localWithinTopTime(post)) continue;
+                if (isReadHiddenForDiscovery(post)
+                        || isSavedForUnread(post)
+                        || isContentBlocked(post)) continue;
+                usable.add(post);
+            }
+            sortCachedFeedForCurrent(usable);
+            if (usable.isEmpty()) return;
+
+            enqueueFeedReservoir(usable);
+            drainFeedReservoir();
+        });
+    }
+
+    private void sortCachedFeedForCurrent(ArrayList<RedditPost> posts) {
+        if (posts == null || posts.size() < 2) return;
+        if (sort.equals("random")) {
+            Collections.shuffle(posts);
+        } else if (sort.equals("new")) {
+            posts.sort((a, b) -> Long.compare(b.createdUtc, a.createdUtc));
+        } else if (sort.equals("oldest")) {
+            posts.sort((a, b) -> Long.compare(a.createdUtc, b.createdUtc));
+        } else if (sort.equals("top")) {
+            posts.sort((a, b) -> Integer.compare(b.score, a.score));
+        } else if (sort.equals("hot") || sort.equals("best") || sort.equals("rising")) {
+            posts.sort((a, b) -> Double.compare(localHotScore(b), localHotScore(a)));
+        }
+    }
+
+    private void prefetchPullPushSubredditIfNeeded() {
+        if (pullPushPrefetchRunning || pullPushPrefetchDone) return;
+        if (screen != Screen.HOME || !context.equals("subreddit")) return;
+        if (subreddit == null || subreddit.isEmpty()) return;
+        if (feedReservoir.size() >= FEED_RESERVOIR_MAX) return;
+
+        pullPushPrefetchRunning = true;
+        final int generation = archivePrefetchGeneration;
+        final String targetSubreddit = subreddit;
+        final long before = pullPushBeforeUtc;
+
+        PullPushClient.fetchSubreddit(targetSubreddit, 100, before, new PullPushClient.Callback() {
+            @Override
+            public void onComplete(JSONArray items) {
+                if (!pullPushContextStillValid(generation, targetSubreddit)) return;
+                pullPushPrefetchRunning = false;
+
+                ArrayList<RedditPost> additions = new ArrayList<>();
+                long oldest = Long.MAX_VALUE;
+                int rawCount = items == null ? 0 : items.length();
+
+                if (items != null) {
+                    for (int i = 0; i < items.length(); i++) {
+                        JSONObject item = items.optJSONObject(i);
+                        if (item == null) continue;
+                        long created = (long) item.optDouble("created_utc", 0d);
+                        if (created > 0L && created < oldest) oldest = created;
+
+                        RedditPost post = redditPostFromArcticArchive(item);
+                        if (post == null || !matchesMedia(post)) continue;
+                        post.sourceOrigin = "pullpush";
+                        if (post.id == null || post.id.isEmpty()) continue;
+                        if (isReadHiddenForDiscovery(post)
+                                || isSavedForUnread(post)
+                                || isContentBlocked(post)) continue;
+                        additions.add(post);
+                        if (feedReservoir.size() + additions.size() >= FEED_RESERVOIR_MAX) break;
+                    }
+                }
+
+                if (oldest != Long.MAX_VALUE) pullPushBeforeUtc = Math.max(1L, oldest - 1L);
+                pullPushPrefetchDone = rawCount < 100 || oldest == Long.MAX_VALUE;
+
+                if (!additions.isEmpty()) {
+                    sortCachedFeedForCurrent(additions);
+                    appendUnique(additions);
+                    hideStatus();
+                }
+            }
+
+            @Override
+            public void onError(String error) {
+                if (generation != archivePrefetchGeneration) return;
+                pullPushPrefetchRunning = false;
+                pullPushPrefetchDone = true;
+            }
+        });
+    }
+
+    private boolean pullPushContextStillValid(int generation, String targetSubreddit) {
+        return generation == archivePrefetchGeneration
+                && screen == Screen.HOME
+                && context.equals("subreddit")
+                && subreddit != null
+                && subreddit.equalsIgnoreCase(targetSubreddit)
+                && feedReservoir.size() < FEED_RESERVOIR_MAX;
     }
 
     private void prefetchSubredditReservoir() {
         if (screen != Screen.HOME || !context.equals("subreddit")
                 || subreddit == null || subreddit.isEmpty()) return;
 
+        boolean liveExhausted = after == null || after.isEmpty();
+        boolean reservoirLow = feedReservoir.size() < FEED_RESERVOIR_REFILL_LOW;
+
+        if (reservoirLow && liveExhausted) {
+            if (!historicalPrefetchRunning) historicalPrefetchDone = false;
+            if (sort.equals("random")) {
+                if (!archivePrefetchRunning) archivePrefetchDone = false;
+                if (!scrolllerPrefetchRunning) scrolllerPrefetchDone = false;
+            }
+        }
+
         prefetchScrolllerSubredditIfNeeded();
         prefetchHistoricalSubredditIfNeeded(false);
+        if (reservoirLow) prefetchPullPushSubredditIfNeeded();
 
-        if (!loading && postAdapter.getItemCount() < 300 && after != null && !after.isEmpty()) {
+        if (!feedLoading && reservoirLow && after != null && !after.isEmpty()) {
             final int generation = archivePrefetchGeneration;
             root.postDelayed(() -> {
                 if (generation != archivePrefetchGeneration) return;
                 if (screen == Screen.HOME && context.equals("subreddit")
-                        && !loading && postAdapter.getItemCount() < 300
+                        && !feedLoading && feedReservoir.size() < FEED_RESERVOIR_REFILL_LOW
                         && after != null && !after.isEmpty()) {
                     loadFeed(false);
                 }
@@ -1634,7 +1950,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         if (sort.equals("random")
-                && (postAdapter.getItemCount() >= 300 || after == null || after.isEmpty())) {
+                && (feedReservoir.size() >= FEED_RESERVOIR_REFILL_LOW || after == null || after.isEmpty())) {
             prefetchRandomSubredditArchiveIfNeeded();
         }
     }
@@ -1714,7 +2030,7 @@ private void loadQualityCollection(boolean reset) {
         for (RedditPost post : qualityCatalog.values()) {
             if (post == null || !matchesMedia(post)) continue;
             if (post.id == null || post.id.isEmpty()) continue;
-            if (hiddenContainsPostId(post.id)
+            if (isReadHiddenForDiscovery(post)
                     || isSavedForUnread(post)
                     || isContentBlocked(post)) continue;
             if (!matchesQualityBrowse(post)) continue;
@@ -1909,28 +2225,36 @@ private void loadQualityCollection(boolean reset) {
         if (historicalPrefetchRunning || historicalPrefetchDone) return;
         if (screen != Screen.HOME || !context.equals("subreddit")) return;
         if (subreddit == null || subreddit.isEmpty()) return;
-        if (!forceFallback && !sort.equals("random")) return;
 
         historicalPrefetchRunning = true;
         final int generation = archivePrefetchGeneration;
         final String targetSubreddit = subreddit;
-        ArcticShiftClient.crawlSubreddit(targetSubreddit, 2400, new ArcticShiftClient.CrawlCallback() {
+        ArcticShiftClient.crawlSubreddit(targetSubreddit, 800, new ArcticShiftClient.CrawlCallback() {
             @Override
             public void onBatch(JSONArray items) {
                 if (!historicalSubredditContextValid(generation, targetSubreddit)) return;
+                if (feedReservoir.size() >= FEED_RESERVOIR_MAX) return;
                 ArrayList<RedditPost> additions = new ArrayList<>();
                 for (int i = 0; i < items.length(); i++) {
                     RedditPost post = redditPostFromArcticArchive(items.optJSONObject(i));
                     if (post == null || !matchesMedia(post)) continue;
                     if (post.id == null || post.id.isEmpty()) continue;
-                    if (!feedSeenPostIds.add(canonicalPostKey(post))) continue;
+                    if (feedSeenPostIds.contains(canonicalPostKey(post))) continue;
                     if (isReadHiddenForDiscovery(post)
                             || isSavedForUnread(post)
                             || isContentBlocked(post)) continue;
                     additions.add(post);
                 }
                 if (!additions.isEmpty()) {
-                    if (sort.equals("random")) Collections.shuffle(additions);
+                    if (sort.equals("random")) {
+                        Collections.shuffle(additions);
+                    } else if (sort.equals("oldest")) {
+                        additions.sort((a, b) -> Long.compare(a.createdUtc, b.createdUtc));
+                    } else if (sort.equals("new") || sort.equals("rising")) {
+                        additions.sort((a, b) -> Long.compare(b.createdUtc, a.createdUtc));
+                    } else {
+                        additions.sort((a, b) -> Integer.compare(b.score, a.score));
+                    }
                     appendUnique(additions);
                     hideStatus();
                 }
@@ -1993,6 +2317,7 @@ private void loadQualityCollection(boolean reset) {
             public void onComplete() {
                 if (screen != Screen.USER || !targetUser.equalsIgnoreCase(profileUser)) return;
                 loading = false;
+                profileLoading = false;
                 if (postAdapter.getItemCount() == 0) {
                     setStatus("No unread archived media found for u/" + targetUser + ".", false);
                 }
@@ -2002,6 +2327,7 @@ private void loadQualityCollection(boolean reset) {
             public void onError(String error) {
                 if (screen != Screen.USER || !targetUser.equalsIgnoreCase(profileUser)) return;
                 loading = false;
+                profileLoading = false;
                 if (postAdapter.getItemCount() == 0) {
                     setStatus("Archived u/" + targetUser + " unavailable: " + error, false);
                 }
@@ -2040,6 +2366,7 @@ private void loadQualityCollection(boolean reset) {
     }
 
     private void loadHistoricalSearchCollection(String kind, String target) {
+        searchLoading = true;
         loading = true;
         replacePosts(new ArrayList<>());
         pager.setCurrentItem(0, false);
@@ -2060,6 +2387,7 @@ private void loadQualityCollection(boolean reset) {
             public void onComplete() {
                 if (screen != Screen.SEARCH) return;
                 loading = false;
+                searchLoading = false;
                 if (postAdapter.getItemCount() == 0) {
                     setStatus("No unread archived media found for "
                             + (kind.equals("author") ? "u/" : "r/") + target + ".", false);
@@ -2073,6 +2401,7 @@ private void loadQualityCollection(boolean reset) {
             public void onError(String error) {
                 if (screen != Screen.SEARCH) return;
                 loading = false;
+                searchLoading = false;
                 if (postAdapter.getItemCount() == 0) {
                     setStatus("Historical lookup failed: " + error, false);
                 }
@@ -2084,6 +2413,7 @@ private void loadQualityCollection(boolean reset) {
     }
 
     private void loadHistoricalPostLookup(String redditId) {
+        searchLoading = true;
         loading = true;
         replacePosts(new ArrayList<>());
         setStatus("Looking up archived post…", true);
@@ -2092,6 +2422,7 @@ private void loadQualityCollection(boolean reset) {
             public void onComplete(JSONArray items) {
                 if (screen != Screen.SEARCH) return;
                 loading = false;
+                searchLoading = false;
                 ArrayList<RedditPost> posts = archivePostsFromArray(items);
                 replacePosts(posts);
                 if (postAdapter.getItemCount() == 0) {
@@ -2106,6 +2437,7 @@ private void loadQualityCollection(boolean reset) {
             public void onError(String error) {
                 if (screen != Screen.SEARCH) return;
                 loading = false;
+                searchLoading = false;
                 setStatus("Archived post lookup failed: " + error, false);
             }
         });
@@ -2118,7 +2450,7 @@ private void loadQualityCollection(boolean reset) {
             RedditPost post = redditPostFromArcticArchive(items.optJSONObject(i));
             if (post == null || !matchesMedia(post)) continue;
             if (post.id == null || post.id.isEmpty()) continue;
-            if (hiddenContainsPostId(post.id)
+            if (isReadHiddenForDiscovery(post)
                     || isSavedForUnread(post)
                     || isContentBlocked(post)) continue;
             posts.add(post);
@@ -2163,6 +2495,7 @@ private void loadQualityCollection(boolean reset) {
             @Override
             public void onBatch(JSONArray items) {
                 if (!scrolllerContextStillValid(generation, targetSubreddit)) return;
+                if (feedReservoir.size() >= FEED_RESERVOIR_MAX) return;
                 ArrayList<RedditPost> additions = new ArrayList<>();
                 for (int i = 0; i < items.length(); i++) {
                     RedditPost post = RedditPost.fromScrolller(items.optJSONObject(i));
@@ -2171,7 +2504,7 @@ private void loadQualityCollection(boolean reset) {
                     if (!feedSeenPostIds.add(canonicalPostKey(post))) continue;
                     if (isReadHiddenForDiscovery(post) || isSavedForUnread(post) || isContentBlocked(post)) continue;
                     additions.add(post);
-                    if (postAdapter.getItemCount() + additions.size() >= 1400) break;
+                    if (feedReservoir.size() + additions.size() >= FEED_RESERVOIR_MAX) break;
                 }
                 if (!additions.isEmpty()) {
                     Collections.shuffle(additions);
@@ -2204,7 +2537,7 @@ private void loadQualityCollection(boolean reset) {
                 && sort.equals("random")
                 && subreddit != null
                 && subreddit.equalsIgnoreCase(targetSubreddit)
-                && postAdapter.getItemCount() < 1400;
+                && feedReservoir.size() < FEED_RESERVOIR_MAX;
     }
 
     private void prefetchRandomSubredditArchiveIfNeeded() {
@@ -2235,7 +2568,7 @@ private void loadQualityCollection(boolean reset) {
             Set<String> sourceSeenCursors,
             int page) {
         if (!archiveContextStillValid(generation, targetSubreddit)) return;
-        if (postAdapter.getItemCount() >= 800 || source >= 5) {
+        if (feedReservoir.size() >= FEED_RESERVOIR_MAX || source >= 5) {
             archivePrefetchRunning = false;
             archivePrefetchDone = true;
             return;
@@ -2278,7 +2611,7 @@ private void loadQualityCollection(boolean reset) {
             boolean canContinue = !next.isEmpty()
                     && !sourceSeenCursors.contains(next)
                     && page < 4
-                    && postAdapter.getItemCount() < 800;
+                    && feedReservoir.size() < FEED_RESERVOIR_MAX;
             if (canContinue) {
                 fetchSubredditArchiveSource(
                         generation,
@@ -2318,6 +2651,93 @@ private void loadQualityCollection(boolean reset) {
         return path;
     }
 
+    private void enqueueFeedReservoir(List<RedditPost> incoming) {
+        if (incoming == null || incoming.isEmpty()) return;
+        if (feedCacheStore != null) feedCacheStore.cacheAsync(incoming);
+
+        HashSet<String> ids = new HashSet<>();
+        HashSet<String> mediaKeys = new HashSet<>();
+        for (RedditPost post : postAdapter.getPosts()) {
+            String key = canonicalPostKey(post);
+            if (!key.isEmpty()) ids.add(key);
+            String mediaKey = canonicalMediaKey(post);
+            if (!mediaKey.isEmpty()) mediaKeys.add(mediaKey);
+        }
+        for (RedditPost post : feedReservoir) {
+            String key = canonicalPostKey(post);
+            if (!key.isEmpty()) ids.add(key);
+            String mediaKey = canonicalMediaKey(post);
+            if (!mediaKey.isEmpty()) mediaKeys.add(mediaKey);
+        }
+
+        for (RedditPost post : incoming) {
+            if (feedReservoir.size() >= FEED_RESERVOIR_MAX) break;
+            if (post == null || post.id == null || post.id.isEmpty()) continue;
+            if (isReadHiddenForDiscovery(post)
+                    || isSavedForUnread(post)
+                    || isContentBlocked(post)) continue;
+
+            String key = canonicalPostKey(post);
+            if (key.isEmpty() || ids.contains(key) || !feedReservoirIds.add(key)) continue;
+            String mediaKey = canonicalMediaKey(post);
+            if (!mediaKey.isEmpty() && mediaKeys.contains(mediaKey)) {
+                feedReservoirIds.remove(key);
+                continue;
+            }
+
+            ids.add(key);
+            if (!mediaKey.isEmpty()) mediaKeys.add(mediaKey);
+            feedReservoir.add(post);
+        }
+
+        if (sort.equals("random") && feedReservoir.size() > 1) {
+            Collections.shuffle(feedReservoir);
+        }
+    }
+
+    private void drainFeedReservoir() {
+        if (screen != Screen.HOME) return;
+
+        int current = layoutMode.equals("fullscreen") && pager != null
+                ? Math.max(0, pager.getCurrentItem()) : 0;
+        int ahead = Math.max(0, postAdapter.getItemCount() - current - 1);
+        int needed = Math.max(0, FEED_VISIBLE_AHEAD_TARGET - ahead);
+
+        ArrayList<RedditPost> release = new ArrayList<>();
+        while (needed > 0 && !feedReservoir.isEmpty()) {
+            RedditPost post = feedReservoir.remove(0);
+            String key = canonicalPostKey(post);
+            if (!key.isEmpty()) feedReservoirIds.remove(key);
+            if (post == null || isReadHiddenForDiscovery(post)
+                    || isSavedForUnread(post)
+                    || isContentBlocked(post)) continue;
+            release.add(post);
+            needed--;
+        }
+
+        if (!release.isEmpty()) appendUniqueDirect(release);
+        maybeRefillFeedReservoir();
+    }
+
+    private void maybeRefillFeedReservoir() {
+        if (screen != Screen.HOME || feedLoading) return;
+        if (feedReservoir.size() >= FEED_RESERVOIR_REFILL_LOW) return;
+
+        if (context.equals("home") && homeSubscriptionRandomEnabled()) {
+            loadHomeSubscriptionRandom(false);
+            return;
+        }
+        if (context.equals("multi")) {
+            loadMultiSubredditFair(false);
+            return;
+        }
+        if (after != null && !after.isEmpty()) {
+            loadFeed(false);
+            return;
+        }
+        if (context.equals("subreddit")) prefetchSubredditReservoir();
+    }
+
     private void appendUnique(List<RedditPost> incoming) {
         if (incoming == null || incoming.isEmpty()) return;
         if (layoutMode.equals("fullscreen") && pager != null
@@ -2349,6 +2769,15 @@ private void loadQualityCollection(boolean reset) {
     }
 
     private void appendUniqueNow(List<RedditPost> incoming) {
+        if (screen == Screen.HOME && !showingHiddenLibrary()) {
+            enqueueFeedReservoir(incoming);
+            drainFeedReservoir();
+            return;
+        }
+        appendUniqueDirect(incoming);
+    }
+
+    private void appendUniqueDirect(List<RedditPost> incoming) {
         if (incoming != null) {
             ArrayList<RedditPost> nsfwOnly = new ArrayList<>();
             for (RedditPost candidate : incoming) {
@@ -2593,7 +3022,7 @@ private void loadQualityCollection(boolean reset) {
 
     private void loadSearchInternal() {
         if (tryHistoricalDirectSearch()) return;
-        if (!engine.isReady() || query.isEmpty()) return;
+        if (query.isEmpty()) return;
         screen = Screen.SEARCH;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
@@ -2601,7 +3030,11 @@ private void loadQualityCollection(boolean reset) {
         pager.setCurrentItem(0, false);
 
         final int generation = ++searchGeneration;
+        searchLayerResults.clear();
+        searchLayerMediaKeys.clear();
+        if (!searchScope.equals("subscribed")) searchJoinedSnapshot.clear();
         loading = true;
+        searchLoading = true;
         setStatus("Searching " + searchScopeDescription() + " for “" + query + "”…", true);
         updateChrome();
 
@@ -2622,6 +3055,7 @@ private void loadQualityCollection(boolean reset) {
         if (searchScope.equals("favorites")) {
             if (username.isEmpty()) {
                 loading = false;
+                searchLoading = false;
                 setStatus("Sign in to search Favorites.", false);
                 return;
             }
@@ -2630,81 +3064,378 @@ private void loadQualityCollection(boolean reset) {
             return;
         }
 
-        if (searchScope.equals("category")) {
-            ArrayList<String> groups = categorySearchGroups();
-            if (groups.isEmpty()) {
-                loading = false;
-                setStatus("This category has no communities to search.", false);
-                return;
-            }
-            fetchRemoteSearchGroup(
-                    generation, groups, 0, "", new ArrayList<>(),
-                    new HashSet<>(), new HashSet<>(), 0, 0);
+        if (searchScope.equals("category")
+                || searchScope.equals("subreddit")
+                || searchScope.equals("subscribed")
+                || searchScope.equals("global")) {
+            startEqualSearchLayers(generation, false);
             return;
         }
 
-        if (searchScope.equals("subreddit")) {
-            String target = cleanSubredditName(searchSubreddit);
-            if (target.isEmpty()) {
-                loading = false;
-                setStatus("Choose a subreddit in Search source first.", false);
-                return;
-            }
-            ArrayList<String> groups = new ArrayList<>();
-            groups.add(target);
-            fetchRemoteSearchGroup(
-                    generation, groups, 0, "", new ArrayList<>(),
-                    new HashSet<>(), new HashSet<>(), 0, 0);
-            return;
-        }
-
-        if (searchScope.equals("subscribed")) {
-            if (username.isEmpty()) {
-                loading = false;
-                setStatus("Sign in to search subscriptions.", false);
-                return;
-            }
-            ArrayList<String> groups = subscriptionSearchGroups();
-            if (groups.isEmpty()) {
-                loading = false;
-                setStatus("No subscribed communities are available to search.", false);
-                return;
-            }
-            fetchRemoteSearchGroup(
-                    generation, groups, 0, "", new ArrayList<>(),
-                    new HashSet<>(), new HashSet<>(), 0, 0);
-            return;
-        }
-
-        ArrayList<String> global = new ArrayList<>();
-        global.add("__global__");
-        fetchRemoteSearchGroup(
-                generation, global, 0, "", new ArrayList<>(),
-                new HashSet<>(), new HashSet<>(), 0, 0);
+        searchLoading = false;
+        loading = false;
+        setStatus("Unsupported search scope.", false);
     }
 
     private boolean searchStillValid(int generation) {
         return generation == searchGeneration && screen == Screen.SEARCH;
     }
 
-    private ArrayList<String> subscriptionSearchGroups() {
-        ArrayList<String> names = new ArrayList<>();
+    private void startEqualSearchLayers(int generation, boolean refreshedJoined) {
+        if (!searchStillValid(generation)) return;
+
+        LinkedHashSet<String> allowed = new LinkedHashSet<>();
+        if (searchScope.equals("subscribed")) {
+            allowed.addAll(joinedSubredditSnapshot());
+            if (allowed.isEmpty()) {
+                if (!refreshedJoined && !username.isEmpty()) {
+                    setStatus("Refreshing joined filter…", true);
+                    loadSubscriptions(() -> {
+                        if (!searchStillValid(generation)) return;
+                        startEqualSearchLayers(generation, true);
+                    });
+                    return;
+                }
+                loading = false;
+                searchLoading = false;
+                setStatus("No joined communities are available for this filter.", false);
+                return;
+            }
+            searchJoinedSnapshot.clear();
+            searchJoinedSnapshot.addAll(allowed);
+        } else if (searchScope.equals("subreddit")) {
+            String target = cleanSubredditName(searchSubreddit).toLowerCase(Locale.US);
+            if (target.isEmpty()) {
+                loading = false;
+                searchLoading = false;
+                setStatus("Choose a community for this filter.", false);
+                return;
+            }
+            allowed.add(target);
+        } else if (searchScope.equals("category")) {
+            for (String value : searchCategoryCommunities) {
+                String target = cleanSubredditName(value).toLowerCase(Locale.US);
+                if (!target.isEmpty()) allowed.add(target);
+            }
+            if (allowed.isEmpty()) {
+                loading = false;
+                searchLoading = false;
+                setStatus("This category has no communities to search.", false);
+                return;
+            }
+        }
+
+        // Already-discovered posts are one layer, equal to every remote/cache layer.
+        mergeSearchLayerResults(generation, new ArrayList<>(searchCollectorSnapshot));
+
+        // Persistent cache is another layer. Scope is applied here only as an
+        // efficient prefilter; mergeSearchLayerResults re-applies the exact same
+        // term/scope/media/read/content contract to every returned post.
+        if (feedCacheStore != null) {
+            if (allowed.isEmpty()) {
+                feedCacheStore.searchAllAsync(query, 1000,
+                        cached -> mergeSearchLayerResults(generation, cached));
+            } else {
+                feedCacheStore.searchSubredditsAsync(allowed, query, 1000,
+                        cached -> mergeSearchLayerResults(generation, cached));
+            }
+        }
+
+        // PullPush is an equal candidate layer. It does not own ranking or
+        // filtering; returned posts still go through the local property matcher.
+        if (allowed.isEmpty()) {
+            PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
+                @Override
+                public void onComplete(JSONArray items) {
+                    if (!searchStillValid(generation)) return;
+                    mergeSearchLayerResults(generation, postsFromPullPush(items));
+                }
+
+                @Override
+                public void onError(String error) {
+                    // One layer failing must not invalidate the other layers.
+                }
+            });
+        } else {
+            ArrayList<String> communities = new ArrayList<>(allowed);
+            for (String target : communities) {
+                PullPushClient.searchSubreddit(target, query, 100, new PullPushClient.Callback() {
+                    @Override
+                    public void onComplete(JSONArray items) {
+                        if (!searchStillValid(generation)) return;
+                        mergeSearchLayerResults(generation, postsFromPullPush(items));
+                    }
+
+                    @Override
+                    public void onError(String error) {
+                        // Equal-layer failure is isolated to this source request.
+                    }
+                });
+            }
+        }
+
+        // The term search itself is local. No source-specific search result is
+        // trusted until the post properties pass searchLayerCandidateAccepted().
+        searchLoading = false;
+        loading = false;
+        if (root != null) {
+            root.postDelayed(() -> {
+                if (!searchStillValid(generation)) return;
+                if (searchLayerResults.isEmpty()) {
+                    setStatus("No matching media found for “" + query + "” in "
+                            + searchScopeDescription() + ".", false);
+                }
+            }, 10000L);
+        }
+    }
+
+    private ArrayList<RedditPost> postsFromPullPush(JSONArray items) {
+        ArrayList<RedditPost> posts = new ArrayList<>();
+        if (items == null) return posts;
+        for (int i = 0; i < items.length(); i++) {
+            RedditPost post = redditPostFromArcticArchive(items.optJSONObject(i));
+            if (post == null) continue;
+            post.sourceOrigin = "pullpush";
+            posts.add(post);
+        }
+        return posts;
+    }
+
+
+
+    private boolean searchLayerCandidateAccepted(RedditPost post) {
+        if (post == null || post.id == null || post.id.isEmpty()) return false;
+        if (!postAllowedBySearchScope(post)) return false;
+        if (!matchesMedia(post)) return false;
+        if (!matchesLocalSearch(post, query)) return false;
+        if (!localWithinTopTime(post)) return false;
+
+        // Saved-library and collector searches keep their own semantics.
+        if (!searchScope.equals("favorites") && !searchScope.equals("collector")) {
+            if (isReadHiddenForDiscovery(post)
+                    || isSavedForUnread(post)
+                    || isContentBlocked(post)) return false;
+        }
+        return true;
+    }
+
+    private void mergeSearchLayerResults(int generation, List<RedditPost> candidates) {
+        if (!searchStillValid(generation) || candidates == null || candidates.isEmpty()) return;
+
+        for (RedditPost post : candidates) {
+            if (!searchLayerCandidateAccepted(post)) continue;
+
+            String key = canonicalPostKey(post);
+            if (key.isEmpty() || searchLayerResults.containsKey(key)) continue;
+
+            String mediaKey = canonicalMediaKey(post);
+            if (!mediaKey.isEmpty() && searchLayerMediaKeys.contains(mediaKey)) continue;
+
+            searchLayerResults.put(key, post);
+            if (!mediaKey.isEmpty()) searchLayerMediaKeys.add(mediaKey);
+        }
+
+        if (searchLayerResults.isEmpty()) return;
+
+        ArrayList<RedditPost> merged = new ArrayList<>(searchLayerResults.values());
+        sortLocalSearch(merged);
+
+        String activeKey = "";
+        RedditPost active = currentPagerPost();
+        if (active != null) activeKey = canonicalPostKey(active);
+
+        postAdapter.setHiddenMode(false);
+        postAdapter.setPosts(merged);
+        gridAdapter.setPosts(merged);
+
+        if (!activeKey.isEmpty()) {
+            for (int i = 0; i < merged.size(); i++) {
+                if (activeKey.equals(canonicalPostKey(merged.get(i)))) {
+                    pager.setCurrentItem(i, false);
+                    postAdapter.setActivePosition(i);
+                    break;
+                }
+            }
+        }
+
+        hideStatus();
+        updateChrome();
+    }
+
+    private LinkedHashSet<String> joinedSubredditSnapshot() {
+        LinkedHashSet<String> joined = new LinkedHashSet<>();
+        for (String name : subscriptionNames) {
+            String clean = cleanSubredditName(name);
+            if (!clean.isEmpty()) joined.add(clean.toLowerCase(Locale.US));
+        }
         for (Subscription sub : subscriptions) {
             if (sub == null) continue;
             String clean = cleanSubredditName(sub.name);
-            if (!clean.isEmpty()) names.add(clean);
+            if (!clean.isEmpty()) joined.add(clean.toLowerCase(Locale.US));
         }
-        ArrayList<String> groups = new ArrayList<>();
-        for (int i = 0; i < names.size(); i += 10) {
-            StringBuilder group = new StringBuilder();
-            int end = Math.min(names.size(), i + 10);
-            for (int j = i; j < end; j++) {
-                if (group.length() > 0) group.append('+');
-                group.append(names.get(j));
+        return joined;
+    }
+
+    private boolean postAllowedBySearchScope(RedditPost post) {
+        if (post == null) return false;
+        if (screen != Screen.SEARCH) return true;
+
+        String community = cleanSubredditName(post.subreddit).toLowerCase(Locale.US);
+
+        if (searchScope.equals("subscribed")) {
+            Set<String> joined = !searchJoinedSnapshot.isEmpty()
+                    ? searchJoinedSnapshot
+                    : joinedSubredditSnapshot();
+            return !joined.isEmpty()
+                    && !community.isEmpty()
+                    && joined.contains(community);
+        }
+
+        if (searchScope.equals("subreddit")) {
+            String target = cleanSubredditName(searchSubreddit).toLowerCase(Locale.US);
+            return !target.isEmpty() && target.equals(community);
+        }
+
+        if (searchScope.equals("category")) {
+            if (searchCategoryCommunities.isEmpty()) return false;
+            for (String value : searchCategoryCommunities) {
+                String target = cleanSubredditName(value).toLowerCase(Locale.US);
+                if (!target.isEmpty() && target.equals(community)) return true;
             }
-            if (group.length() > 0) groups.add(group.toString());
+            return false;
         }
-        return groups;
+
+        return true;
+    }
+
+    private ArrayList<String> subscriptionSearchGroups() {
+        ArrayList<String> names = new ArrayList<>(joinedSubredditSnapshot());
+        names.sort(String.CASE_INSENSITIVE_ORDER);
+
+        // Search each joined community independently. Reddit's combined
+        // /r/a+b/search route is unreliable and one bad community used to make
+        // the entire Joined search look broken.
+        return names;
+    }
+
+    private void startSubscribedSearch(int generation, boolean refreshedOnce) {
+        if (!searchStillValid(generation) || !searchScope.equals("subscribed")) return;
+        startEqualSearchLayers(generation, refreshedOnce);
+        return;
+        /*
+
+        if (username.isEmpty()) {
+            loading = false;
+            searchLoading = false;
+            setStatus("Sign in to search joined subreddits.", false);
+            return;
+        }
+
+        LinkedHashSet<String> joined = joinedSubredditSnapshot();
+        ArrayList<String> groups = new ArrayList<>();
+        if (!joined.isEmpty()) {
+            searchJoinedSnapshot.clear();
+            searchJoinedSnapshot.addAll(joined);
+            groups.addAll(subscriptionSearchGroups());
+            setStatus("Searching " + joined.size() + " joined subreddits for “"
+                    + query + "”…", true);
+
+            startJoinedPullPushSearch(generation, joined);
+
+            if (feedCacheStore != null) {
+                feedCacheStore.searchSubredditsAsync(
+                        joined, query, 250, cached -> {
+                            if (!searchStillValid(generation)
+                                    || !searchScope.equals("subscribed")) return;
+
+                            if (cached != null && !cached.isEmpty()) {
+                                mergeSearchLayerResults(generation, cached);
+                            }
+
+                            fetchRemoteSearchGroup(
+                                    generation, groups, 0, "", new ArrayList<>(),
+                                    new HashSet<>(), new HashSet<>(), 0, 0);
+                        });
+            } else {
+                fetchRemoteSearchGroup(
+                        generation, groups, 0, "", new ArrayList<>(),
+                        new HashSet<>(), new HashSet<>(), 0, 0);
+            }
+            return;
+        }
+
+        if (refreshedOnce) {
+            loading = false;
+            searchLoading = false;
+            setStatus("No joined subreddits are available to search.", false);
+            return;
+        }
+
+        setStatus("Refreshing joined subreddits…", true);
+        loadSubscriptions(() -> {
+            if (!searchStillValid(generation) || !searchScope.equals("subscribed")) return;
+            startSubscribedSearch(generation, true);
+        });
+        */
+    }
+
+    private void startJoinedPullPushSearch(
+            int generation,
+            Set<String> joined) {
+        if (!searchStillValid(generation)
+                || !searchScope.equals("subscribed")
+                || joined == null
+                || joined.isEmpty()
+                || query == null
+                || query.trim().isEmpty()) return;
+
+        ArrayList<String> communities = new ArrayList<>(joined);
+        communities.sort(String.CASE_INSENSITIVE_ORDER);
+        searchJoinedPullPushNext(generation, communities, 0);
+    }
+
+    private void searchJoinedPullPushNext(
+            int generation,
+            ArrayList<String> communities,
+            int index) {
+        if (!searchStillValid(generation)
+                || !searchScope.equals("subscribed")
+                || communities == null
+                || index >= communities.size()) return;
+
+        final String target = communities.get(index);
+        PullPushClient.searchSubreddit(target, query, 100, new PullPushClient.Callback() {
+            @Override
+            public void onComplete(JSONArray items) {
+                if (!searchStillValid(generation)
+                        || !searchScope.equals("subscribed")) return;
+
+                ArrayList<RedditPost> additions = new ArrayList<>();
+                if (items != null) {
+                    for (int i = 0; i < items.length(); i++) {
+                        RedditPost post = redditPostFromArcticArchive(items.optJSONObject(i));
+                        if (post == null) continue;
+                        post.sourceOrigin = "pullpush";
+                        additions.add(post);
+                    }
+                }
+                mergeSearchLayerResults(generation, additions);
+
+                if (root != null) {
+                    root.postDelayed(() -> searchJoinedPullPushNext(
+                            generation, communities, index + 1), 90L);
+                }
+            }
+
+            @Override
+            public void onError(String error) {
+                if (!searchStillValid(generation)) return;
+                if (root != null) {
+                    root.postDelayed(() -> searchJoinedPullPushNext(
+                            generation, communities, index + 1), 90L);
+                }
+            }
+        });
     }
 
     private void fetchRemoteSearchGroup(
@@ -2718,7 +3449,8 @@ private void loadQualityCollection(boolean reset) {
             int page,
             int rawFetched) {
         if (!searchStillValid(generation)) return;
-        if (groupIndex >= groups.size()) {
+        if (groupIndex >= groups.size()
+                || (searchScope.equals("subscribed") && collected.size() >= 250)) {
             finishSearchCollection(generation, collected);
             return;
         }
@@ -2748,6 +3480,7 @@ private void loadQualityCollection(boolean reset) {
                     finishSearchCollection(generation, collected);
                 } else {
                     loading = false;
+                    searchLoading = false;
                     setStatus("Search failed: " + friendlyError(result), false);
                 }
                 return;
@@ -2761,29 +3494,26 @@ private void loadQualityCollection(boolean reset) {
             if (children != null) {
                 for (int i = 0; i < children.length(); i++) {
                     RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                    if (post == null || !matchesMedia(post)) continue;
-                    if (post.id == null || post.id.isEmpty()) continue;
+                    if (!searchLayerCandidateAccepted(post)) continue;
                     if (!seenPostIds.add(post.id)) continue;
-                    if (isReadHiddenForDiscovery(post)
-                            || isSavedForUnread(post)
-                            || isContentBlocked(post)) continue;
                     collected.add(post);
                 }
             }
 
             // First useful page becomes visible now rather than after the entire
             // multi-page/multi-group search finishes.
-            if (before == 0 && !collected.isEmpty() && postAdapter.getItemCount() == 0) {
-                replacePosts(new ArrayList<>(collected));
-                hideStatus();
-                updateChrome();
+            if (collected.size() > before) {
+                mergeSearchLayerResults(
+                        generation,
+                        new ArrayList<>(collected.subList(before, collected.size())));
             }
 
             String next = data != null ? data.optString("after", "") : "";
             int nextRawFetched = rawFetched + pageRawCount;
             boolean deepSingleSource = searchScope.equals("global")
                     || searchScope.equals("subreddit");
-            int maxPages = deepSingleSource ? 4 : 1;
+            int maxPages = searchScope.equals("subscribed") ? 1
+                    : deepSingleSource ? 4 : 1;
             boolean canContinue = !next.isEmpty()
                     && !seenCursors.contains(next)
                     && page + 1 < maxPages;
@@ -2797,8 +3527,13 @@ private void loadQualityCollection(boolean reset) {
 
             if (groupIndex + 1 < groups.size()) {
                 final int nextGroup = groupIndex + 1;
-                setStatus("Searching " + searchScopeDescription() + " · "
-                        + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                if (searchScope.equals("subscribed")) {
+                    setStatus("Searching joined · r/" + groups.get(nextGroup)
+                            + " · " + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                } else {
+                    setStatus("Searching " + searchScopeDescription() + " · "
+                            + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                }
                 root.postDelayed(() -> fetchRemoteSearchGroup(
                         generation, groups, nextGroup, "", collected,
                         seenPostIds, new HashSet<>(), 0, 0), 220L);
@@ -2827,18 +3562,15 @@ private void loadQualityCollection(boolean reset) {
     private void finishSearchCollection(int generation, ArrayList<RedditPost> collected) {
         if (!searchStillValid(generation)) return;
         loading = false;
-        if (sort.equals("random")) {
-            Collections.shuffle(collected);
-        } else if (sort.equals("oldest")) {
-            collected.sort((a, b) -> Long.compare(a.createdUtc, b.createdUtc));
-        }
-        replacePosts(collected);
-        finishSearchUi(collected.size());
+        searchLoading = false;
+
+        mergeSearchLayerResults(generation, collected);
+        finishSearchUi(searchLayerResults.size());
+
         startHiddenSearchLeadIns(generation);
         startCategoryMetadataLeadIns(generation);
-    
         startSubredditNameLeadIns(generation);
-}
+    }
 
     private void fetchFavoritesSearchPage(
             int generation,
@@ -2863,6 +3595,7 @@ private void loadQualityCollection(boolean reset) {
             if (!searchStillValid(generation)) return;
             if (!result.ok) {
                 loading = false;
+                searchLoading = false;
                 setStatus("Favorites search failed: " + friendlyError(result), false);
                 return;
             }
@@ -2964,6 +3697,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
     private void finishLocalSearchCollection(int generation, ArrayList<RedditPost> collected) {
         if (!searchStillValid(generation)) return;
         loading = false;
+        searchLoading = false;
         lastFullscreenPostId = "";
         mediaReadyPostIds.clear();
         mediaFailedPostIds.clear();
@@ -3019,11 +3753,8 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         }
         if (searchScope.equals("subscribed")) {
             HashSet<String> allowed = new HashSet<>();
-            for (Subscription sub : subscriptions) {
-                if (sub == null) continue;
-                String clean = cleanSubredditName(sub.name);
-                if (!clean.isEmpty()) allowed.add(clean.toLowerCase(Locale.US));
-            }
+            if (!searchJoinedSnapshot.isEmpty()) allowed.addAll(searchJoinedSnapshot);
+            else allowed.addAll(joinedSubredditSnapshot());
             return allowed;
         }
         if (searchScope.equals("category")) {
@@ -3066,13 +3797,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
             ArrayList<RedditPost> additions) {
         if (!searchStillValid(generation)) return;
         if (offset >= ids.size()) {
-            if (!additions.isEmpty()) {
-                if (sort.equals("random")) Collections.shuffle(additions);
-                else if (sort.equals("oldest")) additions.sort((a, b) -> Long.compare(a.createdUtc, b.createdUtc));
-                appendUnique(additions);
-                if (postAdapter.getItemCount() > 0) hideStatus();
-                updateChrome();
-            }
+            mergeSearchLayerResults(generation, additions);
             return;
         }
 
@@ -3099,11 +3824,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
                 if (children != null) {
                     for (int i = 0; i < children.length(); i++) {
                         RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                        if (post == null || !matchesMedia(post)) continue;
-                        if (post.id == null || post.id.isEmpty()) continue;
-                        if (isReadHiddenForDiscovery(post)
-                                || isSavedForUnread(post)
-                                || isContentBlocked(post)) continue;
+                        if (!searchLayerCandidateAccepted(post)) continue;
                         additions.add(post);
                     }
                 }
@@ -3159,7 +3880,11 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         engine.get(path, result -> {
             if (!searchStillValid(generation)) return;
             if (result.ok) {
-                ArrayList<RedditPost> additions = parseListing(result.jsonObject(), true);
+                ArrayList<RedditPost> parsed = parseListing(result.jsonObject(), true);
+                ArrayList<RedditPost> additions = new ArrayList<>();
+                for (RedditPost post : parsed) {
+                    if (postAllowedBySearchScope(post)) additions.add(post);
+                }
                 appendUnique(additions);
                 if (postAdapter.getItemCount() > 0) hideStatus();
             }
@@ -3168,11 +3893,12 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
     }
 
     private void loadUserProfileInternal() {
-        if (loading || !engine.isReady() || profileUser.isEmpty()) return;
+        if (profileLoading || !engine.isReady() || profileUser.isEmpty()) return;
         replacePosts(new ArrayList<>());
         pager.setCurrentItem(0, false);
         setStatus("Loading u/" + profileUser + "…", true);
         loading = true;
+        profileLoading = true;
         fetchUserPage("", new ArrayList<>(), 0);
     }
 
@@ -3187,6 +3913,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         engine.get(path, result -> {
             if (!result.ok) {
                 loading = false;
+                profileLoading = false;
                 setStatus("Live profile unavailable; loading archived u/" + profileUser + "…", true);
                 loadHistoricalUserProfile(true);
                 return;
@@ -3208,6 +3935,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
                 return;
             }
             loading = false;
+            profileLoading = false;
             replacePosts(collected);
             if (collected.isEmpty()) {
                 setStatus("u/" + profileUser + " has no matching media posts.", false);
@@ -3221,9 +3949,10 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
     }
 
     private void loadFavorites() {
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         if (screen != Screen.FAVORITES) pushCurrentState();
-        favoriteSort = "random";
+        favoriteSort = "saved_newest";
         favoritesView = "saved";
         screen = Screen.FAVORITES;
         profileUser = "";
@@ -3241,12 +3970,13 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
             openBrowser(REDDIT + "/login/?dest=" + enc(REDDIT + "/"), BrowserPurpose.LOGIN);
             return;
         }
-        if (loading) return;
+        if (favoritesLoading) return;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
         replacePosts(new ArrayList<>());
         setStatus("Loading Favorites…", true);
         loading = true;
+        favoritesLoading = true;
         fetchFavoritesPage("", new ArrayList<>(), new HashSet<>(), new HashSet<>());
     }
 
@@ -3265,6 +3995,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         engine.get(path, result -> {
             if (!result.ok) {
                 loading = false;
+                favoritesLoading = false;
                 setStatus("Favorites failed: " + friendlyError(result), false);
                 return;
             }
@@ -3289,6 +4020,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
 
     private void finishFavoritesCollection(ArrayList<RedditPost> collected) {
         loading = false;
+        favoritesLoading = false;
         for (RedditPost savedPost : collected) {
             if (savedPost != null && savedPost.id != null && !savedPost.id.isEmpty()) {
                 savedPostIds.add(savedPost.id);
@@ -3297,8 +4029,11 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         persistSavedPostIds();
         boolean hiddenChanged = false;
         for (RedditPost savedPost : collected) {
-            if (savedPost != null && savedPost.id != null && hiddenContainsPostId(savedPost.id)) {
+            if (savedPost != null && savedPost.id != null
+                    && (hiddenContainsPostId(savedPost.id) || hiddenContainsMedia(savedPost))) {
                 hiddenPosts.remove(savedPost.id);
+                String mediaKey = canonicalMediaKey(savedPost);
+                if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
                 readHideStore.deleteAsync(savedPost.id);
                 hiddenChanged = true;
             }
@@ -3347,6 +4082,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
     }
 
     private void showAccount() {
+        cancelObsoleteRedditRequests();
         commitSessionReadCatalog();
         if (screen != Screen.ACCOUNT) pushCurrentState();
         screen = Screen.ACCOUNT;
@@ -3915,6 +4651,10 @@ private void showCategoryRoot() {
     }
 
     private void showSortSheet() {
+        if (screen == Screen.FAVORITES && favoritesView.equals("saved")) {
+            showFavoriteSortSheet();
+            return;
+        }
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Choose sorting option");
 
@@ -3963,7 +4703,12 @@ private void showCategoryRoot() {
         }
 
         ArrayList<RedditPost> unseen = new ArrayList<>();
-        for (RedditPost post : postAdapter.getPosts()) {
+        ArrayList<RedditPost> rerollPool = new ArrayList<>(postAdapter.getPosts());
+        rerollPool.addAll(feedReservoir);
+        feedReservoir.clear();
+        feedReservoirIds.clear();
+
+        for (RedditPost post : rerollPool) {
             if (post == null || post.id == null || post.id.isEmpty()) continue;
             if (sessionReadContainsPostId(post.id)
                     || hiddenContainsPostId(post.id)
@@ -3973,6 +4718,11 @@ private void showCategoryRoot() {
         }
 
         Collections.shuffle(unseen);
+        if (unseen.size() > FEED_VISIBLE_AHEAD_TARGET) {
+            enqueueFeedReservoir(new ArrayList<>(
+                    unseen.subList(FEED_VISIBLE_AHEAD_TARGET, unseen.size())));
+            unseen = new ArrayList<>(unseen.subList(0, FEED_VISIBLE_AHEAD_TARGET));
+        }
         fullscreenUserGesture = false;
         pendingUserFullscreenPosition = -1;
         lastFullscreenPostId = "";
@@ -3998,7 +4748,7 @@ private void showCategoryRoot() {
 
         root.postDelayed(() -> {
             if (screen != Screen.HOME || !sort.equals("random")) return;
-            if (loading) {
+            if (feedLoading) {
                 root.postDelayed(this::refillRandomAfterReroll, 180L);
                 return;
             }
@@ -4079,8 +4829,10 @@ private void showCategoryRoot() {
         ArrayList<String> removeIds = new ArrayList<>(readHideStore.deleteGroup(kind, community));
         for (String id : removeIds) {
             hiddenPosts.remove(id);
-            feedSeenPostIds.remove(id);
+            feedSeenPostIds.remove("id:" + barePostId(id));
         }
+        hiddenMediaKeys.clear();
+        hiddenMediaKeys.addAll(readHideStore.loadMediaKeys());
         loadHiddenPostsView();
     }
 
@@ -4088,8 +4840,8 @@ private void showCategoryRoot() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("Favorites order");
         String[][] values = {
-                {"random", "Randomize"},
                 {"saved_newest", "Recently saved"},
+                {"random", "Randomize"},
                 {"saved_oldest", "Oldest saved"},
                 {"post_newest", "Newest post"},
                 {"post_oldest", "Oldest post"}
@@ -4145,14 +4897,19 @@ private void showCategoryRoot() {
                 {"video", "GIFs & Videos"},
                 {"album", "Albums"}
         };
+        ArrayList<Button> buttons = new ArrayList<>();
         for (String[] pair : values) {
             Button b = sheetButton(pair[1] + (media.equals(pair[0]) ? "  ✓" : ""));
+            buttons.add(b);
             body.addView(b, sectionButtonParams());
             b.setOnClickListener(v -> {
                 media = pair[0];
                 prefs.edit().putString("media", media).apply();
-                dialog.dismiss();
-                reloadCurrent();
+                for (int i = 0; i < buttons.size(); i++) {
+                    buttons.get(i).setText(values[i][1]
+                            + (media.equals(values[i][0]) ? "  ✓" : ""));
+                }
+                scheduleFilterReload();
             });
         }
         dialog.setContentView(body);
@@ -4194,7 +4951,7 @@ private void showCategoryRoot() {
 
         String[][] values = {
                 {"global", "Global Reddit"},
-                {"subscribed", "Subscriptions"},
+                {"subscribed", "Joined subreddits"},
                 {"favorites", "Favorites / Saved"},
                 {"collector", "Collector · current app collection"}
         };
@@ -4205,7 +4962,18 @@ private void showCategoryRoot() {
                 searchScope = pair[0];
                 prefs.edit().putString("searchScope", searchScope).apply();
                 dialog.dismiss();
-                if (!query.isEmpty()) loadSearchInternal();
+                if (searchScope.equals("subscribed") && joinedSubredditSnapshot().isEmpty()
+                        && !username.isEmpty()) {
+                    setStatus("Refreshing joined subreddits…", true);
+                    loadSubscriptions(() -> {
+                        if (!query.isEmpty() && screen == Screen.SEARCH
+                                && searchScope.equals("subscribed")) {
+                            loadSearchInternal();
+                        }
+                    });
+                } else if (!query.isEmpty()) {
+                    loadSearchInternal();
+                }
                 updateChrome();
             });
         }
@@ -4277,7 +5045,7 @@ private void showCategoryRoot() {
     }
 
     private String searchScopeDescription() {
-        if (searchScope.equals("subscribed")) return "subscriptions";
+        if (searchScope.equals("subscribed")) return "joined subreddits";
         if (searchScope.equals("favorites")) return "Favorites";
         if (searchScope.equals("collector")) return "Collector";
         if (searchScope.equals("category")) {
@@ -4290,7 +5058,7 @@ private void showCategoryRoot() {
     }
 
     private String searchScopeLabel() {
-        if (searchScope.equals("subscribed")) return "Subs";
+        if (searchScope.equals("subscribed")) return "Joined";
         if (searchScope.equals("favorites")) return "Saved";
         if (searchScope.equals("collector")) return "Collector";
         if (searchScope.equals("category")) {
@@ -4304,6 +5072,7 @@ private void showCategoryRoot() {
 
     private void loadHiddenPostsView() {
         loading = false;
+        favoritesLoading = false;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
         ArrayList<RedditPost> items = new ArrayList<>();
@@ -4321,6 +5090,15 @@ private void showCategoryRoot() {
         }
         updateChrome();
         restorePendingPosition();
+    }
+
+private void markVisiblePostRead(int position) {
+        if (!layoutMode.equals("fullscreen")
+                || screen == Screen.ACCOUNT
+                || screen == Screen.FAVORITES) return;
+        RedditPost current = postAdapter.getPost(position);
+        if (current == null || current.id == null || current.id.isEmpty()) return;
+        catalogSessionRead(current);
     }
 
 private void setFullscreenReadBaseline(int position) {
@@ -4354,14 +5132,9 @@ private void trackFullscreenVisit(int position) {
             }
         }
 
-        // Every completed manual swipe classifies the page just left as read.
-        // Fully-loaded media may already be in the catalog; uncertain/failed media
-        // enters here. The tiny HUD gives the user one-tap undo without blocking
-        // the feed or mutating the current pager order.
-        if (previous != null) {
-            catalogSessionRead(previous);
-            showReadUndoHud(previous);
-        }
+        // The previous page was already classified the moment it became active.
+        // Swiping away only exposes the unobtrusive undo HUD.
+        if (previous != null) showReadUndoHud(previous);
         lastFullscreenPostId = currentId;
     }
 
@@ -4372,15 +5145,8 @@ private void trackFullscreenVisit(int position) {
         String key = barePostId(post.id);
         if (!key.isEmpty()) sessionReadCatalog.put(key, post);
 
-        // Classification is durable immediately. This is intentionally not
-        // deferred until a subreddit/tab switch: once the user has seen or
-        // swiped away from a post, every later collector must treat it as hidden
-        // until the user explicitly unhides it.
-        if (!hiddenContainsPostId(post.id)) {
-            hiddenPosts.put(post.id, post);
-            readHideStore.hideAsync(post);
-            trimHiddenPostCache();
-        }
+        String mediaKey = canonicalMediaKey(post);
+        if (!mediaKey.isEmpty()) sessionReadMediaKeys.add(mediaKey);
     }
 
     private void showReadUndoHud(RedditPost post) {
@@ -4405,10 +5171,18 @@ private void trackFullscreenVisit(int position) {
 
         String bare = barePostId(post.id);
         if (!bare.isEmpty()) sessionReadCatalog.remove(bare);
-        hiddenPosts.remove(post.id);
-        hiddenPosts.remove(bare);
-        hiddenPosts.remove("t3_" + bare);
-        readHideStore.deleteAsync(post.id);
+        String mediaKey = canonicalMediaKey(post);
+        if (!mediaKey.isEmpty()) sessionReadMediaKeys.remove(mediaKey);
+
+        // If this post was already hidden from a previous committed session,
+        // undo should restore that persistent classification too.
+        if (hiddenContainsPostId(post.id) || hiddenContainsMedia(post)) {
+            hiddenPosts.remove(post.id);
+            hiddenPosts.remove(bare);
+            hiddenPosts.remove("t3_" + bare);
+            if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
+            readHideStore.deleteAsync(post.id);
+        }
 
         // Let the post become eligible for a later feed/random fetch. Do not
         // force it back into the current pager immediately; that gives failed
@@ -4428,9 +5202,20 @@ private void trackFullscreenVisit(int position) {
 
     private void commitSessionReadCatalog() {
         clearReadUndoHud();
-        // Posts are persisted at catalogSessionRead(). Navigation only closes the
-        // current session bookkeeping; it is no longer the durability boundary.
+        if (!sessionReadCatalog.isEmpty()) {
+            for (RedditPost post : new ArrayList<>(sessionReadCatalog.values())) {
+                if (post == null || post.id == null || post.id.isEmpty()) continue;
+                if (post.saved || savedContainsPostId(post.id)) continue;
+
+                String mediaKey = canonicalMediaKey(post);
+                if (!hiddenContainsPostId(post.id)) hiddenPosts.put(post.id, post);
+                if (!mediaKey.isEmpty()) hiddenMediaKeys.add(mediaKey);
+                readHideStore.hideAsync(post, mediaKey);
+            }
+        }
+
         sessionReadCatalog.clear();
+        sessionReadMediaKeys.clear();
         trimHiddenPostCache();
         lastFullscreenPostId = "";
         fullscreenUserGesture = false;
@@ -4442,7 +5227,9 @@ private void trackFullscreenVisit(int position) {
     private void restoreHiddenPost(RedditPost post) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
         hiddenPosts.remove(post.id);
-        feedSeenPostIds.remove(post.id);
+        String mediaKey = canonicalMediaKey(post);
+        if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
+        feedSeenPostIds.remove(canonicalPostKey(post));
         readHideStore.deleteAsync(post.id);
         if (showingHiddenLibrary()) loadHiddenPostsView();
         else reloadCurrent();
@@ -4450,6 +5237,7 @@ private void trackFullscreenVisit(int position) {
 
     private void loadReadHideState() {
         hiddenPosts.clear();
+        hiddenMediaKeys.clear();
         try {
             // One-time migration from the old giant SharedPreferences JSON. For a
             // very large legacy value, scan IDs directly instead of constructing a
@@ -4484,6 +5272,7 @@ private void trackFullscreenVisit(int position) {
             for (String id : readHideStore.loadIds()) {
                 if (id != null && !id.isEmpty()) hiddenPosts.put(id, null);
             }
+            hiddenMediaKeys.addAll(readHideStore.loadMediaKeys());
             for (RedditPost post : readHideStore.loadRecent(400)) {
                 if (post != null && post.id != null && !post.id.isEmpty()) {
                     hiddenPosts.put(post.id, post);
@@ -4623,6 +5412,27 @@ private void trackFullscreenVisit(int position) {
                 return;
             }
 
+            if (!feedReservoir.isEmpty()) {
+                drainFeedReservoir();
+                noteFeedContentAvailable();
+                return;
+            }
+
+            boolean supplementalRunning = archivePrefetchRunning
+                    || scrolllerPrefetchRunning
+                    || historicalPrefetchRunning
+                    || topAllArchiveRunning;
+            if (supplementalRunning && !feedRecoveryRetried) {
+                feedRecoveryRetried = true;
+                if (recoveryHud != null) {
+                    recoveryHud.setText("Loading more posts…");
+                    recoveryHud.setVisibility(View.VISIBLE);
+                    recoveryHud.bringToFront();
+                }
+                armFeedRecoveryWatchdog();
+                return;
+            }
+
             setFullscreenChrome(true);
             if (recoveryHud != null) {
                 recoveryHud.setVisibility(View.VISIBLE);
@@ -4640,25 +5450,46 @@ private void trackFullscreenVisit(int position) {
                 navigateHome("home", false);
             }
         };
-        root.postDelayed(feedRecoveryRunnable, 9000L);
+        root.postDelayed(feedRecoveryRunnable, 24000L);
     }
 
     private void recoverStalledFeed(boolean userRequested) {
         if (screen != Screen.HOME) return;
-        commitSessionReadCatalog();
         clearReadUndoHud();
-        setFullscreenChrome(true);
-        loading = false;
 
-        if (recoveryHud != null) {
-            recoveryHud.setText(userRequested ? "Recovering feed…" : "Retrying feed…");
-            recoveryHud.setVisibility(View.VISIBLE);
-            recoveryHud.bringToFront();
+        if (context.equals("subreddit") && subreddit != null && !subreddit.isEmpty()) {
+            hydrateSubredditCache(subreddit);
+            if (!pullPushPrefetchRunning) pullPushPrefetchDone = false;
+            prefetchPullPushSubredditIfNeeded();
         }
 
-        // Keep the current Home/subreddit/preset context for the first recovery.
-        // loadFeed(true) creates a fresh generation/cursor and reopens supplemental
-        // sources without requiring a media tap.
+        if (engine == null || !engine.isReady()) {
+            hardResetRedditTransport();
+            return;
+        }
+
+        if (context.equals("subreddit") && subreddit != null && !subreddit.isEmpty()) {
+            loading = false;
+            feedLoading = false;
+            if (!historicalPrefetchRunning) historicalPrefetchDone = false;
+            if (sort.equals("random")) {
+                if (!archivePrefetchRunning) archivePrefetchDone = false;
+                if (!scrolllerPrefetchRunning) scrolllerPrefetchDone = false;
+            }
+
+            if (recoveryHud != null) {
+                recoveryHud.setText("Loading more posts…");
+                recoveryHud.setVisibility(View.VISIBLE);
+                recoveryHud.bringToFront();
+            }
+
+            prefetchSubredditReservoir();
+            if (after != null && !after.isEmpty() && !feedLoading) loadFeed(false);
+            armFeedRecoveryWatchdog();
+            return;
+        }
+
+        cancelObsoleteRedditRequests();
         loadFeed(true);
         armFeedRecoveryWatchdog();
     }
@@ -4678,10 +5509,10 @@ private void trackFullscreenVisit(int position) {
         if (screen != Screen.HOME || !context.equals("subreddit")
                 || subreddit == null || subreddit.isEmpty()) return;
 
-        // Read posts have already been persisted at classification time. A reset
-        // therefore only throws away transport/pagination state and reloads the
-        // same subreddit from a clean cursor while keeping all read IDs hidden.
-        commitSessionReadCatalog();
+        cancelObsoleteRedditRequests();
+        // Reset stays inside the same subreddit session. Keep the session-read
+        // catalog in memory so already-viewed posts remain excluded from fresh
+        // fetches, but do not persist the whole session yet.
         loading = false;
         feedRecoveryRetried = false;
         setFullscreenChrome(true);
@@ -4691,7 +5522,23 @@ private void trackFullscreenVisit(int position) {
         armFeedRecoveryWatchdog();
     }
 
+    private void scheduleFilterReload() {
+        if (root == null) {
+            reloadCurrent();
+            return;
+        }
+        final int token = ++filterReloadToken;
+        if (pendingFilterReload != null) root.removeCallbacks(pendingFilterReload);
+        pendingFilterReload = () -> {
+            if (token != filterReloadToken) return;
+            pendingFilterReload = null;
+            reloadCurrent();
+        };
+        root.postDelayed(pendingFilterReload, 180L);
+    }
+
     private void reloadCurrent() {
+        cancelObsoleteRedditRequests();
         updateChrome();
         if (screen == Screen.SEARCH) loadSearchInternal();
         else if (screen == Screen.FAVORITES) loadFavoritesInternal();
@@ -4729,29 +5576,6 @@ private void trackFullscreenVisit(int position) {
         else title = context.equals("popular") ? "Popular" : "Home";
         topTitle.setText(title);
 
-        feedButton.setText(screen == Screen.SEARCH
-                ? searchScopeLabel()
-                : screen == Screen.FAVORITES
-                ? (favoritesView.equals("hidden") ? "Hidden" : "Saved")
-                : screen == Screen.HOME && context.equals("quality")
-                ? "Browse"
-                : "Feed");
-        sortButton.setText(screen == Screen.FAVORITES
-                ? (favoritesView.equals("hidden") ? "Manage" : favoriteSortLabel())
-                : label(sort));
-        filterButton.setText(media.equals("all") ? "All media"
-                : media.equals("image") ? "Images"
-                : media.equals("album") ? "Albums"
-                : "GIFs/Video");
-        layoutButton.setText(layoutMode.equals("grid") ? "Stream" : "Fullscreen");
-
-        controlRow.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
-        feedButton.setVisibility(
-                screen == Screen.HOME || screen == Screen.SEARCH || screen == Screen.FAVORITES
-                        ? View.VISIBLE : View.GONE);
-        sortButton.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
-        filterButton.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
-        layoutButton.setVisibility(screen == Screen.ACCOUNT ? View.GONE : View.VISIBLE);
         applySystemInsets(systemTopPx, systemBottomPx);
         setFullscreenChrome(layoutMode.equals("grid") || fullscreenChromeVisible);
         updateSaveCommandState();
@@ -4903,16 +5727,6 @@ private void setFullscreenChrome(boolean visible) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
         mediaFailedPostIds.remove(post.id);
         mediaReadyPostIds.add(post.id);
-
-        // PostPagerAdapter only reports readiness for the active page. A fully
-        // rendered active post therefore has enough evidence to be classified
-        // as read immediately, even if the user leaves the subreddit without
-        // performing another swipe.
-        if (layoutMode.equals("fullscreen")
-                && screen != Screen.ACCOUNT
-                && screen != Screen.FAVORITES) {
-            catalogSessionRead(post);
-        }
     }
 
     @Override
@@ -4973,10 +5787,14 @@ private void setFullscreenChrome(boolean visible) {
                 savedPostIds.add(post.id);
                 savedPostIds.add(fullname);
                 sessionReadCatalog.remove(bare);
+                String sessionMediaKey = canonicalMediaKey(post);
+                if (!sessionMediaKey.isEmpty()) sessionReadMediaKeys.remove(sessionMediaKey);
 
                 hiddenPosts.remove(post.id);
                 hiddenPosts.remove(bare);
                 hiddenPosts.remove(fullname);
+                String mediaKey = canonicalMediaKey(post);
+                if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
                 readHideStore.deleteAsync(post.id);
                 if (!fullname.equals(post.id)) readHideStore.deleteAsync(fullname);
 
@@ -5463,7 +6281,9 @@ private void installCompactNavigation() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout body = sheetBody("View");
         Button sortMenu = sheetButton("Sort · " + label(sort));
-        Button mediaMenu = sheetButton("Media · " + (media.equals("all") ? "All" : media.equals("image") ? "Images" : "Video / GIF"));
+        Button mediaMenu = sheetButton("Media · " + (media.equals("all") ? "All"
+                : media.equals("image") ? "Images"
+                : media.equals("album") ? "Albums" : "GIFs / Video"));
         Button filterMenu = sheetButton("Filter");
         Button contentMenu = sheetButton("Content · " + ContentTaxonomy.label(peopleFilterMask));
         Button viewedMenu = sheetButton("Viewed · " + (showViewedPosts ? "Include viewed" : "Unread only"));
@@ -5491,14 +6311,16 @@ private void installCompactNavigation() {
         unread.setOnClickListener(v -> {
             showViewedPosts = false;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            unread.setText("✓ Unread only");
+            all.setText("Include viewed");
+            scheduleFilterReload();
         });
         all.setOnClickListener(v -> {
             showViewedPosts = true;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            unread.setText("Unread only");
+            all.setText("✓ Include viewed");
+            scheduleFilterReload();
         });
         dialog.setContentView(body);
         dialog.show();
@@ -5519,8 +6341,18 @@ private void installCompactNavigation() {
         joined.setOnClickListener(v -> {
             joinedOnlyFilter = !joinedOnlyFilter;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            joined.setText("Subreddits · " + (joinedOnlyFilter ? "Joined only" : "Any"));
+            if (joinedOnlyFilter && joinedSubredditSnapshot().isEmpty() && !username.isEmpty()) {
+                joined.setEnabled(false);
+                joined.setText("Subreddits · Refreshing joined…");
+                loadSubscriptions(() -> {
+                    joined.setEnabled(true);
+                    joined.setText("Subreddits · Joined only");
+                    scheduleFilterReload();
+                });
+            } else {
+                scheduleFilterReload();
+            }
         });
         video.setOnClickListener(v -> { dialog.dismiss(); showVideoFilterSheet(); });
         advanced.setOnClickListener(v -> { dialog.dismiss(); showAdvancedDiscoveryFilterSheet(); });
@@ -5974,7 +6806,8 @@ private void installCompactNavigation() {
 
     private void loadMultiSubredditFair(boolean reset) {
         if (!engine.isReady()) return;
-        if (loading && !reset) return;
+        if (reset) cancelObsoleteRedditRequests();
+        if (feedLoading && !reset) return;
 
         if (reset) {
             feedGeneration++;
@@ -5988,6 +6821,11 @@ private void installCompactNavigation() {
             feedSeenCursors.clear();
             deferredAppends.clear();
             deferredAppendScheduled = false;
+            feedReservoir.clear();
+            feedReservoirIds.clear();
+            pullPushPrefetchRunning = false;
+            pullPushPrefetchDone = false;
+            pullPushBeforeUtc = 0L;
             replacePosts(new ArrayList<>());
             pager.setCurrentItem(0, false);
             setStatus("Preparing preset round…", true);
@@ -5998,6 +6836,7 @@ private void installCompactNavigation() {
         }
         if (multiSubredditRound.isEmpty()) {
             loading = false;
+            feedLoading = false;
             setStatus("This preset has no usable subreddits.", false);
             return;
         }
@@ -6006,6 +6845,7 @@ private void installCompactNavigation() {
         final int multiGen = multiSubredditGeneration;
         multiSubredditRequestsThisLoad = 0;
         loading = true;
+        feedLoading = true;
         fetchMultiSubredditRoundNext(feedGen, multiGen);
     }
 
@@ -6033,6 +6873,7 @@ private void installCompactNavigation() {
 
         if (multiSubredditRoundIndex >= multiSubredditRound.size()) {
             loading = false;
+            feedLoading = false;
             after = "multi-round-complete";
             if (postAdapter.getItemCount() == 0) {
                 setStatus("No accessible NSFW media matched this preset round.", false);
@@ -6049,6 +6890,7 @@ private void installCompactNavigation() {
         // subreddit can repeat until the entire preset round has been attempted.
         if (multiSubredditRequestsThisLoad >= 12 && postAdapter.getItemCount() > 0) {
             loading = false;
+            feedLoading = false;
             after = "multi-round-continue";
             hideStatus();
             updateChrome();
@@ -6162,7 +7004,16 @@ private void installCompactNavigation() {
         String normalized = FuzzySearch.normalize(query);
         if (normalized.isEmpty()) return;
         ArrayList<String> candidates = knownNsfwSubreddits();
-        candidates.removeIf(name -> FuzzySearch.score(query, name) < FuzzySearch.thresholdFor(normalized.length()));
+        if (searchScope.equals("subscribed")) {
+            Set<String> joined = !searchJoinedSnapshot.isEmpty()
+                    ? searchJoinedSnapshot : joinedSubredditSnapshot();
+            candidates.removeIf(name -> {
+                String key = cleanSubredditName(name).toLowerCase(Locale.US);
+                return key.isEmpty() || !joined.contains(key);
+            });
+        }
+        candidates.removeIf(name -> FuzzySearch.score(query, name)
+                < FuzzySearch.thresholdFor(normalized.length()));
         candidates.sort((a, b) -> Integer.compare(FuzzySearch.score(query, b), FuzzySearch.score(query, a)));
         if (candidates.size() > 6) candidates = new ArrayList<>(candidates.subList(0, 6));
         fetchSubredditNameLeadIn(generation, candidates, 0);
@@ -6182,12 +7033,14 @@ private void installCompactNavigation() {
                 if (children != null) {
                     for (int i = 0; i < children.length(); i++) {
                         RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                        if (post == null || !post.nsfw || !matchesMedia(post) || isContentBlocked(post)) continue;
+                        if (post == null || !postAllowedBySearchScope(post)
+                                || !post.nsfw || !matchesMedia(post)
+                                || isContentBlocked(post)) continue;
                         additions.add(post);
                     }
                 }
             }
-            if (!additions.isEmpty()) appendUnique(additions);
+            mergeSearchLayerResults(generation, additions);
             if (appLayer != null) appLayer.postDelayed(
                     () -> fetchSubredditNameLeadIn(generation, candidates, index + 1), 120L);
         });
@@ -6256,7 +7109,10 @@ private void installCompactNavigation() {
                 && post != null
                 && post.id != null
                 && !post.id.isEmpty()
-                && (hiddenContainsPostId(post.id) || sessionReadContainsPostId(post.id));
+                && (hiddenContainsPostId(post.id)
+                || hiddenContainsMedia(post)
+                || sessionReadContainsPostId(post.id)
+                || sessionReadContainsMedia(post));
     }
 
     private boolean shouldApplyJoinedOnlyFilter() {
@@ -6279,13 +7135,21 @@ private void installCompactNavigation() {
         // Joined-only is a discovery constraint, not permission to erase a feed
         // the user explicitly opened. Direct subreddit, multi-preset, and
         // subreddit-scoped search contexts always honor the explicit selection.
-        if (shouldApplyJoinedOnlyFilter() && !subscriptionNames.isEmpty()
-                && !subscriptionNames.contains(community)) return false;
+        if (shouldApplyJoinedOnlyFilter()) {
+            Set<String> joined = screen == Screen.SEARCH && searchScope.equals("subscribed")
+                    && !searchJoinedSnapshot.isEmpty()
+                    ? searchJoinedSnapshot
+                    : joinedSubredditSnapshot();
+            // Joined-only must fail closed. An empty membership snapshot is not
+            // permission to leak posts from arbitrary subreddits.
+            if (joined.isEmpty()) return false;
+            if (community.isEmpty() || !joined.contains(community)) return false;
+        }
 
         int sourceBit = 1;
         String origin = post.sourceOrigin == null ? "reddit" : post.sourceOrigin.toLowerCase(Locale.US);
         if (origin.equals("scrolller")) sourceBit = 2;
-        else if (origin.equals("archive")) sourceBit = 4;
+        else if (origin.equals("archive") || origin.equals("pullpush")) sourceBit = 4;
         if (sourceFilterMask != 0 && (sourceFilterMask & sourceBit) == 0) return false;
 
         boolean video = post.mediaKind == RedditPost.MediaKind.VIDEO
@@ -6447,8 +7311,8 @@ private void installCompactNavigation() {
             peopleFilterMask = mask;
             blockLgbtTopics = false;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            apply.setText("Apply people filter  ✓");
+            scheduleFilterReload();
         });
         dialog.setContentView(body);
         dialog.show();
@@ -6482,8 +7346,8 @@ private void installCompactNavigation() {
             if (archive.isChecked()) mask |= 4;
             sourceFilterMask = (mask == 0 || mask == 7) ? 0 : mask;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            apply.setText("Apply source filter  ✓");
+            scheduleFilterReload();
         });
         dialog.setContentView(body);
         dialog.show();
@@ -6503,14 +7367,15 @@ private void installCompactNavigation() {
             minimumVideoHeight = minimumVideoHeight <= 0 ? 720
                     : minimumVideoHeight == 720 ? 1080 : 0;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            quality.setText("Minimum resolution · "
+                    + (minimumVideoHeight <= 0 ? "Any" : minimumVideoHeight + "p+"));
+            scheduleFilterReload();
         });
         length.setOnClickListener(v -> {
             videoLengthMode = (videoLengthMode + 1) % 4;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            length.setText("Length · " + videoLengthLabel());
+            scheduleFilterReload();
         });
         dialog.setContentView(body);
         dialog.show();
@@ -6559,8 +7424,9 @@ private void installCompactNavigation() {
             blockCurrent.setOnClickListener(v -> {
                 blockedCreators.add(author.toLowerCase(Locale.US));
                 persistDiscoveryFilterPrefs();
-                dialog.dismiss();
-                reloadCurrent();
+                blockCurrent.setText("Blocked · u/" + author + "  ✓");
+                blockCurrent.setEnabled(false);
+                scheduleFilterReload();
             });
         }
 
@@ -6578,8 +7444,8 @@ private void installCompactNavigation() {
                 if (!clean.isEmpty()) blockedCreators.add(clean);
             }
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            save.setText("Save advanced filters  ✓");
+            scheduleFilterReload();
         });
         dialog.setContentView(scroll);
         dialog.show();
@@ -6779,14 +7645,24 @@ private void installCompactNavigation() {
         viewedMenu.setOnClickListener(v -> {
             showViewedPosts = !showViewedPosts;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            viewedMenu.setText("Viewed posts · " + (showViewedPosts ? "All" : "Unread only"));
+            scheduleFilterReload();
         });
         joinedMenu.setOnClickListener(v -> {
             joinedOnlyFilter = !joinedOnlyFilter;
             persistDiscoveryFilterPrefs();
-            dialog.dismiss();
-            reloadCurrent();
+            joinedMenu.setText("Subreddits · " + (joinedOnlyFilter ? "Joined only" : "Any"));
+            if (joinedOnlyFilter && joinedSubredditSnapshot().isEmpty() && !username.isEmpty()) {
+                joinedMenu.setEnabled(false);
+                joinedMenu.setText("Subreddits · Refreshing joined…");
+                loadSubscriptions(() -> {
+                    joinedMenu.setEnabled(true);
+                    joinedMenu.setText("Subreddits · Joined only");
+                    scheduleFilterReload();
+                });
+            } else {
+                scheduleFilterReload();
+            }
         });
         videoMenu.setOnClickListener(v -> { dialog.dismiss(); showVideoFilterSheet(); });
         advancedMenu.setOnClickListener(v -> { dialog.dismiss(); showAdvancedDiscoveryFilterSheet(); });
