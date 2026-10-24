@@ -28,15 +28,21 @@ jobs:
             android/app/src/main/java/com/scrolller/adblock/CommunityContentRules.java \
             android/tests/CommunityContentRulesTest.java
           java -cp /tmp/reddit-rules-test com.scrolller.adblock.CommunityContentRulesTest
-      - name: Check existing runner Android SDK
+      - name: Bootstrap Android command-line SDK
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          command -v sdkmanager
-          test -d "$ANDROID_HOME"
+          mkdir -p "$HOME/android-sdk/cmdline-tools"
+          curl -fLSs --retry 3 --retry-delay 2 \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+            -o /tmp/android-clt.zip
+          mkdir -p /tmp/android-clt
+          unzip -q /tmp/android-clt.zip -d /tmp/android-clt
+          mv /tmp/android-clt/cmdline-tools "$HOME/android-sdk/cmdline-tools/latest"
+          echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
+          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
       - name: Install compile SDK
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - name: Restore debug signing key
         run: |
           base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
