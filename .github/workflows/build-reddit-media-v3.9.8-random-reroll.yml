@@ -1,4 +1,4 @@
-name: Build Reddit Media v4.0.2
+name: Build Reddit Media v4.0.3
 
 on:
   push:
@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v4.0.2-${{ github.ref }}
+  group: reddit-media-v4.0.3-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -41,8 +41,8 @@ jobs:
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 79' android/app/build.gradle
-          grep -q 'versionName "4.0.2"' android/app/build.gradle
+          grep -q 'versionCode 80' android/app/build.gradle
+          grep -q 'versionName "4.0.3"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -125,6 +125,29 @@ jobs:
           grep -q 'Roleplay · " + (blockRoleplayContent ? "Blocked" : "Allowed")' "$MAIN"
           ! grep -q '"nsfw=1"' "$CACHE"
 
+          # Search regression checks: remote Reddit queries must launch in
+          # Global/Subreddit/Category/Joined scope and stream batches promptly.
+          grep -q 'redditGroups.add("__global__");' "$MAIN"
+          grep -q 'fetchRemoteSearchGroup(generation, redditGroups, 0' "$MAIN"
+          grep -q 'startSearchLeadInsOnce(generation)' "$MAIN"
+          grep -q 'new ArrayList<>(collected.subList(before, collected.size()))' "$MAIN"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          main = Path("android/app/src/main/java/com/scrolller/adblock/MainActivity.java").read_text()
+          start = main.index("private void startEqualSearchLayers(")
+          end = main.index("private void startJoinedPullPushSearch(", start)
+          body = main[start:end]
+          for needle in ('searchScope.equals("global")', 'searchScope.equals("subscribed")',
+                         'redditGroups.addAll(allowed)', 'redditGroups.add("__global__")',
+                         'fetchRemoteSearchGroup(generation, redditGroups',
+                         'startSearchLeadInsOnce(generation)'):
+              assert needle in body, f"Search dispatcher missing {needle}"
+          assert main.count('private void startSearchLeadInsOnce(') == 1
+          assert 'if (collected.size() > before)' in main
+          print("Search routing and progressive result path regression checks passed")
+          PY
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
@@ -166,15 +189,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='79'" /tmp/badging.txt
-          grep -q "versionName='4.0.2'" /tmp/badging.txt
+          grep -q "versionCode='80'" /tmp/badging.txt
+          grep -q "versionName='4.0.3'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v4.0.2-debug.apk
+          cp "$APK" dist/Reddit-Media-v4.0.3-search-restored-debug.apk
 
-      - name: Upload v4.0.2 APK
+      - name: Upload v4.0.3 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v4.0.2-debug-apk
-          path: dist/Reddit-Media-v4.0.2-debug.apk
+          name: reddit-media-v4.0.3-search-restored-debug-apk
+          path: dist/Reddit-Media-v4.0.3-search-restored-debug.apk
           if-no-files-found: error
           retention-days: 30
