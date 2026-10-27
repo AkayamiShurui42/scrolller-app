@@ -1,4 +1,4 @@
-name: Build Reddit Media v4.0.4
+name: Build Reddit Media v4.0.5
 
 on:
   push:
@@ -7,7 +7,9 @@ on:
     paths:
       - 'android/app/src/main/java/com/scrolller/adblock/MainActivity.java'
       - 'android/app/src/main/java/com/scrolller/adblock/SearchQuerySpec.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/SearchRandomOrder.java'
       - 'android/app/src/test/java/com/scrolller/adblock/SearchQuerySpecTest.java'
+      - 'android/app/src/test/java/com/scrolller/adblock/SearchRandomOrderTest.java'
       - 'android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java'
       - 'android/app/src/main/java/com/scrolller/adblock/ReadHideStore.java'
       - 'android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java'
@@ -24,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v4.0.4-${{ github.ref }}
+  group: reddit-media-v4.0.5-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -36,15 +38,15 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v4.0.4 invariants
+      - name: Validate v4.0.5 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 81' android/app/build.gradle
-          grep -q 'versionName "4.0.4"' android/app/build.gradle
+          grep -q 'versionCode 82' android/app/build.gradle
+          grep -q 'versionName "4.0.5"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -150,8 +152,28 @@ jobs:
           assert 'searchLayerCandidateAccepted(post, true)' in main
           assert 'mergeSearchLayerResults(generation, collected, true)' in main
           assert 'new AutoCompleteTextView(this)' in main
-          assert 'searchInput.showDropDown()' in main
-          assert 'screen == Screen.SEARCH ? View.VISIBLE : View.GONE' in main
+          assert 'input.showDropDown()' in main
+          # Search uses only the bottom command bar, even after results render.
+          chrome = main[main.index('private void setFullscreenChrome('):
+              main.index('private void toggleFullscreenChrome(')]
+          assert 'topBar.setVisibility(View.GONE)' in chrome
+          assert 'screen == Screen.SEARCH' in chrome
+          assert 'topBar.setVisibility(\n                screen == Screen.SEARCH' not in main
+          bottom = main[main.index('private void showSearchSubmenu()'):
+              main.index('private void runMenuSearch(')]
+          assert 'new AutoCompleteTextView(this)' in bottom
+          assert 'scheduleSearchSuggestions(input, s.toString())' in bottom
+          assert 'showScopeSheet();' in bottom
+          assert 'Search filters' in bottom
+          assert 'Search ' in bottom and ' · Random' in bottom
+          begin = main[main.index('private void beginSearch()'):
+              main.index('private void rememberSearchTerm(')]
+          assert 'sort = "random";' in begin
+          assert 'searchRandomSeed = SystemClock.elapsedRealtimeNanos();' in begin
+          reloader = main[main.index('private void reloadCurrent()'):
+              main.index('private void updateChrome()')]
+          assert 'sort = "random";' not in reloader
+          assert 'SearchRandomOrder.compare(' in main
           assert 'cancelObsoleteRedditRequests();\n        screen = Screen.SEARCH;' in main
           assert 'recentSearchesV1' in main
           assert 'activeSearchSpec.redditTerm()' in main
@@ -171,8 +193,11 @@ jobs:
           mkdir -p /tmp/reddit-native-search-tests
           javac -d /tmp/reddit-native-search-tests \
             android/app/src/main/java/com/scrolller/adblock/SearchQuerySpec.java \
-            android/app/src/test/java/com/scrolller/adblock/SearchQuerySpecTest.java
+            android/app/src/main/java/com/scrolller/adblock/SearchRandomOrder.java \
+            android/app/src/test/java/com/scrolller/adblock/SearchQuerySpecTest.java \
+            android/app/src/test/java/com/scrolller/adblock/SearchRandomOrderTest.java
           java -ea -cp /tmp/reddit-native-search-tests com.scrolller.adblock.SearchQuerySpecTest
+          java -ea -cp /tmp/reddit-native-search-tests com.scrolller.adblock.SearchRandomOrderTest
 
       - name: Use runner Android SDK
         run: |
@@ -208,15 +233,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='81'" /tmp/badging.txt
-          grep -q "versionName='4.0.4'" /tmp/badging.txt
+          grep -q "versionCode='82'" /tmp/badging.txt
+          grep -q "versionName='4.0.5'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v4.0.4-search-settings-debug.apk
+          cp "$APK" dist/Reddit-Media-v4.0.5-bottom-search-random-debug.apk
 
-      - name: Upload v4.0.4 APK
+      - name: Upload v4.0.5 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v4.0.4-search-settings-debug-apk
-          path: dist/Reddit-Media-v4.0.4-search-settings-debug.apk
+          name: reddit-media-v4.0.5-bottom-search-random-debug-apk
+          path: dist/Reddit-Media-v4.0.5-bottom-search-random-debug.apk
           if-no-files-found: error
           retention-days: 30
