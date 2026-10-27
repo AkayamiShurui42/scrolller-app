@@ -1,4 +1,4 @@
-name: Build Reddit Media v4.0.3
+name: Build Reddit Media v4.0.4
 
 on:
   push:
@@ -6,6 +6,8 @@ on:
       - fix/redview-read-filter-v3.9.3
     paths:
       - 'android/app/src/main/java/com/scrolller/adblock/MainActivity.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/SearchQuerySpec.java'
+      - 'android/app/src/test/java/com/scrolller/adblock/SearchQuerySpecTest.java'
       - 'android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java'
       - 'android/app/src/main/java/com/scrolller/adblock/ReadHideStore.java'
       - 'android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java'
@@ -22,7 +24,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v4.0.3-${{ github.ref }}
+  group: reddit-media-v4.0.4-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,15 +36,15 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v4.0.2 invariants
+      - name: Validate v4.0.4 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 80' android/app/build.gradle
-          grep -q 'versionName "4.0.3"' android/app/build.gradle
+          grep -q 'versionCode 81' android/app/build.gradle
+          grep -q 'versionName "4.0.4"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -145,7 +147,16 @@ jobs:
               assert needle in body, f"Search dispatcher missing {needle}"
           assert main.count('private void startSearchLeadInsOnce(') == 1
           assert 'if (collected.size() > before)' in main
-          print("Search routing and progressive result path regression checks passed")
+          assert 'searchLayerCandidateAccepted(post, true)' in main
+          assert 'mergeSearchLayerResults(generation, collected, true)' in main
+          assert 'new AutoCompleteTextView(this)' in main
+          assert 'searchInput.showDropDown()' in main
+          assert 'screen == Screen.SEARCH ? View.VISIBLE : View.GONE' in main
+          assert 'cancelObsoleteRedditRequests();\n        screen = Screen.SEARCH;' in main
+          assert 'recentSearchesV1' in main
+          assert 'activeSearchSpec.redditTerm()' in main
+          assert 'searchScope.equals("category") || !(' in main
+          print("Search routing, filters, suggestions and progressive results passed")
           PY
 
       - name: Set up Java 17
@@ -154,6 +165,14 @@ jobs:
           java-version: '17'
           distribution: temurin
           cache: gradle
+
+      - name: Run native search parser and autocomplete tests
+        run: |
+          mkdir -p /tmp/reddit-native-search-tests
+          javac -d /tmp/reddit-native-search-tests \
+            android/app/src/main/java/com/scrolller/adblock/SearchQuerySpec.java \
+            android/app/src/test/java/com/scrolller/adblock/SearchQuerySpecTest.java
+          java -ea -cp /tmp/reddit-native-search-tests com.scrolller.adblock.SearchQuerySpecTest
 
       - name: Use runner Android SDK
         run: |
@@ -189,15 +208,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='80'" /tmp/badging.txt
-          grep -q "versionName='4.0.3'" /tmp/badging.txt
+          grep -q "versionCode='81'" /tmp/badging.txt
+          grep -q "versionName='4.0.4'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v4.0.3-search-restored-debug.apk
+          cp "$APK" dist/Reddit-Media-v4.0.4-search-settings-debug.apk
 
-      - name: Upload v4.0.3 APK
+      - name: Upload v4.0.4 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v4.0.3-search-restored-debug-apk
-          path: dist/Reddit-Media-v4.0.3-search-restored-debug.apk
+          name: reddit-media-v4.0.4-search-settings-debug-apk
+          path: dist/Reddit-Media-v4.0.4-search-settings-debug.apk
           if-no-files-found: error
           retention-days: 30
