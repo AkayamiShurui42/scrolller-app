@@ -3857,31 +3857,11 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         return post.createdUtc > 0L && now - post.createdUtc <= seconds;
     }
 
-    private long randomSearchRank(RedditPost post) {
-        String key = canonicalPostKey(post);
-        long hash = searchRandomSeed ^ 0x9E3779B97F4A7C15L;
-        for (int i = 0; i < key.length(); i++) {
-            hash ^= key.charAt(i);
-            hash *= 0x100000001B3L;
-        }
-        hash ^= hash >>> 33;
-        hash *= 0xff51afd7ed558ccdL;
-        hash ^= hash >>> 33;
-        hash *= 0xc4ceb9fe1a85ec53L;
-        return hash ^ (hash >>> 33);
-    }
-
     private void sortLocalSearch(ArrayList<RedditPost> items) {
         if (sort.equals("random")) {
-            // Stable across incremental batches: do not reshuffle every result
-            // when the next Reddit/archive response is merged.
-            items.sort((a, b) -> {
-                long ar = randomSearchRank(a);
-                long br = randomSearchRank(b);
-                int order = Long.compareUnsigned(ar, br);
-                if (order != 0) return order;
-                return canonicalPostKey(a).compareTo(canonicalPostKey(b));
-            });
+            // Stable across incremental batches and randomized for each new search.
+            items.sort((a, b) -> SearchRandomOrder.compare(
+                    canonicalPostKey(a), canonicalPostKey(b), searchRandomSeed));
         } else if (sort.equals("new")) {
             items.sort((a, b) -> Long.compare(b.createdUtc, a.createdUtc));
         } else if (sort.equals("oldest")) {
