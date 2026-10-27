@@ -5165,6 +5165,7 @@ private void showCategoryRoot() {
             body.addView(b, sectionButtonParams());
             b.setOnClickListener(v -> {
                 searchScope = pair[0];
+                activeSearchSpec = SearchQuerySpec.parse(query);
                 prefs.edit().putString("searchScope", searchScope).apply();
                 dialog.dismiss();
                 if (searchScope.equals("subscribed") && joinedSubredditSnapshot().isEmpty()
@@ -5190,6 +5191,8 @@ private void showCategoryRoot() {
             body.addView(categorySource, sectionButtonParams());
             categorySource.setOnClickListener(v -> {
                 searchScope = "category";
+                activeSearchSpec = SearchQuerySpec.parse(query);
+                prefs.edit().putString("searchScope", searchScope).apply();
                 dialog.dismiss();
                 if (!query.isEmpty()) loadSearchInternal();
                 updateChrome();
@@ -5229,6 +5232,7 @@ private void showCategoryRoot() {
             }
             searchSubreddit = target;
             searchScope = "subreddit";
+            activeSearchSpec = SearchQuerySpec.parse(query);
             prefs.edit()
                     .putString("searchScope", searchScope)
                     .putString("searchSubreddit", searchSubreddit)
@@ -5811,7 +5815,10 @@ private void trackFullscreenVisit(int position) {
 
 private void setFullscreenChrome(boolean visible) {
         fullscreenChromeVisible = visible;
-        if (topBar != null) topBar.setVisibility(View.GONE);
+        // Make the editable search field and active scope visible even in the
+        // default fullscreen layout. The old implementation hid them outright.
+        if (topBar != null) topBar.setVisibility(
+                screen == Screen.SEARCH ? View.VISIBLE : View.GONE);
         boolean showBottom = !layoutMode.equals("fullscreen")
                 || screen == Screen.ACCOUNT
                 || visible;
@@ -6833,6 +6840,10 @@ private void installCompactNavigation() {
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setHint("Title, subreddit, creator, flair…");
+        if (screen == Screen.SEARCH && !query.isEmpty()) {
+            input.setText(searchInput.getText().toString().isEmpty()
+                    ? query : searchInput.getText().toString());
+        }
         input.setTextColor(Color.WHITE);
         input.setHintTextColor(0xFF888888);
         body.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
