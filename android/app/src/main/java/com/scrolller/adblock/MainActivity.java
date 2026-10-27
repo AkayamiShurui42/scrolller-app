@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v4.0.3: restore primary Reddit search and streaming results while retaining AI, RP and Joined filters.
+// v4.0.4: stable search scopes, native suggestions, remote-match preservation and incremental results.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -163,7 +163,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private LinearLayout controlRow;
     private LinearLayout bottomBar;
     private TextView topTitle;
-    private EditText searchInput;
+    private AutoCompleteTextView searchInput;
     private Button searchGoButton;
     private Button feedButton;
     private Button subscribeButton;
@@ -222,6 +222,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private final HashSet<String> searchLayerMediaKeys = new HashSet<>();
     private int searchGeneration = 0;
     private String query = "";
+    private SearchQuerySpec activeSearchSpec = SearchQuerySpec.parse("");
+    private final LinkedHashSet<String> recentSearches = new LinkedHashSet<>();
+    private int suggestionGeneration = 0;
     private String profileUser = "";
     private String username = "";
     private String modhash = "";
@@ -343,6 +346,15 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (!layoutMode.equals("grid")) layoutMode = "fullscreen";
         searchScope = prefs.getString("searchScope", "global");
         searchSubreddit = prefs.getString("searchSubreddit", "");
+        // A saved category has no member list after process death. Do not
+        // strand future searches inside an empty category.
+        if (searchScope.equals("category") || !(searchScope.equals("global")
+                || searchScope.equals("subscribed") || searchScope.equals("favorites")
+                || searchScope.equals("collector") || searchScope.equals("subreddit"))) {
+            searchScope = "global";
+        }
+        Set<String> previousQueries = prefs.getStringSet("recentSearchesV1", null);
+        if (previousQueries != null) recentSearches.addAll(previousQueries);
         query = "";
         prefs.edit().remove("lastSearch").apply();
         muted = prefs.getBoolean("muted", true);
@@ -540,8 +552,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         topHeader.addView(subscribeButton, subscribeParams);
         subscribeButton.setOnClickListener(v -> toggleSubredditSubscription());
 
-        searchInput = new EditText(this);
-        searchInput.setHint("Search Reddit media");
+        searchInput = new AutoCompleteTextView(this);
+        searchInput.setThreshold(1);
+        searchInput.setDropDownBackgroundDrawable(rounded(0xF51A1A1A, 12));
+        searchInput.setHint("Search media, r/subreddit, u/user");
         searchInput.setTextColor(Color.WHITE);
         searchInput.setHintTextColor(0xFF8E8E8E);
         searchInput.setTextSize(14);
@@ -557,6 +571,20 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 return true;
             }
             return false;
+        });
+        searchInput.setOnItemClickListener((parent, view, position, id) -> {
+            Object choice = parent.getItemAtPosition(position);
+            if (choice == null) return;
+            searchInput.setText(choice.toString());
+            searchInput.dismissDropDown();
+            beginSearch();
+        });
+        searchInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                scheduleSearchSuggestions(s.toString());
+            }
+            @Override public void afterTextChanged(Editable s) {}
         });
 
         searchGoButton = topPill("Search");
@@ -1133,21 +1161,70 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void beginSearch() {
-        String next = searchInput.getText().toString().trim();
-        if (next.isEmpty()) {
+        String typed = searchInput.getText().toString().trim();
+        searchInput.dismissDropDown();
+        ++suggestionGeneration;
+        if (typed.isEmpty()) {
+            // An empty query invalidates callbacks from the previous search.
+            ++searchGeneration;
+            cancelObsoleteRedditRequests();
             query = "";
-            prefs.edit().remove("lastSearch").apply();
+            activeSearchSpec = SearchQuerySpec.parse("");
+            searchLayerResults.clear();
+            searchLayerMediaKeys.clear();
             replacePosts(new ArrayList<>());
             setStatus("Enter a search term.", false);
             updateChrome();
             return;
         }
-        query = next;
-        prefs.edit().remove("lastSearch").apply();
-        // Keep the submitted term visible while incremental results load.
+
+        activeSearchSpec = SearchQuerySpec.parse(typed);
+        query = activeSearchSpec.term;
+        if (!activeSearchSpec.subreddit.isEmpty()) {
+            searchScope = "subreddit";
+            searchSubreddit = activeSearchSpec.subreddit;
+        } else if (!activeSearchSpec.author.isEmpty()) {
+            searchScope = "global";
+        }
+        prefs.edit().remove("lastSearch")
+                .putString("searchScope", searchScope)
+                .putString("searchSubreddit", searchSubreddit).apply();
+        rememberSearchTerm(typed);
         screen = Screen.SEARCH;
-        cancelObsoleteRedditRequests();
+        searchInput.clearFocus();
         loadSearchInternal();
+    }
+
+    private void rememberSearchTerm(String value) {
+        if (value == null || value.trim().isEmpty()) return;
+        recentSearches.remove(value);
+        recentSearches.add(value);
+        while (recentSearches.size() > 30) {
+            recentSearches.remove(recentSearches.iterator().next());
+        }
+        prefs.edit().putStringSet("recentSearchesV1", new HashSet<>(recentSearches)).apply();
+    }
+
+    private void scheduleSearchSuggestions(String typed) {
+        final int generation = ++suggestionGeneration;
+        if (root == null || searchInput == null) return;
+        root.postDelayed(() -> {
+            if (generation != suggestionGeneration || screen != Screen.SEARCH
+                    || !searchInput.hasFocus()) return;
+            if (!typed.equals(searchInput.getText().toString()) || typed.trim().isEmpty()) {
+                searchInput.dismissDropDown();
+                return;
+            }
+            List<String> matches = SearchQuerySpec.suggestions(
+                    typed, recentSearches, knownNsfwSubreddits(), 8);
+            if (matches.isEmpty()) {
+                searchInput.dismissDropDown();
+                return;
+            }
+            searchInput.setAdapter(new ArrayAdapter<>(this,
+                    android.R.layout.simple_dropdown_item_1line, matches));
+            searchInput.showDropDown();
+        }, 180L);
     }
 
     private void openUserProfile(String name) {
