@@ -3181,6 +3181,8 @@ private void loadQualityCollection(boolean reset) {
     private void loadSearchInternal() {
         if (tryHistoricalDirectSearch()) return;
         if (query.isEmpty()) return;
+        // A changed search scope, sort or filter must drop queued old requests.
+        cancelObsoleteRedditRequests();
         screen = Screen.SEARCH;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
@@ -3416,10 +3418,18 @@ private void loadQualityCollection(boolean reset) {
 
 
     private boolean searchLayerCandidateAccepted(RedditPost post) {
+        return searchLayerCandidateAccepted(post, false);
+    }
+
+    private boolean searchLayerCandidateAccepted(RedditPost post, boolean trustedRemoteMatch) {
         if (post == null || post.id == null || post.id.isEmpty()) return false;
         if (!postAllowedBySearchScope(post)) return false;
+        if (!activeSearchSpec.author.isEmpty()
+                && !activeSearchSpec.author.equalsIgnoreCase(post.author)) return false;
         if (!matchesMedia(post)) return false;
-        if (!matchesLocalSearch(post, query)) return false;
+        // Reddit's search engine has already evaluated the full query.
+        // Running our local fuzzy threshold again used to erase valid hits.
+        if (!trustedRemoteMatch && !matchesLocalSearch(post, query)) return false;
         if (!localWithinTopTime(post)) return false;
 
         // Saved-library and collector searches keep their own semantics.
@@ -3432,10 +3442,15 @@ private void loadQualityCollection(boolean reset) {
     }
 
     private void mergeSearchLayerResults(int generation, List<RedditPost> candidates) {
+        mergeSearchLayerResults(generation, candidates, false);
+    }
+
+    private void mergeSearchLayerResults(int generation, List<RedditPost> candidates,
+                                         boolean trustedRemoteMatch) {
         if (!searchStillValid(generation) || candidates == null || candidates.isEmpty()) return;
 
         for (RedditPost post : candidates) {
-            if (!searchLayerCandidateAccepted(post)) continue;
+            if (!searchLayerCandidateAccepted(post, trustedRemoteMatch)) continue;
 
             String key = canonicalPostKey(post);
             if (key.isEmpty() || searchLayerResults.containsKey(key)) continue;
@@ -3650,7 +3665,7 @@ private void loadQualityCollection(boolean reset) {
             if (children != null) {
                 for (int i = 0; i < children.length(); i++) {
                     RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                    if (!searchLayerCandidateAccepted(post)) continue;
+                    if (!searchLayerCandidateAccepted(post, true)) continue;
                     if (!seenPostIds.add(post.id)) continue;
                     collected.add(post);
                 }
@@ -3661,7 +3676,7 @@ private void loadQualityCollection(boolean reset) {
             if (collected.size() > before) {
                 mergeSearchLayerResults(
                         generation,
-                        new ArrayList<>(collected.subList(before, collected.size())));
+                        new ArrayList<>(collected.subList(before, collected.size())), true);
             }
 
             String next = data != null ? data.optString("after", "") : "";
@@ -3684,11 +3699,15 @@ private void loadQualityCollection(boolean reset) {
             if (groupIndex + 1 < groups.size()) {
                 final int nextGroup = groupIndex + 1;
                 if (searchScope.equals("subscribed")) {
-                    setStatus("Searching joined · r/" + groups.get(nextGroup)
-                            + " · " + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                    if (searchLayerResults.isEmpty()) {
+                        setStatus("Searching joined · r/" + groups.get(nextGroup)
+                                + " · " + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                    }
                 } else {
-                    setStatus("Searching " + searchScopeDescription() + " · "
-                            + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                    if (searchLayerResults.isEmpty()) {
+                        setStatus("Searching " + searchScopeDescription() + " · "
+                                + (nextGroup + 1) + "/" + groups.size() + "…", true);
+                    }
                 }
                 root.postDelayed(() -> fetchRemoteSearchGroup(
                         generation, groups, nextGroup, "", collected,
@@ -3706,7 +3725,15 @@ private void loadQualityCollection(boolean reset) {
                 : sort.equals("rising") ? "new" : sort;
         boolean global = group.equals("__global__");
         String base = global ? "/search.json" : "/r/" + group + "/search.json";
-        String path = base + "?q=" + enc(query)
+        String effective = activeSearchSpec.redditTerm();
+        if (effective.isEmpty()) effective = query;
+        if (!global && searchScope.equals("subreddit") && activeSearchSpec.browseSubreddit) {
+            String listing = "/r/" + enc(group) + "/new.json?limit=100&raw_json=1&show=all";
+            if (!cursor.isEmpty()) listing += "&after=" + enc(cursor);
+            if (rawFetched > 0) listing += "&count=" + rawFetched;
+            return listing;
+        }
+        String path = base + "?q=" + enc(effective)
                 + "&type=link&limit=100&raw_json=1&show=all&sort=" + enc(searchSort)
                 + "&restrict_sr=" + (global ? "off" : "on");
         if (sort.equals("top")) path += "&t=" + enc(topTime);
@@ -3720,7 +3747,7 @@ private void loadQualityCollection(boolean reset) {
         loading = false;
         searchLoading = false;
 
-        mergeSearchLayerResults(generation, collected);
+        mergeSearchLayerResults(generation, collected, true);
         finishSearchUi(searchLayerResults.size());
 
         startSearchLeadInsOnce(generation);
