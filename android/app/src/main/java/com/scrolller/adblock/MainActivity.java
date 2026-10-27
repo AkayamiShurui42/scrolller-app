@@ -222,6 +222,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private final HashSet<String> searchLayerMediaKeys = new HashSet<>();
     private int searchGeneration = 0;
     private String query = "";
+    private String searchDraft = "";
     private SearchQuerySpec activeSearchSpec = SearchQuerySpec.parse("");
     private final LinkedHashSet<String> recentSearches = new LinkedHashSet<>();
     private int suggestionGeneration = 0;
@@ -1179,6 +1180,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         // feed/search sort. Filter-only reloads must not change the user's sort.
         sort = "random";
         searchRandomSeed = SystemClock.elapsedRealtimeNanos();
+        searchDraft = typed;
         activeSearchSpec = SearchQuerySpec.parse(typed);
         query = activeSearchSpec.term;
         if (!activeSearchSpec.subreddit.isEmpty()) {
@@ -5175,16 +5177,10 @@ private void showCategoryRoot() {
                 if (searchScope.equals("subscribed") && joinedSubredditSnapshot().isEmpty()
                         && !username.isEmpty()) {
                     setStatus("Refreshing joined subreddits…", true);
-                    loadSubscriptions(() -> {
-                        if (!query.isEmpty() && screen == Screen.SEARCH
-                                && searchScope.equals("subscribed")) {
-                            loadSearchInternal();
-                        }
-                    });
-                } else if (!query.isEmpty()) {
-                    loadSearchInternal();
+                    loadSubscriptions(this::afterSearchSourceSelected);
+                } else {
+                    afterSearchSourceSelected();
                 }
-                updateChrome();
             });
         }
 
@@ -5198,8 +5194,7 @@ private void showCategoryRoot() {
                 activeSearchSpec = SearchQuerySpec.parse(query);
                 prefs.edit().putString("searchScope", searchScope).apply();
                 dialog.dismiss();
-                if (!query.isEmpty()) loadSearchInternal();
-                updateChrome();
+                afterSearchSourceSelected();
             });
         }
 
@@ -5242,12 +5237,25 @@ private void showCategoryRoot() {
                     .putString("searchSubreddit", searchSubreddit)
                     .apply();
             dialog.dismiss();
-            if (!query.isEmpty()) loadSearchInternal();
-            updateChrome();
+            afterSearchSourceSelected();
         });
 
         dialog.setContentView(scroll);
         dialog.show();
+    }
+
+    private void afterSearchSourceSelected() {
+        // Keep a partially entered bottom-sheet query instead of silently
+        // re-running the previous query when the search scope changes.
+        String submitted = searchInput.getText().toString().trim();
+        boolean pendingDraft = !searchDraft.trim().isEmpty()
+                && !searchDraft.trim().equals(submitted);
+        if (screen == Screen.SEARCH && !query.isEmpty() && !pendingDraft) {
+            loadSearchInternal();
+        } else {
+            showSearchSubmenu();
+        }
+        updateChrome();
     }
 
     private String cleanSubredditName(String value) {
@@ -6855,8 +6863,10 @@ private void installCompactNavigation() {
         input.setBackground(rounded(0xE51A1A1A, 14));
         input.setPadding(dp(12), 0, dp(12), 0);
         String previous = searchInput.getText().toString();
-        if (screen == Screen.SEARCH && !previous.isEmpty()) {
-            input.setText(previous);
+        String initial = !searchDraft.isEmpty() ? searchDraft
+                : (screen == Screen.SEARCH ? previous : "");
+        if (!initial.isEmpty()) {
+            input.setText(initial);
             input.setSelection(input.length());
         }
         body.addView(input, new LinearLayout.LayoutParams(
@@ -6865,6 +6875,7 @@ private void installCompactNavigation() {
         input.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                searchDraft = s.toString();
                 scheduleSearchSuggestions(input, s.toString());
             }
             @Override public void afterTextChanged(Editable s) {}
@@ -6934,6 +6945,7 @@ private void installCompactNavigation() {
     }
 
     private void runMenuSearch(String value, String scope, String scopeSubreddit) {
+        searchDraft = value == null ? "" : value.trim();
         openSearchScreen();
         searchScope = scope;
         searchSubreddit = scopeSubreddit == null ? "" : scopeSubreddit;
