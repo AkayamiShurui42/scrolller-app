@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v4.0.4: stable search scopes, native suggestions, remote-match preservation and incremental results.
+// v4.0.5: bottom-only search UI and Random default with stable incremental result order.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -225,6 +225,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private SearchQuerySpec activeSearchSpec = SearchQuerySpec.parse("");
     private final LinkedHashSet<String> recentSearches = new LinkedHashSet<>();
     private int suggestionGeneration = 0;
+    private long searchRandomSeed = SystemClock.elapsedRealtimeNanos();
     private String profileUser = "";
     private String username = "";
     private String modhash = "";
@@ -579,13 +580,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             searchInput.dismissDropDown();
             beginSearch();
         });
-        searchInput.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                scheduleSearchSuggestions(s.toString());
-            }
-            @Override public void afterTextChanged(Editable s) {}
-        });
+        // This is retained only for legacy backing-state references. The
+        // user-facing search field now lives exclusively in the bottom sheet.
 
         searchGoButton = topPill("Search");
         searchGoButton.setVisibility(View.GONE);
@@ -1157,7 +1153,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         searchInput.setText("");
         updateChrome();
         setStatus("Search " + searchScopeDescription() + " by title, community, or creator.", false);
-        searchInput.requestFocus();
+        showSearchSubmenu();
     }
 
     private void beginSearch() {
@@ -1178,6 +1174,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             return;
         }
 
+        // Each submitted query begins in Random, regardless of the previous
+        // feed/search sort. Filter-only reloads must not change the user's sort.
+        sort = "random";
+        searchRandomSeed = SystemClock.elapsedRealtimeNanos();
         activeSearchSpec = SearchQuerySpec.parse(typed);
         query = activeSearchSpec.term;
         if (!activeSearchSpec.subreddit.isEmpty()) {
@@ -1187,6 +1187,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             searchScope = "global";
         }
         prefs.edit().remove("lastSearch")
+                .putString("sort", sort)
                 .putString("searchScope", searchScope)
                 .putString("searchSubreddit", searchSubreddit).apply();
         rememberSearchTerm(typed);
@@ -1205,25 +1206,25 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         prefs.edit().putStringSet("recentSearchesV1", new HashSet<>(recentSearches)).apply();
     }
 
-    private void scheduleSearchSuggestions(String typed) {
+    private void scheduleSearchSuggestions(AutoCompleteTextView input, String typed) {
         final int generation = ++suggestionGeneration;
-        if (root == null || searchInput == null) return;
+        if (root == null || input == null) return;
         root.postDelayed(() -> {
-            if (generation != suggestionGeneration || screen != Screen.SEARCH
-                    || !searchInput.hasFocus()) return;
-            if (!typed.equals(searchInput.getText().toString()) || typed.trim().isEmpty()) {
-                searchInput.dismissDropDown();
+            if (generation != suggestionGeneration || !input.isAttachedToWindow()
+                    || !input.hasFocus()) return;
+            if (!typed.equals(input.getText().toString()) || typed.trim().isEmpty()) {
+                input.dismissDropDown();
                 return;
             }
             List<String> matches = SearchQuerySpec.suggestions(
                     typed, recentSearches, knownNsfwSubreddits(), 8);
             if (matches.isEmpty()) {
-                searchInput.dismissDropDown();
+                input.dismissDropDown();
                 return;
             }
-            searchInput.setAdapter(new ArrayAdapter<>(this,
+            input.setAdapter(new ArrayAdapter<>(this,
                     android.R.layout.simple_dropdown_item_1line, matches));
-            searchInput.showDropDown();
+            input.showDropDown();
         }, 180L);
     }
 
@@ -3855,9 +3856,31 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         return post.createdUtc > 0L && now - post.createdUtc <= seconds;
     }
 
+    private long randomSearchRank(RedditPost post) {
+        String key = canonicalPostKey(post);
+        long hash = searchRandomSeed ^ 0x9E3779B97F4A7C15L;
+        for (int i = 0; i < key.length(); i++) {
+            hash ^= key.charAt(i);
+            hash *= 0x100000001B3L;
+        }
+        hash ^= hash >>> 33;
+        hash *= 0xff51afd7ed558ccdL;
+        hash ^= hash >>> 33;
+        hash *= 0xc4ceb9fe1a85ec53L;
+        return hash ^ (hash >>> 33);
+    }
+
     private void sortLocalSearch(ArrayList<RedditPost> items) {
         if (sort.equals("random")) {
-            Collections.shuffle(items);
+            // Stable across incremental batches: do not reshuffle every result
+            // when the next Reddit/archive response is merged.
+            items.sort((a, b) -> {
+                long ar = randomSearchRank(a);
+                long br = randomSearchRank(b);
+                int order = Long.compareUnsigned(ar, br);
+                if (order != 0) return order;
+                return canonicalPostKey(a).compareTo(canonicalPostKey(b));
+            });
         } else if (sort.equals("new")) {
             items.sort((a, b) -> Long.compare(b.createdUtc, a.createdUtc));
         } else if (sort.equals("oldest")) {
@@ -4838,7 +4861,7 @@ private void showCategoryRoot() {
         searchInput.setText("");
         updateChrome();
         setStatus("Search " + searchCategoryName + " by title, community, or creator.", false);
-        searchInput.requestFocus();
+        showSearchSubmenu();
     }
 
     private ArrayList<String> categorySearchGroups() {
@@ -5815,11 +5838,11 @@ private void trackFullscreenVisit(int position) {
 
 private void setFullscreenChrome(boolean visible) {
         fullscreenChromeVisible = visible;
-        // Make the editable search field and active scope visible even in the
-        // default fullscreen layout. The old implementation hid them outright.
-        if (topBar != null) topBar.setVisibility(
-                screen == Screen.SEARCH ? View.VISIBLE : View.GONE);
-        boolean showBottom = !layoutMode.equals("fullscreen")
+        // Navigation uses the bottom command bar on every screen. NEVER
+        // resurrect the legacy top toolbar to display search controls.
+        if (topBar != null) topBar.setVisibility(View.GONE);
+        boolean showBottom = screen == Screen.SEARCH
+                || !layoutMode.equals("fullscreen")
                 || screen == Screen.ACCOUNT
                 || visible;
         if (bottomBar != null) bottomBar.setVisibility(showBottom ? View.VISIBLE : View.GONE);
