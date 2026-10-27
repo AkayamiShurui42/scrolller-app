@@ -1153,7 +1153,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         searchInput.setText("");
         updateChrome();
         setStatus("Search " + searchScopeDescription() + " by title, community, or creator.", false);
-        showSearchSubmenu();
+        // The bottom command sheet owns the visible search field; do not
+        // open a second dialog during runMenuSearch() or focus a hidden field.
     }
 
     private void beginSearch() {
@@ -6858,39 +6859,96 @@ private void installCompactNavigation() {
     }
 
     private void showSearchSubmenu() {
+        // The search UI is a bottom sheet accessed from Home > Search.
+        // The legacy topBar remains permanently hidden, including in Search.
         BottomSheetDialog dialog = new BottomSheetDialog(this);
-        LinearLayout body = sheetBody("Fuzzy search · " + contentSafetyLabel());
-        EditText input = new EditText(this);
+        LinearLayout body = sheetBody("Search · " + contentSafetyLabel());
+
+        AutoCompleteTextView input = new AutoCompleteTextView(this);
         input.setSingleLine(true);
-        input.setHint("Title, subreddit, creator, flair…");
-        if (screen == Screen.SEARCH && !query.isEmpty()) {
-            input.setText(searchInput.getText().toString().isEmpty()
-                    ? query : searchInput.getText().toString());
-        }
+        input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        input.setThreshold(1);
+        input.setDropDownBackgroundDrawable(rounded(0xF51A1A1A, 12));
+        input.setHint("Search media, r/subreddit, u/user…");
         input.setTextColor(Color.WHITE);
         input.setHintTextColor(0xFF888888);
-        body.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
-        Button global = sheetButton("Search everywhere");
-        body.addView(global, sectionButtonParams());
-        global.setOnClickListener(v -> {
-            String value = input.getText().toString().trim();
-            if (value.isEmpty()) return;
-            dialog.dismiss();
-            runMenuSearch(value, "global", "");
+        input.setBackground(rounded(0xE51A1A1A, 14));
+        input.setPadding(dp(12), 0, dp(12), 0);
+        String previous = searchInput.getText().toString();
+        if (screen == Screen.SEARCH && !previous.isEmpty()) {
+            input.setText(previous);
+            input.setSelection(input.length());
+        }
+        body.addView(input, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+
+        input.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                scheduleSearchSuggestions(input, s.toString());
+            }
+            @Override public void afterTextChanged(Editable s) {}
         });
-        if (context.equals("subreddit") && subreddit != null && !subreddit.isEmpty()) {
-            Button current = sheetButton("Search current r/" + subreddit);
+        input.setOnItemClickListener((parent, view, position, id) -> {
+            Object suggestion = parent.getItemAtPosition(position);
+            if (suggestion == null) return;
+            input.setText(suggestion.toString());
+            input.setSelection(input.length());
+            input.dismissDropDown();
+        });
+
+        Button scoped = sheetButton("Search " + searchScopeDescription() + " · Random");
+        body.addView(scoped, sectionButtonParams());
+        scoped.setOnClickListener(v -> {
+            String value = input.getText().toString().trim();
+            if (value.isEmpty()) { input.requestFocus(); return; }
+            dialog.dismiss();
+            runMenuSearch(value, searchScope, searchSubreddit);
+        });
+
+        if (!searchScope.equals("global")) {
+            Button everywhere = sheetButton("Search all Reddit · Random");
+            body.addView(everywhere, sectionButtonParams());
+            everywhere.setOnClickListener(v -> {
+                String value = input.getText().toString().trim();
+                if (value.isEmpty()) { input.requestFocus(); return; }
+                dialog.dismiss();
+                runMenuSearch(value, "global", "");
+            });
+        }
+        if (screen == Screen.HOME && context.equals("subreddit")
+                && subreddit != null && !subreddit.isEmpty()) {
+            Button current = sheetButton("Search current r/" + subreddit + " · Random");
             body.addView(current, sectionButtonParams());
             current.setOnClickListener(v -> {
                 String value = input.getText().toString().trim();
-                if (value.isEmpty()) return;
+                if (value.isEmpty()) { input.requestFocus(); return; }
                 dialog.dismiss();
                 runMenuSearch(value, "subreddit", subreddit);
             });
         }
-        Button openSub = sheetButton("Find / change subreddit…");
-        body.addView(openSub, sectionButtonParams());
-        openSub.setOnClickListener(v -> { dialog.dismiss(); showOpenSubredditSheet(); });
+
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId != EditorInfo.IME_ACTION_SEARCH) return false;
+            String value = input.getText().toString().trim();
+            if (value.isEmpty()) return true;
+            dialog.dismiss();
+            runMenuSearch(value, searchScope, searchSubreddit);
+            return true;
+        });
+
+        Button scope = sheetButton("Search source · " + searchScopeLabel());
+        body.addView(scope, sectionButtonParams());
+        scope.setOnClickListener(v -> { dialog.dismiss(); showScopeSheet(); });
+
+        Button filters = sheetButton("Search filters · " + contentSafetyLabel());
+        body.addView(filters, sectionButtonParams());
+        filters.setOnClickListener(v -> { dialog.dismiss(); showViewCommandSheet(); });
+
+        dialog.setOnDismissListener(v -> {
+            ++suggestionGeneration;
+            input.dismissDropDown();
+        });
         dialog.setContentView(body);
         dialog.show();
     }
