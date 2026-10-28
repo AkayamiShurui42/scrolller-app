@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v4.0.5: bottom-only search UI and Random default with stable incremental result order.
+// v4.0.6: write-through read/hide across fullscreen, stream, search, home and archives.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -497,6 +497,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
                 RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
                 if (!(lm instanceof GridLayoutManager)) return;
+                markVisibleGridPostsRead();
                 int last = ((GridLayoutManager) lm).findLastVisibleItemPosition();
                 if (screen == Screen.HOME) {
                     int ahead = Math.max(0, gridAdapter.getItemCount() - last - 1);
@@ -1733,10 +1734,19 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         return hiddenPosts.containsKey(bare) || hiddenPosts.containsKey("t3_" + bare);
     }
 
+    private Set<String> readMediaAliases(RedditPost post) {
+        LinkedHashSet<String> keys = new LinkedHashSet<>();
+        if (post == null) return keys;
+        keys.addAll(ReadMediaIdentity.keys(
+                post.sourceUrl, post.videoUrl, post.posterUrl, post.imageUrls));
+        // Legacy single-media identities remain compatible with v1/v2 data.
+        String primary = canonicalMediaKey(post);
+        if (!primary.isEmpty()) keys.add(primary);
+        return keys;
+    }
+
     private boolean hiddenContainsMedia(RedditPost post) {
-        if (post == null) return false;
-        String mediaKey = canonicalMediaKey(post);
-        return !mediaKey.isEmpty() && hiddenMediaKeys.contains(mediaKey);
+        return ReadMediaIdentity.intersects(readMediaAliases(post), hiddenMediaKeys);
     }
 
     private boolean savedContainsPostId(String id) {
@@ -1753,9 +1763,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private boolean sessionReadContainsMedia(RedditPost post) {
-        if (post == null) return false;
-        String mediaKey = canonicalMediaKey(post);
-        return !mediaKey.isEmpty() && sessionReadMediaKeys.contains(mediaKey);
+        return ReadMediaIdentity.intersects(readMediaAliases(post), sessionReadMediaKeys);
     }
 
     private boolean isSavedForUnread(RedditPost post) {
@@ -1957,15 +1965,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (!visible.isEmpty()) {
             noteFeedContentAvailable();
             hideStatus();
-            if (layoutMode.equals("fullscreen") && root != null) {
-                root.post(() -> {
-                    if (pager == null || postAdapter.getItemCount() == 0) return;
-                    int position = Math.max(0,
-                            Math.min(pager.getCurrentItem(), postAdapter.getItemCount() - 1));
-                    markVisiblePostRead(position);
-                    setFullscreenReadBaseline(position);
-                });
-            }
+            scheduleVisibleReadClassification();
         }
     }
 
@@ -3491,6 +3491,7 @@ private void loadQualityCollection(boolean reset) {
 
         hideStatus();
         updateChrome();
+        scheduleVisibleReadClassification();
     }
 
     private LinkedHashSet<String> joinedSubredditSnapshot() {
@@ -3892,6 +3893,7 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         postAdapter.setPosts(collected);
         gridAdapter.setPosts(collected);
         finishSearchUi(collected.size());
+        scheduleVisibleReadClassification();
     }
 
     private void finishSearchUi(int count) {
@@ -4909,8 +4911,7 @@ private void showCategoryRoot() {
                 && !current.saved
                 && !savedContainsPostId(current.id)
                 && !hiddenContainsPostId(current.id)) {
-            String key = barePostId(current.id);
-            if (!key.isEmpty()) sessionReadCatalog.put(key, current);
+            catalogSessionRead(current);
         }
 
         ArrayList<RedditPost> unseen = new ArrayList<>();
@@ -5364,10 +5365,18 @@ private void trackFullscreenVisit(int position) {
         if (post.saved || savedContainsPostId(post.id)) return;
 
         String key = barePostId(post.id);
-        if (!key.isEmpty()) sessionReadCatalog.put(key, post);
+        if (key.isEmpty() || hiddenContainsPostId(post.id)
+                || sessionReadCatalog.containsKey(key)) return;
 
-        String mediaKey = canonicalMediaKey(post);
-        if (!mediaKey.isEmpty()) sessionReadMediaKeys.add(mediaKey);
+        // Persist as soon as the post is actually shown. Waiting for navigation
+        // lost views on process death and allowed a repeat in another source.
+        sessionReadCatalog.put(key, post);
+        hiddenPosts.put("t3_" + key, post);
+        Set<String> aliases = readMediaAliases(post);
+        sessionReadMediaKeys.addAll(aliases);
+        hiddenMediaKeys.addAll(aliases);
+        readHideStore.hideAsync(post, canonicalMediaKey(post));
+        trimHiddenPostCache();
     }
 
     private void showReadUndoHud(RedditPost post) {
@@ -5428,10 +5437,12 @@ private void trackFullscreenVisit(int position) {
                 if (post == null || post.id == null || post.id.isEmpty()) continue;
                 if (post.saved || savedContainsPostId(post.id)) continue;
 
-                String mediaKey = canonicalMediaKey(post);
-                if (!hiddenContainsPostId(post.id)) hiddenPosts.put(post.id, post);
-                if (!mediaKey.isEmpty()) hiddenMediaKeys.add(mediaKey);
-                readHideStore.hideAsync(post, mediaKey);
+                if (!hiddenContainsPostId(post.id)) {
+                    hiddenPosts.put("t3_" + barePostId(post.id), post);
+                    hiddenMediaKeys.addAll(readMediaAliases(post));
+                    // Compatibility with any older deferred read entries.
+                    readHideStore.hideAsync(post, canonicalMediaKey(post));
+                }
             }
         }
 
@@ -6309,6 +6320,7 @@ private void setFullscreenChrome(boolean visible) {
 
     @Override
     protected void onPause() {
+        commitSessionReadCatalog();
         super.onPause();
         if (postAdapter != null) postAdapter.setActivePosition(-1);
     }
@@ -6319,6 +6331,7 @@ private void setFullscreenChrome(boolean visible) {
         if (postAdapter != null && pager != null && layoutMode.equals("fullscreen")) {
             postAdapter.setActivePosition(pager.getCurrentItem());
         }
+        scheduleVisibleReadClassification();
     }
 
     @Override
