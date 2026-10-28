@@ -59,6 +59,15 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         notifyItemRangeInserted(start, items.size());
     }
 
+    /** Keep stream and fullscreen backed by the same remaining search queue. */
+    public void consumeBefore(int currentPosition) {
+        int count = Math.min(Math.max(0, currentPosition),
+                Math.max(0, posts.size() - 1));
+        if (count == 0) return;
+        posts.subList(0, count).clear();
+        notifyItemRangeRemoved(0, count);
+    }
+
     public void removePostById(String id) {
         if (id == null || id.isEmpty()) return;
         int index = -1;
