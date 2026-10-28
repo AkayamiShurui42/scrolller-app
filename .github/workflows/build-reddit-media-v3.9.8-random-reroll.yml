@@ -1,4 +1,4 @@
-name: Build Reddit Media v4.0.6
+name: Build Reddit Media v4.0.7
 
 on:
   push:
@@ -8,10 +8,12 @@ on:
       - 'android/app/src/main/java/com/scrolller/adblock/MainActivity.java'
       - 'android/app/src/main/java/com/scrolller/adblock/SearchQuerySpec.java'
       - 'android/app/src/main/java/com/scrolller/adblock/SearchRandomOrder.java'
+      - 'android/app/src/main/java/com/scrolller/adblock/ForwardOnlySearchGesture.java'
       - 'android/app/src/main/java/com/scrolller/adblock/ReadMediaIdentity.java'
       - 'android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java'
       - 'android/app/src/test/java/com/scrolller/adblock/SearchQuerySpecTest.java'
       - 'android/app/src/test/java/com/scrolller/adblock/SearchRandomOrderTest.java'
+      - 'android/app/src/test/java/com/scrolller/adblock/ForwardOnlySearchGestureTest.java'
       - 'android/app/src/test/java/com/scrolller/adblock/ReadMediaIdentityTest.java'
       - 'android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java'
       - 'android/app/src/main/java/com/scrolller/adblock/ReadHideStore.java'
@@ -29,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v4.0.6-${{ github.ref }}
+  group: reddit-media-v4.0.7-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -41,15 +43,15 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v4.0.6 invariants
+      - name: Validate v4.0.7 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 83' android/app/build.gradle
-          grep -q 'versionName "4.0.6"' android/app/build.gradle
+          grep -q 'versionCode 84' android/app/build.gradle
+          grep -q 'versionName "4.0.7"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -211,7 +213,30 @@ jobs:
               main.index('if (searchScope.equals("favorites"))')]
           assert 'isReadHiddenForDiscovery(post)' in collector
           assert 'if (!searchScope.equals("favorites"))' in main
-          print("Bottom UI, Random search and cross-feed read/hide invariants passed")
+          # Search is a one-way queue, including fullscreen and stream/grid.
+          assert 'installForwardOnlySearchGesture(pagerRecycler)' in main
+          assert 'installForwardOnlySearchGesture(gridView)' in main
+          assert 'gesture.shouldBlock(event.getX(), event.getY(), touchSlop)' in main
+          assert 'screen == Screen.SEARCH && layoutMode.equals("fullscreen")' in main
+          assert 'position < furthestSearchPosition' in main
+          assert 'furthestSearchPosition = 0;' in main
+          assert 'if (screen == Screen.SEARCH) {' in main[main.index('private void restorePendingPosition()'):
+              main.index('private void navigateHome(')]
+          loader = main[main.index('private void loadSearchInternal()'):
+              main.index('private boolean searchStillValid(')]
+          assert 'furthestSearchPosition = 0;' in loader
+          assert 'pendingRestorePosition = -1;' in loader
+          assert 'gridView.scrollToPosition(0)' in loader
+          merge = main[main.index('private void mergeSearchLayerResults(int generation, List<RedditPost> candidates,'):
+              main.index('private LinkedHashSet<String> joinedSubredditSnapshot()')]
+          assert 'sortLocalSearch(additions);' in merge
+          assert 'postAdapter.setPosts(additions);' in merge
+          assert 'postAdapter.appendPosts(additions);' in merge
+          assert 'gridAdapter.appendPosts(additions);' in merge
+          assert 'postAdapter.setPosts(merged);' not in merge
+          assert 'pager.setCurrentItem(i, false)' not in merge
+          assert 'if (firstBatch) scheduleVisibleReadClassification();' in merge
+          print("Bottom UI, Random search, forward-only swipes, immutable queue and cross-feed read/hide passed")
           PY
 
       - name: Set up Java 17
@@ -227,12 +252,15 @@ jobs:
           javac -d /tmp/reddit-native-search-tests \
             android/app/src/main/java/com/scrolller/adblock/SearchQuerySpec.java \
             android/app/src/main/java/com/scrolller/adblock/SearchRandomOrder.java \
+            android/app/src/main/java/com/scrolller/adblock/ForwardOnlySearchGesture.java \
             android/app/src/main/java/com/scrolller/adblock/ReadMediaIdentity.java \
             android/app/src/test/java/com/scrolller/adblock/SearchQuerySpecTest.java \
             android/app/src/test/java/com/scrolller/adblock/SearchRandomOrderTest.java \
+            android/app/src/test/java/com/scrolller/adblock/ForwardOnlySearchGestureTest.java \
             android/app/src/test/java/com/scrolller/adblock/ReadMediaIdentityTest.java
           java -ea -cp /tmp/reddit-native-search-tests com.scrolller.adblock.SearchQuerySpecTest
           java -ea -cp /tmp/reddit-native-search-tests com.scrolller.adblock.SearchRandomOrderTest
+          java -ea -cp /tmp/reddit-native-search-tests com.scrolller.adblock.ForwardOnlySearchGestureTest
           java -ea -cp /tmp/reddit-native-search-tests com.scrolller.adblock.ReadMediaIdentityTest
 
       - name: Use runner Android SDK
@@ -269,15 +297,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='83'" /tmp/badging.txt
-          grep -q "versionName='4.0.6'" /tmp/badging.txt
+          grep -q "versionCode='84'" /tmp/badging.txt
+          grep -q "versionName='4.0.7'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v4.0.6-read-hide-cross-feed-debug.apk
+          cp "$APK" dist/Reddit-Media-v4.0.7-search-forward-only-debug.apk
 
-      - name: Upload v4.0.6 APK
+      - name: Upload v4.0.7 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v4.0.6-read-hide-cross-feed-debug-apk
-          path: dist/Reddit-Media-v4.0.6-read-hide-cross-feed-debug.apk
+          name: reddit-media-v4.0.7-search-forward-only-debug-apk
+          path: dist/Reddit-Media-v4.0.7-search-forward-only-debug.apk
           if-no-files-found: error
           retention-days: 30
