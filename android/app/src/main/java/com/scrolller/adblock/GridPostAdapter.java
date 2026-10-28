@@ -119,6 +119,11 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         super.onViewRecycled(holder);
     }
 
+    @Nullable
+    public RedditPost getPost(int position) {
+        return position >= 0 && position < posts.size() ? posts.get(position) : null;
+    }
+
     @Override
     public int getItemCount() {
         return posts.size();
