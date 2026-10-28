@@ -13,9 +13,7 @@ import android.os.SystemClock;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
@@ -61,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v4.0.8: forward-only search consumes visited pages, preserves initial shuffle and corrects pager position.
+// v4.0.9: anchor every fresh search at index zero while allowing normal backward/forward browsing.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -229,8 +227,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private final LinkedHashSet<String> recentSearches = new LinkedHashSet<>();
     private int suggestionGeneration = 0;
     private long searchRandomSeed = SystemClock.elapsedRealtimeNanos();
-    private int furthestSearchPosition = 0;
-    private boolean pruningSearchPrefix = false;
     private String profileUser = "";
     private String username = "";
     private String modhash = "";
@@ -413,130 +409,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         sessionView.loadUrl(REDDIT + "/");
     }
 
-    /**
-     * Search is a one-way discovery queue. Finger-up gestures advance through
-     * results, while pulling down must not rewind into already-viewed posts.
-     * This guard applies only to Search, leaving Home and the Saved libraries
-     * free to navigate in either direction.
-     */
-    private void consumeViewedSearchGridPrefix(int expectedGeneration) {
-        if (screen != Screen.SEARCH || !layoutMode.equals("grid")
-                || searchGeneration != expectedGeneration
-                || pruningSearchPrefix || gridView == null
-                || gridView.getScrollState() != RecyclerView.SCROLL_STATE_IDLE
-                || !(gridView.getLayoutManager() instanceof GridLayoutManager)) return;
-
-        GridLayoutManager manager = (GridLayoutManager) gridView.getLayoutManager();
-        int firstVisible = manager.findFirstVisibleItemPosition();
-        if (firstVisible <= 0 || firstVisible >= postAdapter.getItemCount()) return;
-        View anchor = manager.findViewByPosition(firstVisible);
-        final int topOffset = anchor == null ? 0 : anchor.getTop() - gridView.getPaddingTop();
-
-        for (int i = 0; i < firstVisible; i++) {
-            catalogSessionRead(gridAdapter.getPost(i));
-        }
-
-        // Stream scrolling, like fullscreen paging, consumes a prefix of
-        // already-viewed items. Preserve the current item's pixel position.
-        pruningSearchPrefix = true;
-        try {
-            gridAdapter.consumeBefore(firstVisible);
-            postAdapter.consumeBefore(firstVisible);
-            furthestSearchPosition = 0;
-            pager.setCurrentItem(0, false);
-            manager.scrollToPositionWithOffset(0, topOffset);
-        } finally {
-            gridView.post(() -> pruningSearchPrefix = false);
-        }
-    }
-
-    private void consumeViewedSearchPrefix(int expectedGeneration) {
-        if (screen != Screen.SEARCH || layoutMode.equals("grid")
-                || searchGeneration != expectedGeneration || pager == null
-                || pruningSearchPrefix
-                || pager.getScrollState() != ViewPager2.SCROLL_STATE_IDLE) return;
-
-        int currentIndex = pager.getCurrentItem();
-        if (currentIndex <= 0 || currentIndex >= postAdapter.getItemCount()) return;
-        RedditPost current = postAdapter.getPost(currentIndex);
-        if (current == null) return;
-
-        // Read/hide is write-through. Mark the pages we just left, then
-        // physically remove them from the pager; a backward page no longer
-        // exists even when native RecyclerView touch interception is skipped.
-        for (int i = 0; i < currentIndex; i++) {
-            catalogSessionRead(postAdapter.getPost(i));
-        }
-
-        pruningSearchPrefix = true;
-        try {
-            postAdapter.consumeBefore(currentIndex);
-            gridAdapter.consumeBefore(currentIndex);
-            furthestSearchPosition = 0;
-            pager.setCurrentItem(0, false);
-            postAdapter.setActivePosition(0);
-            setFullscreenReadBaseline(0);
-        } finally {
-            pager.post(() -> {
-                if (screen == Screen.SEARCH && searchGeneration == expectedGeneration) {
-                    if (pager.getCurrentItem() != 0
-                            && postAdapter.getItemCount() > 0
-                            && pager.getScrollState() == ViewPager2.SCROLL_STATE_IDLE) {
-                        pager.setCurrentItem(0, false);
-                    }
-                }
-                pruningSearchPrefix = false;
-            });
-        }
-    }
-
-    private void installForwardOnlySearchGesture(RecyclerView recycler) {
-        final int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
-        recycler.addOnItemTouchListener(new RecyclerView.SimpleOnItemTouchListener() {
-            private final ForwardOnlySearchGesture gesture = new ForwardOnlySearchGesture();
-
-            private boolean enabled() {
-                return screen == Screen.SEARCH && browserPurpose == BrowserPurpose.NONE
-                        && ((recycler == gridView && layoutMode.equals("grid"))
-                        || (pager != null && recycler == pager.getChildAt(0)
-                        && layoutMode.equals("fullscreen")));
-            }
-
-            @Override
-            public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent event) {
-                if (!enabled()) {
-                    gesture.reset();
-                    return false;
-                }
-                switch (event.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        gesture.down(event.getX(), event.getY());
-                        return false;
-                    case MotionEvent.ACTION_MOVE:
-                        if (gesture.shouldBlock(event.getX(), event.getY(), touchSlop)) {
-                            rv.stopScroll();
-                            return true;
-                        }
-                        return false;
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        gesture.reset();
-                        return false;
-                    default:
-                        return false;
-                }
-            }
-
-            @Override
-            public void onTouchEvent(RecyclerView rv, MotionEvent event) {
-                if (event.getActionMasked() == MotionEvent.ACTION_UP
-                        || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                    gesture.reset();
-                }
-            }
-        });
-    }
-
     private void buildNativeUi() {
         appLayer = new FrameLayout(this);
         appLayer.setBackgroundColor(Color.BLACK);
@@ -549,9 +421,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             RecyclerView pagerRecycler = (RecyclerView) pager.getChildAt(0);
             pagerRecycler.setItemAnimator(null);
             pagerRecycler.setItemViewCacheSize(2);
-            // No elastic edge movement that suggests earlier search pages.
+            // Keep edge effects quiet without blocking backward navigation.
             pagerRecycler.setOverScrollMode(View.OVER_SCROLL_NEVER);
-            installForwardOnlySearchGesture(pagerRecycler);
         }
         appLayer.addView(pager, match());
 
@@ -580,36 +451,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     }
                     fullscreenUserGesture = false;
                     pendingUserFullscreenPosition = -1;
-                    if (screen == Screen.SEARCH && layoutMode.equals("fullscreen")
-                            && !pruningSearchPrefix && pager.getCurrentItem() > 0) {
-                        // Wait until layout is idle. Removing pages while dragging
-                        // can cause ViewPager2 to snap to an obsolete position.
-                        final int generation = searchGeneration;
-                        pager.post(() -> consumeViewedSearchPrefix(generation));
-                    }
                 }
             }
 
             @Override
             public void onPageSelected(int position) {
-                if (pruningSearchPrefix && screen == Screen.SEARCH) return;
-                // Programmatic repositioning and accessibility gestures must
-                // obey the same rule as touches: discovery never rewinds.
-                if (screen == Screen.SEARCH && layoutMode.equals("fullscreen")
-                        && position < furthestSearchPosition) {
-                    final int target = furthestSearchPosition;
-                    pager.post(() -> {
-                        if (screen == Screen.SEARCH && layoutMode.equals("fullscreen")
-                                && postAdapter.getItemCount() > target
-                                && pager.getCurrentItem() < target) {
-                            pager.setCurrentItem(target, false);
-                        }
-                    });
-                    return;
-                }
-                if (screen == Screen.SEARCH && layoutMode.equals("fullscreen")) {
-                    furthestSearchPosition = Math.max(furthestSearchPosition, position);
-                }
+                // Search begins at zero, but every item in the current
+                // result set remains reachable in either direction.
                 postAdapter.setActivePosition(layoutMode.equals("fullscreen") ? position : -1);
                 boolean readEligible = layoutMode.equals("fullscreen")
                         && screen != Screen.ACCOUNT
@@ -646,20 +494,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         gridView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         gridView.setItemAnimator(null);
         gridView.setLayoutManager(new GridLayoutManager(this, 1));
-        installForwardOnlySearchGesture(gridView);
         gridAdapter = new GridPostAdapter(this, this::openFullscreenAt);
         gridView.setAdapter(gridAdapter);
         gridView.setVisibility(View.GONE);
         gridView.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override
-            public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
-                if (newState == RecyclerView.SCROLL_STATE_IDLE
-                        && screen == Screen.SEARCH && layoutMode.equals("grid")) {
-                    final int generation = searchGeneration;
-                    gridView.post(() -> consumeViewedSearchGridPrefix(generation));
-                }
-            }
-
             @Override
             public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
                 RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
@@ -1224,7 +1062,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         pendingRestorePosition = Math.max(0, state.pagerPosition);
         if (screen == Screen.SEARCH) {
             pendingRestorePosition = -1;
-            furthestSearchPosition = 0;
         }
 
         accountView.setVisibility(View.GONE);
@@ -1324,7 +1161,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         query = "";
-        furthestSearchPosition = 0;
         pendingRestorePosition = -1;
         prefs.edit().remove("lastSearch").apply();
         screen = Screen.SEARCH;
@@ -3367,18 +3203,14 @@ private void loadQualityCollection(boolean reset) {
     }
 
     private void loadSearchInternal() {
-        furthestSearchPosition = 0;
-        pruningSearchPrefix = false;
+        // New query, new starting point. Don't restore a position from an
+        // old search, and don't restrict navigation once browsing begins.
         pendingRestorePosition = -1;
         if (tryHistoricalDirectSearch()) return;
         if (query.isEmpty()) return;
         // A changed search scope, sort or filter must drop queued old requests.
         cancelObsoleteRedditRequests();
         screen = Screen.SEARCH;
-        // Reset the search timeline before touching the pager. Old saved
-        // positions and late results must never open a new shuffle midway.
-        furthestSearchPosition = 0;
-        pendingRestorePosition = -1;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
         replacePosts(new ArrayList<>());
@@ -3684,24 +3516,13 @@ private void loadQualityCollection(boolean reset) {
         boolean firstBatch = postAdapter.getItemCount() == 0;
         postAdapter.setHiddenMode(false);
         if (firstBatch) {
-            // A new result set always starts at its first shuffled post, even
-            // when ViewPager2 dispatches a delayed callback from an old feed.
-            pruningSearchPrefix = true;
-            furthestSearchPosition = 0;
+            // Shuffle once, display item zero, and RETAIN every result.
+            // Never schedule a late reset that could jump back after a swipe.
             postAdapter.setPosts(additions);
             gridAdapter.setPosts(additions);
             pager.setCurrentItem(0, false);
             if (gridView != null) gridView.scrollToPosition(0);
-            final int firstGeneration = generation;
-            pager.post(() -> {
-                if (!searchStillValid(firstGeneration)) return;
-                if (pager.getScrollState() == ViewPager2.SCROLL_STATE_IDLE) {
-                    pager.setCurrentItem(0, false);
-                    postAdapter.setActivePosition(0);
-                    setFullscreenReadBaseline(0);
-                }
-                pruningSearchPrefix = false;
-            });
+            if (layoutMode.equals("fullscreen")) postAdapter.setActivePosition(0);
         } else {
             postAdapter.appendPosts(additions);
             gridAdapter.appendPosts(additions);
@@ -5053,7 +4874,6 @@ private void showCategoryRoot() {
 
         searchScope = "category";
         query = "";
-        furthestSearchPosition = 0;
         pendingRestorePosition = -1;
         prefs.edit().remove("lastSearch").apply();
         screen = Screen.SEARCH;
