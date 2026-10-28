@@ -3553,45 +3553,52 @@ private void loadQualityCollection(boolean reset) {
                                          boolean trustedRemoteMatch) {
         if (!searchStillValid(generation) || candidates == null || candidates.isEmpty()) return;
 
+        // The initial search batch is shuffled into a new queue. Once shown,
+        // that prefix is immutable: later Reddit, archive and cache batches
+        // are randomly ordered within their own batch and APPENDED, never
+        // inserted in front of what the user has already viewed.
+        ArrayList<RedditPost> additions = new ArrayList<>();
+        Set<String> pendingIds = new HashSet<>();
+        Set<String> pendingMediaKeys = new HashSet<>();
         for (RedditPost post : candidates) {
             if (!searchLayerCandidateAccepted(post, trustedRemoteMatch)) continue;
 
             String key = canonicalPostKey(post);
-            if (key.isEmpty() || searchLayerResults.containsKey(key)) continue;
+            if (key.isEmpty() || searchLayerResults.containsKey(key)
+                    || !pendingIds.add(key)) continue;
 
             String mediaKey = canonicalMediaKey(post);
-            if (!mediaKey.isEmpty() && searchLayerMediaKeys.contains(mediaKey)) continue;
+            if (!mediaKey.isEmpty()
+                    && (searchLayerMediaKeys.contains(mediaKey)
+                    || !pendingMediaKeys.add(mediaKey))) continue;
 
+            additions.add(post);
+        }
+        if (additions.isEmpty()) return;
+
+        sortLocalSearch(additions);
+        for (RedditPost post : additions) {
+            String key = canonicalPostKey(post);
             searchLayerResults.put(key, post);
+            String mediaKey = canonicalMediaKey(post);
             if (!mediaKey.isEmpty()) searchLayerMediaKeys.add(mediaKey);
         }
 
-        if (searchLayerResults.isEmpty()) return;
-
-        ArrayList<RedditPost> merged = new ArrayList<>(searchLayerResults.values());
-        sortLocalSearch(merged);
-
-        String activeKey = "";
-        RedditPost active = currentPagerPost();
-        if (active != null) activeKey = canonicalPostKey(active);
-
+        boolean firstBatch = postAdapter.getItemCount() == 0;
         postAdapter.setHiddenMode(false);
-        postAdapter.setPosts(merged);
-        gridAdapter.setPosts(merged);
-
-        if (!activeKey.isEmpty()) {
-            for (int i = 0; i < merged.size(); i++) {
-                if (activeKey.equals(canonicalPostKey(merged.get(i)))) {
-                    pager.setCurrentItem(i, false);
-                    postAdapter.setActivePosition(i);
-                    break;
-                }
-            }
+        if (firstBatch) {
+            postAdapter.setPosts(additions);
+            gridAdapter.setPosts(additions);
+            pager.setCurrentItem(0, false);
+            if (gridView != null) gridView.scrollToPosition(0);
+        } else {
+            postAdapter.appendPosts(additions);
+            gridAdapter.appendPosts(additions);
         }
 
         hideStatus();
         updateChrome();
-        scheduleVisibleReadClassification();
+        if (firstBatch) scheduleVisibleReadClassification();
     }
 
     private LinkedHashSet<String> joinedSubredditSnapshot() {
