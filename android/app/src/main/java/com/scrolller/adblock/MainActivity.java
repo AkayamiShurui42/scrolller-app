@@ -13,7 +13,9 @@ import android.os.SystemClock;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
@@ -59,7 +61,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v4.0.6: write-through read/hide across fullscreen, stream, search, home and archives.
+// v4.0.7: forward-only search discovery, stable random queue and first-result anchoring.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -227,6 +229,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private final LinkedHashSet<String> recentSearches = new LinkedHashSet<>();
     private int suggestionGeneration = 0;
     private long searchRandomSeed = SystemClock.elapsedRealtimeNanos();
+    private int furthestSearchPosition = 0;
     private String profileUser = "";
     private String username = "";
     private String modhash = "";
@@ -409,6 +412,59 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         sessionView.loadUrl(REDDIT + "/");
     }
 
+    /**
+     * Search is a one-way discovery queue. Finger-up gestures advance through
+     * results, while pulling down must not rewind into already-viewed posts.
+     * This guard applies only to Search, leaving Home and the Saved libraries
+     * free to navigate in either direction.
+     */
+    private void installForwardOnlySearchGesture(RecyclerView recycler) {
+        final int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
+        recycler.addOnItemTouchListener(new RecyclerView.SimpleOnItemTouchListener() {
+            private final ForwardOnlySearchGesture gesture = new ForwardOnlySearchGesture();
+
+            private boolean enabled() {
+                return screen == Screen.SEARCH && browserPurpose == BrowserPurpose.NONE
+                        && ((recycler == gridView && layoutMode.equals("grid"))
+                        || (pager != null && recycler == pager.getChildAt(0)
+                        && layoutMode.equals("fullscreen")));
+            }
+
+            @Override
+            public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent event) {
+                if (!enabled()) {
+                    gesture.reset();
+                    return false;
+                }
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        gesture.down(event.getX(), event.getY());
+                        return false;
+                    case MotionEvent.ACTION_MOVE:
+                        if (gesture.shouldBlock(event.getX(), event.getY(), touchSlop)) {
+                            rv.stopScroll();
+                            return true;
+                        }
+                        return false;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        gesture.reset();
+                        return false;
+                    default:
+                        return false;
+                }
+            }
+
+            @Override
+            public void onTouchEvent(RecyclerView rv, MotionEvent event) {
+                if (event.getActionMasked() == MotionEvent.ACTION_UP
+                        || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                    gesture.reset();
+                }
+            }
+        });
+    }
+
     private void buildNativeUi() {
         appLayer = new FrameLayout(this);
         appLayer.setBackgroundColor(Color.BLACK);
@@ -421,6 +477,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             RecyclerView pagerRecycler = (RecyclerView) pager.getChildAt(0);
             pagerRecycler.setItemAnimator(null);
             pagerRecycler.setItemViewCacheSize(2);
+            installForwardOnlySearchGesture(pagerRecycler);
         }
         appLayer.addView(pager, match());
 
@@ -454,6 +511,23 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
             @Override
             public void onPageSelected(int position) {
+                // Programmatic repositioning and accessibility gestures must
+                // obey the same rule as touches: discovery never rewinds.
+                if (screen == Screen.SEARCH && layoutMode.equals("fullscreen")
+                        && position < furthestSearchPosition) {
+                    final int target = furthestSearchPosition;
+                    pager.post(() -> {
+                        if (screen == Screen.SEARCH && layoutMode.equals("fullscreen")
+                                && postAdapter.getItemCount() > target
+                                && pager.getCurrentItem() < target) {
+                            pager.setCurrentItem(target, false);
+                        }
+                    });
+                    return;
+                }
+                if (screen == Screen.SEARCH && layoutMode.equals("fullscreen")) {
+                    furthestSearchPosition = Math.max(furthestSearchPosition, position);
+                }
                 postAdapter.setActivePosition(layoutMode.equals("fullscreen") ? position : -1);
                 boolean readEligible = layoutMode.equals("fullscreen")
                         && screen != Screen.ACCOUNT
@@ -489,6 +563,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         gridView.setClipToPadding(false);
         gridView.setItemAnimator(null);
         gridView.setLayoutManager(new GridLayoutManager(this, 1));
+        installForwardOnlySearchGesture(gridView);
         gridAdapter = new GridPostAdapter(this, this::openFullscreenAt);
         gridView.setAdapter(gridAdapter);
         gridView.setVisibility(View.GONE);
@@ -1055,6 +1130,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         favoriteSort = state.favoriteSort;
         favoritesView = state.favoritesView;
         pendingRestorePosition = Math.max(0, state.pagerPosition);
+        if (screen == Screen.SEARCH) {
+            pendingRestorePosition = -1;
+            furthestSearchPosition = 0;
+        }
 
         accountView.setVisibility(View.GONE);
         updateChrome();
@@ -1079,6 +1158,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void restorePendingPosition() {
+        if (screen == Screen.SEARCH) {
+            pendingRestorePosition = -1;
+            return;
+        }
         if (pendingRestorePosition < 0 || postAdapter.getItemCount() == 0) return;
         int target = Math.min(pendingRestorePosition, postAdapter.getItemCount() - 1);
         pendingRestorePosition = -1;
@@ -1149,6 +1232,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
 
         query = "";
+        furthestSearchPosition = 0;
+        pendingRestorePosition = -1;
         prefs.edit().remove("lastSearch").apply();
         screen = Screen.SEARCH;
         context = "search";
@@ -3193,10 +3278,15 @@ private void loadQualityCollection(boolean reset) {
         // A changed search scope, sort or filter must drop queued old requests.
         cancelObsoleteRedditRequests();
         screen = Screen.SEARCH;
+        // Reset the search timeline before touching the pager. Old saved
+        // positions and late results must never open a new shuffle midway.
+        furthestSearchPosition = 0;
+        pendingRestorePosition = -1;
         accountView.setVisibility(View.GONE);
         applyLayoutVisibility();
         replacePosts(new ArrayList<>());
         pager.setCurrentItem(0, false);
+        if (gridView != null) gridView.scrollToPosition(0);
 
         final int generation = ++searchGeneration;
         searchLayerResults.clear();
@@ -4845,6 +4935,8 @@ private void showCategoryRoot() {
 
         searchScope = "category";
         query = "";
+        furthestSearchPosition = 0;
+        pendingRestorePosition = -1;
         prefs.edit().remove("lastSearch").apply();
         screen = Screen.SEARCH;
         context = "search";
