@@ -5435,6 +5435,31 @@ private void trackFullscreenVisit(int position) {
         trimHiddenPostCache();
     }
 
+    private void deleteReadHideClassification(RedditPost post, Runnable onComplete) {
+        if (post == null || post.id == null || post.id.isEmpty()) return;
+        String bare = barePostId(post.id);
+        if (!bare.isEmpty()) {
+            sessionReadCatalog.remove(bare);
+            hiddenPosts.remove(bare);
+            hiddenPosts.remove("t3_" + bare);
+        }
+        hiddenPosts.remove(post.id);
+        Set<String> keys = readMediaAliases(post);
+        sessionReadMediaKeys.removeAll(keys);
+        hiddenMediaKeys.removeAll(keys);
+
+        readHideStore.deleteAsync(post.id, () -> {
+            // Alias ownership is stored per post. Refresh from SQLite so
+            // restoring one post never un-hides another hidden crosspost.
+            hiddenMediaKeys.clear();
+            hiddenMediaKeys.addAll(readHideStore.loadMediaKeys());
+            for (RedditPost pending : sessionReadCatalog.values()) {
+                hiddenMediaKeys.addAll(readMediaAliases(pending));
+            }
+            if (onComplete != null) onComplete.run();
+        });
+    }
+
     private void showReadUndoHud(RedditPost post) {
         if (readUndoHud == null || post == null || post.id == null || post.id.isEmpty()) return;
         lastUndoReadPost = post;
@@ -5455,20 +5480,9 @@ private void trackFullscreenVisit(int position) {
             return;
         }
 
-        String bare = barePostId(post.id);
-        if (!bare.isEmpty()) sessionReadCatalog.remove(bare);
-        String mediaKey = canonicalMediaKey(post);
-        if (!mediaKey.isEmpty()) sessionReadMediaKeys.remove(mediaKey);
-
-        // If this post was already hidden from a previous committed session,
-        // undo should restore that persistent classification too.
-        if (hiddenContainsPostId(post.id) || hiddenContainsMedia(post)) {
-            hiddenPosts.remove(post.id);
-            hiddenPosts.remove(bare);
-            hiddenPosts.remove("t3_" + bare);
-            if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
-            readHideStore.deleteAsync(post.id);
-        }
+        // Classification is persisted as soon as viewed, so Undo must also
+        // remove the durable post and media aliases.
+        deleteReadHideClassification(post, null);
 
         // Let the post become eligible for a later feed/random fetch. Do not
         // force it back into the current pager immediately; that gives failed
@@ -5514,13 +5528,11 @@ private void trackFullscreenVisit(int position) {
 
     private void restoreHiddenPost(RedditPost post) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
-        hiddenPosts.remove(post.id);
-        String mediaKey = canonicalMediaKey(post);
-        if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
         feedSeenPostIds.remove(canonicalPostKey(post));
-        readHideStore.deleteAsync(post.id);
-        if (showingHiddenLibrary()) loadHiddenPostsView();
-        else reloadCurrent();
+        deleteReadHideClassification(post, () -> {
+            if (showingHiddenLibrary()) loadHiddenPostsView();
+            else reloadCurrent();
+        });
     }
 
     private void loadReadHideState() {
@@ -6100,17 +6112,7 @@ private void setFullscreenChrome(boolean visible) {
             if (targetSaved) {
                 savedPostIds.add(post.id);
                 savedPostIds.add(fullname);
-                sessionReadCatalog.remove(bare);
-                String sessionMediaKey = canonicalMediaKey(post);
-                if (!sessionMediaKey.isEmpty()) sessionReadMediaKeys.remove(sessionMediaKey);
-
-                hiddenPosts.remove(post.id);
-                hiddenPosts.remove(bare);
-                hiddenPosts.remove(fullname);
-                String mediaKey = canonicalMediaKey(post);
-                if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
-                readHideStore.deleteAsync(post.id);
-                if (!fullname.equals(post.id)) readHideStore.deleteAsync(fullname);
+                deleteReadHideClassification(post, null);
 
                 persistSavedPostIds();
                 setStatus("Saved post.", false);
