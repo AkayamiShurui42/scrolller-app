@@ -419,6 +419,37 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
      * This guard applies only to Search, leaving Home and the Saved libraries
      * free to navigate in either direction.
      */
+    private void consumeViewedSearchGridPrefix(int expectedGeneration) {
+        if (screen != Screen.SEARCH || !layoutMode.equals("grid")
+                || searchGeneration != expectedGeneration
+                || pruningSearchPrefix || gridView == null
+                || gridView.getScrollState() != RecyclerView.SCROLL_STATE_IDLE
+                || !(gridView.getLayoutManager() instanceof GridLayoutManager)) return;
+
+        GridLayoutManager manager = (GridLayoutManager) gridView.getLayoutManager();
+        int firstVisible = manager.findFirstVisibleItemPosition();
+        if (firstVisible <= 0 || firstVisible >= postAdapter.getItemCount()) return;
+        View anchor = manager.findViewByPosition(firstVisible);
+        final int topOffset = anchor == null ? 0 : anchor.getTop() - gridView.getPaddingTop();
+
+        for (int i = 0; i < firstVisible; i++) {
+            catalogSessionRead(gridAdapter.getPost(i));
+        }
+
+        // Stream scrolling, like fullscreen paging, consumes a prefix of
+        // already-viewed items. Preserve the current item's pixel position.
+        pruningSearchPrefix = true;
+        try {
+            gridAdapter.consumeBefore(firstVisible);
+            postAdapter.consumeBefore(firstVisible);
+            furthestSearchPosition = 0;
+            pager.setCurrentItem(0, false);
+            manager.scrollToPositionWithOffset(0, topOffset);
+        } finally {
+            gridView.post(() -> pruningSearchPrefix = false);
+        }
+    }
+
     private void consumeViewedSearchPrefix(int expectedGeneration) {
         if (screen != Screen.SEARCH || layoutMode.equals("grid")
                 || searchGeneration != expectedGeneration || pager == null
@@ -617,6 +648,15 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         gridView.setAdapter(gridAdapter);
         gridView.setVisibility(View.GONE);
         gridView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
+                if (newState == RecyclerView.SCROLL_STATE_IDLE
+                        && screen == Screen.SEARCH && layoutMode.equals("grid")) {
+                    final int generation = searchGeneration;
+                    gridView.post(() -> consumeViewedSearchGridPrefix(generation));
+                }
+            }
+
             @Override
             public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
                 RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
@@ -3651,8 +3691,8 @@ private void loadQualityCollection(boolean reset) {
             if (gridView != null) gridView.scrollToPosition(0);
             final int firstGeneration = generation;
             pager.post(() -> {
-                if (searchStillValid(firstGeneration)
-                        && pager.getScrollState() == ViewPager2.SCROLL_STATE_IDLE) {
+                if (!searchStillValid(firstGeneration)) return;
+                if (pager.getScrollState() == ViewPager2.SCROLL_STATE_IDLE) {
                     pager.setCurrentItem(0, false);
                     postAdapter.setActivePosition(0);
                     setFullscreenReadBaseline(0);
