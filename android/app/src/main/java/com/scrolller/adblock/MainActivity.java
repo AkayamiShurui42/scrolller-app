@@ -2622,6 +2622,7 @@ private void loadQualityCollection(boolean reset) {
         loading = true;
         replacePosts(new ArrayList<>());
         pager.setCurrentItem(0, false);
+        if (gridView != null) gridView.scrollToPosition(0);
         setStatus("Searching historical " + (kind.equals("author") ? "u/" : "r/") + target + "…", true);
 
         ArcticShiftClient.CrawlCallback callback = new ArcticShiftClient.CrawlCallback() {
@@ -2630,6 +2631,7 @@ private void loadQualityCollection(boolean reset) {
                 if (screen != Screen.SEARCH) return;
                 ArrayList<RedditPost> additions = archivePostsFromArray(items);
                 if (!additions.isEmpty()) {
+                    sortLocalSearch(additions);
                     appendUnique(additions);
                     hideStatus();
                 }
@@ -3273,6 +3275,8 @@ private void loadQualityCollection(boolean reset) {
     }
 
     private void loadSearchInternal() {
+        furthestSearchPosition = 0;
+        pendingRestorePosition = -1;
         if (tryHistoricalDirectSearch()) return;
         if (query.isEmpty()) return;
         // A changed search scope, sort or filter must drop queued old requests.
