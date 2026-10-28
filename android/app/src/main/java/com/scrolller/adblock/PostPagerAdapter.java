@@ -123,30 +123,6 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         warmAdjacentMedia(activePosition);
     }
 
-    /**
-     * Permanently discard completed search pages from the live pager. The
-     * currently visible post becomes adapter index zero, leaving no earlier
-     * position for a reverse swipe to reveal.
-     */
-    public void consumeBefore(int currentPosition) {
-        int count = Math.min(Math.max(0, currentPosition),
-                Math.max(0, posts.size() - 1));
-        if (count == 0) return;
-        for (int i = 0; i < count; i++) {
-            RedditPost old = posts.get(i);
-            if (old != null && old.id != null) loadedVisualPostIds.remove(old.id);
-        }
-        posts.subList(0, count).clear();
-        // Grid mode deliberately deactivates the fullscreen pager (-1).
-        // Pruning grid search rows must not restart hidden video players.
-        if (activePosition >= 0) {
-            activePosition = Math.max(0, activePosition - count);
-        }
-        notifyItemRangeRemoved(0, count);
-        resetVideoViewTracking(currentActivePost());
-        if (activePosition >= 0 && !pagerScrolling) warmAdjacentMedia(activePosition);
-    }
-
     public List<RedditPost> getPosts() { return posts; }
 
     public RedditPost getPost(int position) {
