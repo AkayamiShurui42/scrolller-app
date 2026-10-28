@@ -3214,6 +3214,10 @@ private void loadQualityCollection(boolean reset) {
                 if (post == null || post.id == null || post.id.isEmpty()) continue;
                 if (!matchesMedia(post) || !matchesLocalSearch(post, query)) continue;
                 if (!localWithinTopTime(post)) continue;
+                // Collector is an ordinary search scope, not the Saved or
+                // Hidden library. Viewed media must not resurface here.
+                if (isReadHiddenForDiscovery(post) || isSavedForUnread(post)
+                        || isContentBlocked(post)) continue;
                 if (ids.add(post.id)) matches.add(post);
             }
             sortLocalSearch(matches);
@@ -3441,8 +3445,9 @@ private void loadQualityCollection(boolean reset) {
         if (!trustedRemoteMatch && !matchesLocalSearch(post, query)) return false;
         if (!localWithinTopTime(post)) return false;
 
-        // Saved-library and collector searches keep their own semantics.
-        if (!searchScope.equals("favorites") && !searchScope.equals("collector")) {
+        // Only the explicit Saved library may display already viewed items.
+        // Global, Joined, Subreddit, Category and Collector all share unread.
+        if (!searchScope.equals("favorites")) {
             if (isReadHiddenForDiscovery(post)
                     || isSavedForUnread(post)
                     || isContentBlocked(post)) return false;
