@@ -549,6 +549,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             RecyclerView pagerRecycler = (RecyclerView) pager.getChildAt(0);
             pagerRecycler.setItemAnimator(null);
             pagerRecycler.setItemViewCacheSize(2);
+            // No elastic edge movement that suggests earlier search pages.
+            pagerRecycler.setOverScrollMode(View.OVER_SCROLL_NEVER);
             installForwardOnlySearchGesture(pagerRecycler);
         }
         appLayer.addView(pager, match());
@@ -641,6 +643,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         gridView = new RecyclerView(this);
         gridView.setBackgroundColor(Color.BLACK);
         gridView.setClipToPadding(false);
+        gridView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         gridView.setItemAnimator(null);
         gridView.setLayoutManager(new GridLayoutManager(this, 1));
         installForwardOnlySearchGesture(gridView);
