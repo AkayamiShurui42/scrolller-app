@@ -137,10 +137,14 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
             if (old != null && old.id != null) loadedVisualPostIds.remove(old.id);
         }
         posts.subList(0, count).clear();
-        activePosition = Math.max(0, activePosition - count);
+        // Grid mode deliberately deactivates the fullscreen pager (-1).
+        // Pruning grid search rows must not restart hidden video players.
+        if (activePosition >= 0) {
+            activePosition = Math.max(0, activePosition - count);
+        }
         notifyItemRangeRemoved(0, count);
         resetVideoViewTracking(currentActivePost());
-        warmAdjacentMedia(activePosition);
+        if (activePosition >= 0 && !pagerScrolling) warmAdjacentMedia(activePosition);
     }
 
     public List<RedditPost> getPosts() { return posts; }
