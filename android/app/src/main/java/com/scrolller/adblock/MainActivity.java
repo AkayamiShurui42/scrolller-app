@@ -61,7 +61,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v4.0.7: forward-only search discovery, stable random queue and first-result anchoring.
+// v4.0.8: forward-only search consumes visited pages, preserves initial shuffle and corrects pager position.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -230,6 +230,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private int suggestionGeneration = 0;
     private long searchRandomSeed = SystemClock.elapsedRealtimeNanos();
     private int furthestSearchPosition = 0;
+    private boolean pruningSearchPrefix = false;
     private String profileUser = "";
     private String username = "";
     private String modhash = "";
@@ -418,6 +419,46 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
      * This guard applies only to Search, leaving Home and the Saved libraries
      * free to navigate in either direction.
      */
+    private void consumeViewedSearchPrefix(int expectedGeneration) {
+        if (screen != Screen.SEARCH || layoutMode.equals("grid")
+                || searchGeneration != expectedGeneration || pager == null
+                || pruningSearchPrefix
+                || pager.getScrollState() != ViewPager2.SCROLL_STATE_IDLE) return;
+
+        int currentIndex = pager.getCurrentItem();
+        if (currentIndex <= 0 || currentIndex >= postAdapter.getItemCount()) return;
+        RedditPost current = postAdapter.getPost(currentIndex);
+        if (current == null) return;
+
+        // Read/hide is write-through. Mark the pages we just left, then
+        // physically remove them from the pager; a backward page no longer
+        // exists even when native RecyclerView touch interception is skipped.
+        for (int i = 0; i < currentIndex; i++) {
+            catalogSessionRead(postAdapter.getPost(i));
+        }
+
+        pruningSearchPrefix = true;
+        try {
+            postAdapter.consumeBefore(currentIndex);
+            gridAdapter.consumeBefore(currentIndex);
+            furthestSearchPosition = 0;
+            pager.setCurrentItem(0, false);
+            postAdapter.setActivePosition(0);
+            setFullscreenReadBaseline(0);
+        } finally {
+            pager.post(() -> {
+                if (screen == Screen.SEARCH && searchGeneration == expectedGeneration) {
+                    if (pager.getCurrentItem() != 0
+                            && postAdapter.getItemCount() > 0
+                            && pager.getScrollState() == ViewPager2.SCROLL_STATE_IDLE) {
+                        pager.setCurrentItem(0, false);
+                    }
+                }
+                pruningSearchPrefix = false;
+            });
+        }
+    }
+
     private void installForwardOnlySearchGesture(RecyclerView recycler) {
         final int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
         recycler.addOnItemTouchListener(new RecyclerView.SimpleOnItemTouchListener() {
@@ -506,11 +547,19 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     }
                     fullscreenUserGesture = false;
                     pendingUserFullscreenPosition = -1;
+                    if (screen == Screen.SEARCH && layoutMode.equals("fullscreen")
+                            && !pruningSearchPrefix && pager.getCurrentItem() > 0) {
+                        // Wait until layout is idle. Removing pages while dragging
+                        // can cause ViewPager2 to snap to an obsolete position.
+                        final int generation = searchGeneration;
+                        pager.post(() -> consumeViewedSearchPrefix(generation));
+                    }
                 }
             }
 
             @Override
             public void onPageSelected(int position) {
+                if (pruningSearchPrefix && screen == Screen.SEARCH) return;
                 // Programmatic repositioning and accessibility gestures must
                 // obey the same rule as touches: discovery never rewinds.
                 if (screen == Screen.SEARCH && layoutMode.equals("fullscreen")
@@ -3276,6 +3325,7 @@ private void loadQualityCollection(boolean reset) {
 
     private void loadSearchInternal() {
         furthestSearchPosition = 0;
+        pruningSearchPrefix = false;
         pendingRestorePosition = -1;
         if (tryHistoricalDirectSearch()) return;
         if (query.isEmpty()) return;
@@ -3591,10 +3641,24 @@ private void loadQualityCollection(boolean reset) {
         boolean firstBatch = postAdapter.getItemCount() == 0;
         postAdapter.setHiddenMode(false);
         if (firstBatch) {
+            // A new result set always starts at its first shuffled post, even
+            // when ViewPager2 dispatches a delayed callback from an old feed.
+            pruningSearchPrefix = true;
+            furthestSearchPosition = 0;
             postAdapter.setPosts(additions);
             gridAdapter.setPosts(additions);
             pager.setCurrentItem(0, false);
             if (gridView != null) gridView.scrollToPosition(0);
+            final int firstGeneration = generation;
+            pager.post(() -> {
+                if (searchStillValid(firstGeneration)
+                        && pager.getScrollState() == ViewPager2.SCROLL_STATE_IDLE) {
+                    pager.setCurrentItem(0, false);
+                    postAdapter.setActivePosition(0);
+                    setFullscreenReadBaseline(0);
+                }
+                pruningSearchPrefix = false;
+            });
         } else {
             postAdapter.appendPosts(additions);
             gridAdapter.appendPosts(additions);
