@@ -510,6 +510,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             }
         });
         appLayer.addView(gridView, match());
+        // The first stream card can become visible without an onScrolled call.
+        gridView.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                            oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (right > left && bottom > top) markVisibleGridPostsRead();
+        });
 
         accountView = new ScrollView(this);
         accountView.setFillViewport(true);
@@ -5314,7 +5319,58 @@ private void showCategoryRoot() {
         restorePendingPosition();
     }
 
-private void markVisiblePostRead(int position) {
+    private void scheduleVisibleReadClassification() {
+        if (root == null) return;
+        final Screen expected = screen;
+        final int expectedSearchGeneration = searchGeneration;
+        final int expectedFeedGeneration = feedGeneration;
+        root.post(() -> {
+            if (screen != expected || screen == Screen.ACCOUNT
+                    || screen == Screen.FAVORITES
+                    || browserPurpose != BrowserPurpose.NONE) return;
+            if (screen == Screen.SEARCH && expectedSearchGeneration != searchGeneration) return;
+            if (screen == Screen.HOME && expectedFeedGeneration != feedGeneration) return;
+            if (layoutMode.equals("grid")) {
+                markVisibleGridPostsRead();
+            } else if (pager != null && pager.isShown()
+                    && postAdapter != null && postAdapter.getItemCount() > 0) {
+                int position = Math.max(0,
+                        Math.min(pager.getCurrentItem(), postAdapter.getItemCount() - 1));
+                markVisiblePostRead(position);
+                if (lastFullscreenPostId.isEmpty()) setFullscreenReadBaseline(position);
+            }
+        });
+    }
+
+    private void markVisibleGridPostsRead() {
+        if (gridView == null || gridAdapter == null
+                || !layoutMode.equals("grid") || !gridView.isShown()
+                || browserPurpose != BrowserPurpose.NONE
+                || screen == Screen.ACCOUNT || screen == Screen.FAVORITES) return;
+
+        int viewportTop = gridView.getPaddingTop();
+        int viewportBottom = gridView.getHeight() - gridView.getPaddingBottom();
+        int viewportHeight = viewportBottom - viewportTop;
+        if (viewportHeight <= 0) return;
+
+        // Only classify an item that actually occupies at least half of the
+        // available screen or half its own height, whichever is smaller.
+        // RecyclerView may bind/prefetch offscreen rows: binding is NOT a view.
+        for (int i = 0; i < gridView.getChildCount(); i++) {
+            View child = gridView.getChildAt(i);
+            int position = gridView.getChildAdapterPosition(child);
+            if (position == RecyclerView.NO_POSITION) continue;
+            int visible = Math.min(viewportBottom, child.getBottom())
+                    - Math.max(viewportTop, child.getTop());
+            if (visible <= 0) continue;
+            int required = Math.max(1, Math.min(child.getHeight(), viewportHeight) / 2);
+            if (visible < required) continue;
+            RedditPost post = gridAdapter.getPost(position);
+            catalogSessionRead(post);
+        }
+    }
+
+    private void markVisiblePostRead(int position) {
         if (!layoutMode.equals("fullscreen")
                 || screen == Screen.ACCOUNT
                 || screen == Screen.FAVORITES) return;
