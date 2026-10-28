@@ -1,4 +1,4 @@
-name: Build Reddit Media v4.0.7
+name: Build Reddit Media v4.0.8
 
 on:
   push:
@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v4.0.7-${{ github.ref }}
+  group: reddit-media-v4.0.8-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -43,15 +43,15 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v4.0.7 invariants
+      - name: Validate v4.0.8 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 84' android/app/build.gradle
-          grep -q 'versionName "4.0.7"' android/app/build.gradle
+          grep -q 'versionCode 85' android/app/build.gradle
+          grep -q 'versionName "4.0.8"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -236,7 +236,25 @@ jobs:
           assert 'postAdapter.setPosts(merged);' not in merge
           assert 'pager.setCurrentItem(i, false)' not in merge
           assert 'if (firstBatch) scheduleVisibleReadClassification();' in merge
-          print("Bottom UI, Random search, forward-only swipes, immutable queue and cross-feed read/hide passed")
+          pager_adapter = Path("android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java").read_text()
+          # Gesture suppression is insufficient: discarded pages must no
+          # longer exist in the backing data, in either native layout.
+          assert 'private void consumeViewedSearchPrefix(int expectedGeneration)' in main
+          assert 'private void consumeViewedSearchGridPrefix(int expectedGeneration)' in main
+          assert 'postAdapter.consumeBefore(currentIndex);' in main
+          assert 'gridAdapter.consumeBefore(currentIndex);' in main
+          assert 'gridAdapter.consumeBefore(firstVisible);' in main
+          assert 'postAdapter.consumeBefore(firstVisible);' in main
+          assert 'pruningSearchPrefix = true;' in main
+          assert 'pager.getScrollState() != ViewPager2.SCROLL_STATE_IDLE' in main
+          assert 'pager.setCurrentItem(0, false);' in main
+          assert 'notifyItemRangeRemoved(0, count);' in grid
+          assert 'notifyItemRangeRemoved(0, count);' in pager_adapter
+          assert 'posts.subList(0, count).clear();' in pager_adapter
+          assert 'posts.subList(0, count).clear();' in grid
+          assert 'void consumeBefore(int currentPosition)' in grid
+          assert 'void consumeBefore(int currentPosition)' in pager_adapter
+          print("Bottom UI, Random search, consumed-prefix one-way queue and cross-feed read/hide passed")
           PY
 
       - name: Set up Java 17
@@ -297,15 +315,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='84'" /tmp/badging.txt
-          grep -q "versionName='4.0.7'" /tmp/badging.txt
+          grep -q "versionCode='85'" /tmp/badging.txt
+          grep -q "versionName='4.0.8'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v4.0.7-search-forward-only-debug.apk
+          cp "$APK" dist/Reddit-Media-v4.0.8-search-start-first-debug.apk
 
-      - name: Upload v4.0.7 APK
+      - name: Upload v4.0.8 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v4.0.7-search-forward-only-debug-apk
-          path: dist/Reddit-Media-v4.0.7-search-forward-only-debug.apk
+          name: reddit-media-v4.0.8-search-start-first-debug-apk
+          path: dist/Reddit-Media-v4.0.8-search-start-first-debug.apk
           if-no-files-found: error
           retention-days: 30
