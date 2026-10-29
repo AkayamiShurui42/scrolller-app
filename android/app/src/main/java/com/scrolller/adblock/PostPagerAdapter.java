@@ -109,6 +109,8 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         posts.clear();
         posts.addAll(items);
         loadedVisualPostIds.clear();
+        lastWarmedPosition = -1;
+        lastWarmedPreview = "";
         activePosition = 0;
         resetVideoViewTracking(currentActivePost());
         notifyDataSetChanged();
@@ -120,7 +122,8 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         int start = posts.size();
         posts.addAll(items);
         notifyItemRangeInserted(start, items.size());
-        warmAdjacentMedia(activePosition);
+        // Appending search results must not restart background media preloads.
+        // ViewPager2 already binds the adjacent page when it becomes relevant.
     }
 
     public List<RedditPost> getPosts() { return posts; }
@@ -352,13 +355,22 @@ public void setActivePosition(int position) {
                 activePlayerHolder.player = null;
             }
 
+            String currentUrl = redgifs ? redgifsPlayerUrl : defaultPlayerUrl;
+            if (activePlayerHolder == holder && activePlayer == target
+                    && holder.playerView.getPlayer() == target
+                    && url.equals(currentUrl) && target.getPlayerError() == null) {
+                // onPageSelected and SCROLL_STATE_IDLE may both activate the
+                // same page. Don't reattach a surface/decoder on every callback.
+                target.setVolume(muted ? 0f : 1f);
+                target.setPlayWhenReady(true);
+                return;
+            }
+
             activePlayer = target;
             activePlayerHolder = holder;
             holder.player = target;
             holder.playerView.setPlayer(target);
             holder.playerView.setOnClickListener(null);
-
-            String currentUrl = redgifs ? redgifsPlayerUrl : defaultPlayerUrl;
             if (redgifs) redgifsPlayerPost = post;
             else defaultPlayerPost = post;
 
@@ -391,6 +403,14 @@ public void setActivePosition(int position) {
     }
 
     private void pausePlayers() {
+        // A photo/GIF between two videos must release the old surface too.
+        // Otherwise the next video can reassign a decoder while the previous
+        // PlayerView still owns it, which is costly and device-dependent.
+        if (activePlayerHolder != null && activePlayerHolder.playerView != null) {
+            try { activePlayerHolder.playerView.setPlayer(null); }
+            catch (RuntimeException ignored) {}
+            activePlayerHolder.player = null;
+        }
         if (defaultPlayer != null) {
             try { defaultPlayer.setPlayWhenReady(false); defaultPlayer.pause(); } catch (RuntimeException ignored) {}
         }
@@ -1021,58 +1041,34 @@ public void setActivePosition(int position) {
     }
 
 
+private int lastWarmedPosition = -1;
+private String lastWarmedPreview = "";
+
 private void warmAdjacentMedia(int center) {
-        if (center < 0 || posts.isEmpty()) return;
-        int start = Math.max(0, center);
-        int end = Math.min(posts.size() - 1, center + 3);
-        Context app = context.getApplicationContext();
-        for (int i = start; i <= end; i++) {
-            RedditPost post = posts.get(i);
-            if (post == null) continue;
-            String preview = post.posterUrl;
-            if ((preview == null || preview.isEmpty())
-                    && post.imageUrls != null && !post.imageUrls.isEmpty()) {
-                preview = post.imageUrls.get(0);
-            }
-            if (preview != null && !preview.isEmpty()) {
-                Glide.with(app).load(preview).preload();
-            }
+    if (center < 0 || center + 1 >= posts.size() || pagerScrolling) return;
 
-            int distance = i - center;
-            if (distance > 0) preloadUpcomingVideo(post, distance);
-        }
+    // ViewPager2 itself keeps one adjacent page attached. The old code
+    // launched 3-4 full-resolution Glide requests plus multi-megabyte video
+    // cache downloads on nearly every swipe, sometimes twice per page.
+    // Warm only one bounded thumbnail and never initialize an extra decoder
+    // or queue a competing video download behind active playback.
+    RedditPost next = posts.get(center + 1);
+    if (next == null) return;
+    if (next.mediaKind == RedditPost.MediaKind.VIDEO
+            || next.mediaKind == RedditPost.MediaKind.GIF) return;
+    String preview = next.posterUrl;
+    if ((preview == null || preview.isEmpty())
+            && next.imageUrls != null && !next.imageUrls.isEmpty()) {
+        preview = next.imageUrls.get(0);
     }
+    if (preview == null || preview.isEmpty()
+            || (lastWarmedPosition == center && preview.equals(lastWarmedPreview))) return;
+    lastWarmedPosition = center;
+    lastWarmedPreview = preview;
+    Glide.with(context.getApplicationContext())
+            .load(preview)
+            .centerInside()
+            .preload(480, 640);
+}
 
-    private void preloadUpcomingVideo(RedditPost post, int distance) {
-        if (post == null || distance < 1 || distance > 2) return;
-        String video = post.videoUrl == null ? "" : post.videoUrl;
-        final long bytes = distance == 1
-                ? 4L * 1024L * 1024L
-                : 2L * 1024L * 1024L;
-
-        if (video.startsWith("redgifs:")) {
-            final String unresolved = video;
-            final String id = unresolved.substring("redgifs:".length());
-            final String key = id.toLowerCase();
-            if (key.isEmpty() || !warmingRedgifs.add(key)) return;
-            RedgifsResolver.resolve(id, new RedgifsResolver.Callback() {
-                @Override
-                public void onResolved(String url) {
-                    warmingRedgifs.remove(key);
-                    if (post.videoUrl.equals(unresolved)) post.videoUrl = url;
-                    HighQualityPlayerFactory.preload(context.getApplicationContext(), url, bytes);
-                }
-
-                @Override
-                public void onError(String error) {
-                    warmingRedgifs.remove(key);
-                }
-            });
-            return;
-        }
-
-        if (!video.isEmpty()) {
-            HighQualityPlayerFactory.preload(context.getApplicationContext(), video, bytes);
-        }
-    }
 }
