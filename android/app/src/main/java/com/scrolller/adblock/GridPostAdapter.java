@@ -131,6 +131,17 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         return new Holder(root);
     }
 
+    private void clearImageRequests(View view) {
+        if (view instanceof ImageView) {
+            Glide.with(context).clear((ImageView) view);
+        } else if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                clearImageRequests(group.getChildAt(i));
+            }
+        }
+    }
+
     @Override
     public void onBindViewHolder(@NonNull Holder holder, int position) {
         holder.bind(posts.get(position));
@@ -158,6 +169,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         activeHolders.remove(holder);
         if (activeVideoHolder == holder) activeVideoHolder = null;
         holder.releasePlayer();
+        clearImageRequests(holder.root);
         super.onViewRecycled(holder);
     }
 
@@ -186,6 +198,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         void bind(RedditPost post) {
             if (activeVideoHolder == this) activeVideoHolder = null;
             releasePlayer();
+            clearImageRequests(root);
             boundPost = post;
             soundEnabled = false;
             root.removeAllViews();
