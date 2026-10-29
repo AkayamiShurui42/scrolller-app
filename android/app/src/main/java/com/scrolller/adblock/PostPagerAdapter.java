@@ -460,6 +460,17 @@ public void setActivePosition(int position) {
         return new PostHolder(root);
     }
 
+    private void clearImageRequests(View view) {
+        if (view instanceof ImageView) {
+            Glide.with(context).clear((ImageView) view);
+        } else if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                clearImageRequests(group.getChildAt(i));
+            }
+        }
+    }
+
     @Override
     public void onBindViewHolder(@NonNull PostHolder holder, int position) {
         holder.bind(posts.get(position), position);
@@ -484,6 +495,7 @@ public void setActivePosition(int position) {
     public void onViewRecycled(@NonNull PostHolder holder) {
         attachedHolders.remove(holder);
         holder.releasePlayer();
+        clearImageRequests(holder.root);
         super.onViewRecycled(holder);
     }
 
@@ -506,6 +518,7 @@ public void setActivePosition(int position) {
 
         void bind(RedditPost post, int position) {
             releasePlayer();
+            clearImageRequests(root);
             boundPosition = position;
             boundPost = post;
             topMeta = null;
