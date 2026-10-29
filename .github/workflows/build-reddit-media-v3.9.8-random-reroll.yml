@@ -1,4 +1,4 @@
-name: Build Reddit Media v4.0.9
+name: Build Reddit Media v4.0.10
 
 on:
   push:
@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-media-v4.0.9-${{ github.ref }}
+  group: reddit-media-v4.0.10-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -41,15 +41,15 @@ jobs:
         with:
           ref: fix/redview-read-filter-v3.9.3
 
-      - name: Validate v4.0.9 invariants
+      - name: Validate v4.0.10 invariants
         run: |
           MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           ENGINE=android/app/src/main/java/com/scrolller/adblock/RedditSessionEngine.java
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 86' android/app/build.gradle
-          grep -q 'versionName "4.0.9"' android/app/build.gradle
+          grep -q 'versionCode 87' android/app/build.gradle
+          grep -q 'versionName "4.0.10"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -260,7 +260,31 @@ jobs:
               main.index('private void navigateHome(')]
           assert 'if (screen == Screen.SEARCH)' in restore
           assert 'pendingRestorePosition = -1;' in restore
-          print("Bidirectional search from first post, stable Random queue, bottom UI and cross-feed read/hide passed")
+          # Guard against excessive media work and decoder exhaustion.
+          grid = Path("android/app/src/main/java/com/scrolller/adblock/GridPostAdapter.java").read_text()
+          post_adapter = Path("android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java").read_text()
+          assert 'private int activePlaybackPosition = -1;' in grid
+          assert 'void setActivePlaybackPosition(int position)' in grid
+          assert 'void startVideoIfVisible()' in grid
+          assert 'private void attachVisibleVideo()' in grid
+          # The stream cannot create/prepare decoders during row binding.
+          stream_bind = grid[grid.index('private void addStreamPlayer('):
+              grid.index('private void addGifPauseButton(')]
+          assert 'player = HighQualityPlayerFactory.create(' not in stream_bind.split('void startVideoIfVisible()')[0]
+          assert 'player = HighQualityPlayerFactory.create(' in stream_bind.split('void startVideoIfVisible()')[1]
+          assert 'heightPx = Math.min(heightPx,' in grid
+          assert 'gridAdapter.setActivePlaybackPosition(centeredVideo);' in main
+          assert 'gridAdapter.setActivePlaybackPosition(-1);' in main
+          assert 'if (++pendingHiddenCacheTrim >= 24)' in main
+          assert 'if (activePlayerHolder == holder && activePlayer == target' in post_adapter
+          assert 'activePlayerHolder.playerView.setPlayer(null)' in post_adapter
+          assert 'postAdapter.appendPosts(additions);' in merge
+          assert 'pager.setCurrentItem(0, false);' in merge
+          assert 'HighQualityPlayerFactory.preload(' not in post_adapter
+          assert '.preload(480, 640);' in post_adapter
+          assert 'center + 1 >= posts.size()' in post_adapter
+          assert 'if (screen == Screen.SEARCH)' in restore
+          print("Bidirectional Random search, bounded playback/preloads, single stream decoder and read-hide checks passed")
           PY
 
       - name: Set up Java 17
@@ -318,15 +342,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='86'" /tmp/badging.txt
-          grep -q "versionName='4.0.9'" /tmp/badging.txt
+          grep -q "versionCode='87'" /tmp/badging.txt
+          grep -q "versionName='4.0.10'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v4.0.9-bidirectional-search-debug.apk
+          cp "$APK" dist/Reddit-Media-v4.0.10-performance-fix-debug.apk
 
-      - name: Upload v4.0.9 APK
+      - name: Upload v4.0.10 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v4.0.9-bidirectional-search-debug-apk
-          path: dist/Reddit-Media-v4.0.9-bidirectional-search-debug.apk
+          name: reddit-media-v4.0.10-performance-fix-debug-apk
+          path: dist/Reddit-Media-v4.0.10-performance-fix-debug.apk
           if-no-files-found: error
           retention-days: 30
