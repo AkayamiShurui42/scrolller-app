@@ -59,7 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-// v4.0.9: anchor every fresh search at index zero while allowing normal backward/forward browsing.
+// v4.0.10: stabilize paging, visible-only stream video and bounded read/hide bookkeeping.
 public class MainActivity extends AppCompatActivity implements PostPagerAdapter.Listener {
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
@@ -301,6 +301,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private final LinkedHashMap<String, RedditPost> hiddenPosts = new LinkedHashMap<>();
     private final Set<String> hiddenMediaKeys = new HashSet<>();
     private final LinkedHashMap<String, RedditPost> sessionReadCatalog = new LinkedHashMap<>();
+    private int pendingHiddenCacheTrim = 0;
     private final Set<String> sessionReadMediaKeys = new HashSet<>();
     private final Set<String> mediaReadyPostIds = new HashSet<>();
     private final Set<String> mediaFailedPostIds = new HashSet<>();
@@ -498,6 +499,16 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         gridView.setAdapter(gridAdapter);
         gridView.setVisibility(View.GONE);
         gridView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    markVisibleGridPostsRead();
+                } else {
+                    // Do not create/release multiple decoders mid-fling.
+                    gridAdapter.setActivePlaybackPosition(-1);
+                }
+            }
+
             @Override
             public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
                 RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
@@ -5391,6 +5402,8 @@ private void showCategoryRoot() {
         // Only classify an item that actually occupies at least half of the
         // available screen or half its own height, whichever is smaller.
         // RecyclerView may bind/prefetch offscreen rows: binding is NOT a view.
+        int centeredVideo = -1;
+        int videoVisiblePx = 0;
         for (int i = 0; i < gridView.getChildCount(); i++) {
             View child = gridView.getChildAt(i);
             int position = gridView.getChildAdapterPosition(child);
@@ -5402,6 +5415,15 @@ private void showCategoryRoot() {
             if (visible < required) continue;
             RedditPost post = gridAdapter.getPost(position);
             catalogSessionRead(post);
+            if (post != null && (post.mediaKind == RedditPost.MediaKind.VIDEO
+                    || post.mediaKind == RedditPost.MediaKind.GIF)
+                    && visible > videoVisiblePx) {
+                centeredVideo = position;
+                videoVisiblePx = visible;
+            }
+        }
+        if (gridView.getScrollState() == RecyclerView.SCROLL_STATE_IDLE) {
+            gridAdapter.setActivePlaybackPosition(centeredVideo);
         }
     }
 
@@ -5467,7 +5489,13 @@ private void trackFullscreenVisit(int position) {
         sessionReadMediaKeys.addAll(aliases);
         hiddenMediaKeys.addAll(aliases);
         readHideStore.hideAsync(post, canonicalMediaKey(post));
-        trimHiddenPostCache();
+        // The hidden ID map can contain many thousands of entries. Walking
+        // the entire LinkedHashMap on EVERY swipe caused repeated main-thread
+        // stalls. Keep the same 400-object cap but trim in small batches.
+        if (++pendingHiddenCacheTrim >= 24) {
+            pendingHiddenCacheTrim = 0;
+            trimHiddenPostCache();
+        }
     }
 
     private void deleteReadHideClassification(RedditPost post, Runnable onComplete) {
