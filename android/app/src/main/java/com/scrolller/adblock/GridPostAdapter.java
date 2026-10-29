@@ -39,6 +39,8 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     private final Listener listener;
     private final ArrayList<RedditPost> posts = new ArrayList<>();
     private final ArrayList<Holder> activeHolders = new ArrayList<>();
+    private Holder activeVideoHolder;
+    private int activePlaybackPosition = -1;
 
     public GridPostAdapter(Context context, Listener listener) {
         this.context = context;
@@ -47,6 +49,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     }
 
     public void setPosts(List<RedditPost> items) {
+        releaseAllPlayers();
         posts.clear();
         posts.addAll(items);
         notifyDataSetChanged();
@@ -72,10 +75,44 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     }
 
     public void releaseAllPlayers() {
+        activePlaybackPosition = -1;
+        if (activeVideoHolder != null) {
+            activeVideoHolder.releasePlayer();
+            activeVideoHolder = null;
+        }
         for (Holder holder : new ArrayList<>(activeHolders)) {
             holder.releasePlayer();
         }
     }
+
+    /**
+     * Stream rows are prebound well before they are visible. Only the most
+     * visible video is allowed to create a decoder. This keeps codec usage
+     * bounded to one even when adjacent rows contain videos or GIFs.
+     */
+    public void setActivePlaybackPosition(int position) {
+        if (position == activePlaybackPosition) {
+            if (activeVideoHolder == null) attachVisibleVideo();
+            return;
+        }
+        if (activeVideoHolder != null) {
+            activeVideoHolder.releasePlayer();
+            activeVideoHolder = null;
+        }
+        activePlaybackPosition = position;
+        attachVisibleVideo();
+    }
+
+    private void attachVisibleVideo() {
+        if (activePlaybackPosition < 0) return;
+        for (Holder holder : activeHolders) {
+            if (holder.getBindingAdapterPosition() == activePlaybackPosition) {
+                holder.startVideoIfVisible();
+                return;
+            }
+        }
+    }
+
 
     @Override
     public long getItemId(int position) {
@@ -103,11 +140,15 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     public void onViewAttachedToWindow(@NonNull Holder holder) {
         super.onViewAttachedToWindow(holder);
         if (!activeHolders.contains(holder)) activeHolders.add(holder);
+        if (holder.getBindingAdapterPosition() == activePlaybackPosition) {
+            holder.startVideoIfVisible();
+        }
     }
 
     @Override
     public void onViewDetachedFromWindow(@NonNull Holder holder) {
         activeHolders.remove(holder);
+        if (activeVideoHolder == holder) activeVideoHolder = null;
         holder.releasePlayer();
         super.onViewDetachedFromWindow(holder);
     }
@@ -115,6 +156,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     @Override
     public void onViewRecycled(@NonNull Holder holder) {
         activeHolders.remove(holder);
+        if (activeVideoHolder == holder) activeVideoHolder = null;
         holder.releasePlayer();
         super.onViewRecycled(holder);
     }
@@ -133,6 +175,8 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         final FrameLayout root;
         ExoPlayer player;
         PlayerView playerView;
+        RedditPost boundPost;
+        boolean soundEnabled;
 
         Holder(FrameLayout root) {
             super(root);
@@ -140,7 +184,10 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         }
 
         void bind(RedditPost post) {
+            if (activeVideoHolder == this) activeVideoHolder = null;
             releasePlayer();
+            boundPost = post;
+            soundEnabled = false;
             root.removeAllViews();
             root.setBackgroundColor(Color.BLACK);
 
@@ -150,6 +197,10 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                 heightPx = Math.max(1, Math.round(
                         widthPx * (post.mediaHeight / (float) post.mediaWidth)));
             }
+            // An extreme portrait aspect ratio must not create a view/image
+            // several screen heights tall and exhaust graphics memory.
+            int screenHeight = context.getResources().getDisplayMetrics().heightPixels;
+            heightPx = Math.min(heightPx, Math.max(widthPx, screenHeight * 2));
             RecyclerView.LayoutParams rp = new RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, heightPx);
             rp.setMargins(0, 0, 0, 0);
@@ -224,14 +275,8 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                     ViewGroup.LayoutParams.MATCH_PARENT));
             playerView = view;
 
-            player = HighQualityPlayerFactory.create(context, post.videoUrl);
-            player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
-            player.setMediaItem(MediaItem.fromUri(post.videoUrl));
-            player.setVolume(0f);
-            player.setPlayWhenReady(post.mediaKind == RedditPost.MediaKind.GIF);
-            player.prepare();
-            view.setPlayer(player);
-
+            // Do not call ExoPlayer.create/prepare while binding offscreen
+            // holders. The scroll viewport chooses at most one active video.
             Button sound = overlayButton("Muted");
             FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(
                     dp(72), dp(36), Gravity.TOP | Gravity.END);
@@ -239,13 +284,33 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
             sp.rightMargin = dp(8);
             root.addView(sound, sp);
             sound.setOnClickListener(v -> {
-                boolean muted = player == null || player.getVolume() == 0f;
-                if (player != null) player.setVolume(muted ? 1f : 0f);
-                sound.setText(muted ? "Sound" : "Muted");
+                soundEnabled = !soundEnabled;
+                if (player != null) player.setVolume(soundEnabled ? 1f : 0f);
+                sound.setText(soundEnabled ? "Sound" : "Muted");
             });
 
             addBadge(post);
             addFullscreenButton();
+        }
+
+        void startVideoIfVisible() {
+            if (player != null || boundPost == null || playerView == null) return;
+            if (getBindingAdapterPosition() != activePlaybackPosition) return;
+            String url = boundPost.videoUrl;
+            if (url == null || url.isEmpty() || url.startsWith("redgifs:")) return;
+            try {
+                player = HighQualityPlayerFactory.create(context, url);
+                player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
+                player.setMediaItem(MediaItem.fromUri(url));
+                player.setVolume(soundEnabled ? 1f : 0f);
+                player.setPlayWhenReady(boundPost.mediaKind == RedditPost.MediaKind.GIF);
+                playerView.setPlayer(player);
+                player.prepare();
+                activeVideoHolder = this;
+            } catch (RuntimeException ignored) {
+                // A decoder shortage must not crash the entire browsing feed.
+                releasePlayer();
+            }
         }
 
         private void addGifPauseButton(ImageView image) {
@@ -315,7 +380,6 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                 try { playerView.setPlayer(null); } catch (Exception ignored) {}
             }
             if (player != null) {
-                try { player.setVideoTextureView(null); } catch (Exception ignored) {}
                 try { player.stop(); } catch (Exception ignored) {}
                 try { player.release(); } catch (Exception ignored) {}
                 player = null;
