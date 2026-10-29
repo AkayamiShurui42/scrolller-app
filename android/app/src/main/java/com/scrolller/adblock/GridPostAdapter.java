@@ -96,7 +96,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
             return;
         }
         if (activeVideoHolder != null) {
-            activeVideoHolder.releasePlayer();
+            activeVideoHolder.releaseDecoder();
             activeVideoHolder = null;
         }
         activePlaybackPosition = position;
@@ -149,7 +149,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     public void onViewDetachedFromWindow(@NonNull Holder holder) {
         activeHolders.remove(holder);
         if (activeVideoHolder == holder) activeVideoHolder = null;
-        holder.releasePlayer();
+        holder.releaseDecoder();
         super.onViewDetachedFromWindow(holder);
     }
 
@@ -375,7 +375,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
             if (p != RecyclerView.NO_POSITION) listener.onPostClicked(p);
         }
 
-        void releasePlayer() {
+        void releaseDecoder() {
             if (playerView != null) {
                 try { playerView.setPlayer(null); } catch (Exception ignored) {}
             }
@@ -384,6 +384,10 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                 try { player.release(); } catch (Exception ignored) {}
                 player = null;
             }
+        }
+
+        void releasePlayer() {
+            releaseDecoder();
             playerView = null;
         }
     }
