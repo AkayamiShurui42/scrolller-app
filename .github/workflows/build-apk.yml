@@ -5,6 +5,8 @@ on:
     branches: [ master, main ]
   workflow_dispatch:
 
+# Push-triggered rebuild after ANR mitigation merge.
+
 jobs:
   build:
     name: Build Android APK
