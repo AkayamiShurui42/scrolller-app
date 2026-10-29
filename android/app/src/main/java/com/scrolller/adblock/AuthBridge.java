@@ -141,15 +141,15 @@ public final class AuthBridge {
                 "return true;}catch(e){return false;}}" +
                 "function clearAdWarning(){try{" +
                 "var selector='[role=dialog],[aria-modal=true],[class*=popup],[class*=modal],[class*=overlay],[class*=backdrop],section,aside,div';" +
-                "var nodes=[].slice.call(document.querySelectorAll(selector));var hits=[];" +
-                "for(var i=0;i<nodes.length;i++){var n=nodes[i],t=txt(n);if(!t||!adText(t)||hasLogin(n))continue;var r=n.getBoundingClientRect();if(r.width<20||r.height<20)continue;hits.push(n);}" +
+                "var nodes=document.querySelectorAll('[role=dialog],[aria-modal=true],[class*=popup],[class*=modal],[class*=overlay],[class*=backdrop]');var hits=[];" +
+                "for(var i=0;i<nodes.length&&i<80;i++){var n=nodes[i],t=txt(n);if(!t||!adText(t)||hasLogin(n))continue;var r=n.getBoundingClientRect();if(r.width<20||r.height<20)continue;hits.push(n);}" +
                 "hits.sort(function(a,b){var ta=txt(a),tb=txt(b);if(ta.length!==tb.length)return ta.length-tb.length;var ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return ra.width*ra.height-rb.width*rb.height;});" +
                 "if(hits.length)hideNode(hits[0]);unlock();" +
                 "}catch(e){unlock();}}" +
                 "function signedIn(){try{var raw=localStorage.getItem('SCROLLLER_LOGIN_DEV')||'';if(!raw)return false;try{return !!JSON.parse(raw).token;}catch(e){return raw.indexOf('\\\"token\\\"')>=0;}}catch(e){return false;}}" +
-                "function tick(){clearAdWarning();if(!returning&&signedIn()){returning=true;setTimeout(function(){try{if(window.NativeAuth&&NativeAuth.returnToApp)NativeAuth.returnToApp();}catch(e){}},180);}}" +
-                "var root=document.documentElement||document.body;if(root){new MutationObserver(function(){setTimeout(tick,0);}).observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','aria-hidden','aria-modal']});}" +
-                "setInterval(tick,300);tick();setTimeout(tick,80);setTimeout(tick,600);setTimeout(tick,1500);" +
+                "function tick(){if(!returning&&signedIn()){returning=true;setTimeout(function(){try{if(window.NativeAuth&&NativeAuth.returnToApp)NativeAuth.returnToApp();}catch(e){}},180);return;}clearAdWarning();}" +
+                "var pending=false;function schedule(){if(pending||returning)return;pending=true;setTimeout(function(){pending=false;tick();},500);}" +"var root=document.documentElement||document.body;if(root){new MutationObserver(schedule).observe(root,{childList:true,subtree:true});}" +
+                "setInterval(function(){if(!returning&&signedIn())tick();},1500);schedule();" +
                 "}catch(e){}})();";
         webView.evaluateJavascript(js, null);
     }
