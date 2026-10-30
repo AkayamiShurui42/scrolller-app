@@ -41,8 +41,8 @@ jobs:
           CACHE=android/app/src/main/java/com/scrolller/adblock/FeedCacheStore.java
           PULL=android/app/src/main/java/com/scrolller/adblock/PullPushClient.java
 
-          grep -q 'versionCode 77' android/app/build.gradle
-          grep -q 'versionName "3.9.30"' android/app/build.gradle
+          grep -q 'versionCode 78' android/app/build.gradle
+          grep -q 'versionName "3.9.31"' android/app/build.gradle
 
           # Context defaults.
           grep -q 'sort = "random";' "$MAIN"
@@ -141,8 +141,12 @@ jobs:
 
       - name: Install Android 16 SDK
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          set -e
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -perm -111 | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-36" "build-tools;36.0.0"
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
 
       - name: Prepare stable debug key
         run: |
@@ -163,15 +167,15 @@ jobs:
           $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "$APK"
           $ANDROID_HOME/build-tools/36.0.0/aapt2 dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.crimson.redditmedia'" /tmp/badging.txt
-          grep -q "versionCode='77'" /tmp/badging.txt
-          grep -q "versionName='3.9.30'" /tmp/badging.txt
+          grep -q "versionCode='78'" /tmp/badging.txt
+          grep -q "versionName='3.9.31'" /tmp/badging.txt
           mkdir -p dist
-          cp "$APK" dist/Reddit-Media-v3.9.30-debug.apk
+          cp "$APK" dist/Reddit-Media-v3.9.31-debug.apk
 
       - name: Upload v3.9.29 APK
         uses: actions/upload-artifact@v4
         with:
-          name: reddit-media-v3.9.30-debug-apk
-          path: dist/Reddit-Media-v3.9.30-debug.apk
+          name: reddit-media-v3.9.31-debug-apk
+          path: dist/Reddit-Media-v3.9.31-debug.apk
           if-no-files-found: error
           retention-days: 30
