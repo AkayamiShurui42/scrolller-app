@@ -17,7 +17,7 @@ import java.util.concurrent.Executors;
 
 final class ReadHideStore extends SQLiteOpenHelper {
     private static final String DB_NAME = "read_hide.db";
-    private static final int DB_VERSION = 2;
+    private static final int DB_VERSION = 3;
     private static final String TABLE = "hidden_posts";
 
     private final ExecutorService io = Executors.newSingleThreadExecutor(r -> {
@@ -52,6 +52,16 @@ final class ReadHideStore extends SQLiteOpenHelper {
             db.execSQL("CREATE INDEX IF NOT EXISTS hidden_posts_media_key ON "
                     + TABLE + "(media_key)");
         }
+    }
+
+    @Override
+    public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        // Never destroy saved hidden-post data when installing an older APK.
+        // Schema v3 retains the v2 columns this store uses.
+        if (oldVersion > newVersion) {
+            return;
+        }
+        super.onDowngrade(db, oldVersion, newVersion);
     }
 
     void hideAsync(RedditPost post) {
