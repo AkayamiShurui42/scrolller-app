@@ -1,0 +1,81 @@
+name: Build Reddit Media Swipe (RedView integration)
+
+on:
+  push:
+    branches:
+      - feat/redview-reddit-media-swipe
+    paths:
+      - 'android/app/src/**'
+      - 'android/app/build.gradle'
+      - '.github/workflows/build-redview-swipe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: redview-swipe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK 36
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Validate RedView swipe integration
+        run: |
+          set -eu
+          MAIN=android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          PAGER=android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          POST=android/app/src/main/java/com/scrolller/adblock/RedditPost.java
+          grep -q 'onMediaEnded(RedditPost post)' "$MAIN"
+          grep -q 'setAutoAdvanceOnVideoEnd(autoAdvanceVideos)' "$MAIN"
+          grep -q 'autoAdvanceVideosV1' "$MAIN"
+          grep -q 'Player.STATE_ENDED' "$PAGER"
+          grep -q 'onMediaEnded(RedditPost post)' "$PAGER"
+          grep -q 'REPEAT_MODE_OFF' "$PAGER"
+          grep -q 'if (media == null) return null;' "$POST"
+
+      - name: Restore existing debug signing key
+        run: |
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          gradle wrapper --gradle-version 8.11.1
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Verify signed APK
+        run: |
+          set -eu
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.crimson.redditmedia'"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: redview-reddit-media-swipe-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
