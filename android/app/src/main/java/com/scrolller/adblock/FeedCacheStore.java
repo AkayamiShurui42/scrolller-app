@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import org.json.JSONArray;
 
@@ -60,16 +61,20 @@ final class FeedCacheStore extends SQLiteOpenHelper {
         if (posts == null || posts.isEmpty()) return;
         ArrayList<RedditPost> copy = new ArrayList<>(posts);
         io.execute(() -> {
-            SQLiteDatabase db = getWritableDatabase();
-            db.beginTransaction();
             try {
-                long now = System.currentTimeMillis();
-                for (RedditPost post : copy) upsert(db, post, now);
-                db.delete(TABLE, "cached_at<?",
-                        new String[]{Long.toString(now - MAX_AGE_MS)});
-                db.setTransactionSuccessful();
-            } finally {
-                db.endTransaction();
+                SQLiteDatabase db = getWritableDatabase();
+                db.beginTransaction();
+                try {
+                    long now = System.currentTimeMillis();
+                    for (RedditPost post : copy) upsert(db, post, now);
+                    db.delete(TABLE, "cached_at<?",
+                            new String[]{Long.toString(now - MAX_AGE_MS)});
+                    db.setTransactionSuccessful();
+                } finally {
+                    db.endTransaction();
+                }
+            } catch (RuntimeException e) {
+                Log.e("FeedCacheStore", "Unable to update feed cache", e);
             }
         });
     }
