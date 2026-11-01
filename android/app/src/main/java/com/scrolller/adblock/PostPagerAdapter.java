@@ -198,9 +198,14 @@ public void setActivePosition(int position) {
                 break;
             }
         }
+        if (pagerScrolling) {
+            // Never start or reconfigure a decoder while ViewPager2 is settling.
+            pausePlayers();
+            return;
+        }
         if (target != null) target.activateIfNeeded();
         else pausePlayers();
-        if (!pagerScrolling) warmAdjacentMedia(position);
+        warmAdjacentMedia(position);
     }
 
     public void setPagerScrolling(boolean scrolling) {
@@ -211,6 +216,7 @@ public void setActivePosition(int position) {
             // A drag means the user is in the act of leaving this page. Do not
             // count image callbacks or video playback time while the pager moves.
             HighQualityPlayerFactory.cancelPendingPreloads();
+            pausePlayers();
             return;
         }
         PostHolder target = null;
@@ -336,7 +342,7 @@ public void setActivePosition(int position) {
 
     private void attachPooledPlayer(PostHolder holder, RedditPost post, int position, String url) {
         if (holder == null || holder.playerView == null || post == null || url == null || url.isEmpty()) return;
-        if (position != activePosition || holder.boundPosition != position || holder.boundPost != post) return;
+        if (pagerScrolling || position != activePosition || holder.boundPosition != position || holder.boundPost != post) return;
 
         boolean redgifs = isRedgifsUrl(url);
         try {
@@ -396,6 +402,10 @@ public void setActivePosition(int position) {
         }
         if (redgifsPlayer != null) {
             try { redgifsPlayer.setPlayWhenReady(false); redgifsPlayer.pause(); } catch (RuntimeException ignored) {}
+        }
+        if (activePlayerHolder != null && activePlayerHolder.playerView != null) {
+            try { activePlayerHolder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
+            activePlayerHolder.player = null;
         }
         activePlayer = null;
         activePlayerHolder = null;
@@ -649,7 +659,7 @@ public void setActivePosition(int position) {
             playerView = nextView;
             nextView.setOnClickListener(null);
 
-            if (position == activePosition) {
+            if (position == activePosition && !pagerScrolling) {
                 attachPooledPlayer(this, post, position, url);
             }
 
@@ -670,7 +680,7 @@ public void setActivePosition(int position) {
         }
 
         void activateIfNeeded() {
-            if (boundPost == null || boundPosition != activePosition) return;
+            if (pagerScrolling || boundPost == null || boundPosition != activePosition) return;
             if (!isStreamedVideo(boundPost)) {
                 if (!pagerScrolling && boundPost.id != null
                         && loadedVisualPostIds.contains(boundPost.id)) {
