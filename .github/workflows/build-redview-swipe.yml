@@ -30,11 +30,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Use preinstalled runner Android SDK
+        run: |
+          set -eu
+          SDK=/usr/local/lib/android/sdk
+          test -d "$SDK"
+          SDKMANAGER="$(find "$SDK/cmdline-tools" -type f -name sdkmanager -perm -111 2>/dev/null | head -n 1)"
+          test -n "$SDKMANAGER"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          "$SDKMANAGER" --version
 
       - name: Install SDK 36
         run: |
+          set -eu
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
