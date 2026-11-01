@@ -105,6 +105,18 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     }
 
     public void setPosts(List<RedditPost> items) {
+        // Search batches often retain the same posts. Avoid tearing down decoders
+        // and rebinding the entire pager when the content is unchanged.
+        if (posts.size() == items.size()) {
+            boolean unchanged = true;
+            for (int i = 0; i < items.size(); i++) {
+                if (posts.get(i) != items.get(i)) {
+                    unchanged = false;
+                    break;
+                }
+            }
+            if (unchanged) return;
+        }
         releaseAll();
         posts.clear();
         posts.addAll(items);
