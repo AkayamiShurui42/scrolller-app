@@ -105,26 +105,49 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     }
 
     public void setPosts(List<RedditPost> items) {
-        // Search batches often retain the same posts. Avoid tearing down decoders
-        // and rebinding the entire pager when the content is unchanged.
-        if (posts.size() == items.size()) {
-            boolean unchanged = true;
-            for (int i = 0; i < items.size(); i++) {
+        if (items == null) items = java.util.Collections.emptyList();
+        // Incremental search batches often only extend the existing result list.
+        // Reuse all attached views and players when the existing prefix is stable.
+        int oldSize = posts.size();
+        int newSize = items.size();
+        boolean samePrefix = newSize >= oldSize;
+        if (samePrefix) {
+            for (int i = 0; i < oldSize; i++) {
                 if (posts.get(i) != items.get(i)) {
-                    unchanged = false;
+                    samePrefix = false;
                     break;
                 }
             }
-            if (unchanged) return;
+        }
+        if (samePrefix) {
+            if (newSize == oldSize) return;
+            posts.addAll(items.subList(oldSize, newSize));
+            notifyItemRangeInserted(oldSize, newSize - oldSize);
+            if (!pagerScrolling) warmAdjacentMedia(activePosition);
+            return;
+        }
+
+        // A reordered or replaced search must retain the active post when possible.
+        RedditPost previous = currentActivePost();
+        int restoredPosition = -1;
+        if (previous != null && previous.id != null) {
+            for (int i = 0; i < newSize; i++) {
+                RedditPost candidate = items.get(i);
+                if (candidate != null && previous.id.equals(candidate.id)) {
+                    restoredPosition = i;
+                    break;
+                }
+            }
         }
         releaseAll();
         posts.clear();
         posts.addAll(items);
         loadedVisualPostIds.clear();
-        activePosition = 0;
+        activePosition = newSize == 0 ? -1
+                : restoredPosition >= 0 ? restoredPosition : 0;
         resetVideoViewTracking(currentActivePost());
         notifyDataSetChanged();
-        warmAdjacentMedia(activePosition);
+        if (!pagerScrolling) warmAdjacentMedia(activePosition);
     }
 
     public void appendPosts(List<RedditPost> items) {
