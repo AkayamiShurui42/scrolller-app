@@ -3222,6 +3222,7 @@ private void loadQualityCollection(boolean reset) {
     private void mergeSearchLayerResults(int generation, List<RedditPost> candidates) {
         if (!searchStillValid(generation) || candidates == null || candidates.isEmpty()) return;
 
+        int acceptedCount = 0;
         for (RedditPost post : candidates) {
             if (!searchLayerCandidateAccepted(post)) continue;
 
@@ -3232,10 +3233,12 @@ private void loadQualityCollection(boolean reset) {
             if (!mediaKey.isEmpty() && searchLayerMediaKeys.contains(mediaKey)) continue;
 
             searchLayerResults.put(key, post);
+            acceptedCount++;
             if (!mediaKey.isEmpty()) searchLayerMediaKeys.add(mediaKey);
         }
 
-        if (searchLayerResults.isEmpty()) return;
+        // Duplicate/filtered batches must not rebuild every view and video player.
+        if (acceptedCount == 0) return;
 
         ArrayList<RedditPost> merged = new ArrayList<>(searchLayerResults.values());
         sortLocalSearch(merged);
