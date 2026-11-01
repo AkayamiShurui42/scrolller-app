@@ -223,6 +223,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private int filterReloadToken = 0;
     private boolean initialized;
     private boolean muted = true;
+    private boolean autoAdvanceVideos = false;
     private boolean fullscreenChromeVisible = true;
     private boolean blockLgbtTopics = false;
     private boolean blockGoreContent = false;
@@ -331,6 +332,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         query = "";
         prefs.edit().remove("lastSearch").apply();
         muted = prefs.getBoolean("muted", true);
+        autoAdvanceVideos = prefs.getBoolean("autoAdvanceVideosV1", false);
         // The old one-switch LGBTQ blocker is superseded by the explicit
         // multi-select people/content taxonomy below.
         blockLgbtTopics = false;
@@ -390,6 +392,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
         postAdapter = new PostPagerAdapter(this, this);
         postAdapter.setMuted(muted);
+        postAdapter.setAutoAdvanceOnVideoEnd(autoAdvanceVideos);
         HighQualityPlayerFactory.warmup(getApplicationContext());
         pager.setAdapter(postAdapter);
         pager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
@@ -5733,6 +5736,26 @@ private void setFullscreenChrome(boolean visible) {
     }
 
     @Override
+    public void onMediaEnded(RedditPost post) {
+        if (!autoAdvanceVideos || post == null || pager == null || postAdapter == null
+                || !"fullscreen".equals(layoutMode)) return;
+        // Check the active page again on the UI queue; a user swipe or new
+        // search may already have replaced the post while Media3 was ending.
+        pager.post(() -> {
+            if (!autoAdvanceVideos || !"fullscreen".equals(layoutMode)) return;
+            int position = pager.getCurrentItem();
+            if (postAdapter.getPost(position) != post) return;
+            if (position + 1 < postAdapter.getItemCount()) {
+                pager.setCurrentItem(position + 1, true);
+            } else {
+                // Never strand the user on a stopped final video.
+                postAdapter.replayActiveVideo();
+                if (screen == Screen.HOME) maybeRefillFeedReservoir();
+            }
+        });
+    }
+
+    @Override
     public void onMediaFailed(RedditPost post) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
         mediaReadyPostIds.remove(post.id);
@@ -7364,8 +7387,11 @@ private void installCompactNavigation() {
         Button quality = sheetButton("Minimum resolution · "
                 + (minimumVideoHeight <= 0 ? "Any" : minimumVideoHeight + "p+"));
         Button length = sheetButton("Length · " + videoLengthLabel());
+        Button advance = sheetButton("Auto-advance after video · "
+                + (autoAdvanceVideos ? "On" : "Off"));
         body.addView(quality, sectionButtonParams());
         body.addView(length, sectionButtonParams());
+        body.addView(advance, sectionButtonParams());
         quality.setOnClickListener(v -> {
             minimumVideoHeight = minimumVideoHeight <= 0 ? 720
                     : minimumVideoHeight == 720 ? 1080 : 0;
@@ -7379,6 +7405,12 @@ private void installCompactNavigation() {
             persistDiscoveryFilterPrefs();
             length.setText("Length · " + videoLengthLabel());
             scheduleFilterReload();
+        });
+        advance.setOnClickListener(v -> {
+            autoAdvanceVideos = !autoAdvanceVideos;
+            postAdapter.setAutoAdvanceOnVideoEnd(autoAdvanceVideos);
+            prefs.edit().putBoolean("autoAdvanceVideosV1", autoAdvanceVideos).apply();
+            advance.setText("Auto-advance after video · " + (autoAdvanceVideos ? "On" : "Off"));
         });
         dialog.setContentView(body);
         dialog.show();
