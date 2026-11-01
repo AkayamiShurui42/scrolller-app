@@ -37,7 +37,11 @@ final class HighQualityPlayerFactory {
 
     static void warmup(Context context) {
         Context app = context.getApplicationContext();
-        PRELOAD_EXECUTOR.execute(() -> cache(app));
+        PRELOAD_EXECUTOR.execute(() -> {
+            try { cache(app); } catch (RuntimeException ignored) {
+                // Cache warmup is optional; a cache failure must not kill the app.
+            }
+        });
     }
 
     static ExoPlayer create(Context context, String mediaUrl) {
@@ -111,6 +115,8 @@ final class HighQualityPlayerFactory {
                 for (String key : new java.util.HashSet<>(current.getKeys())) {
                     try { current.removeResource(key); } catch (Exception ignored) {}
                 }
+            } catch (RuntimeException ignored) {
+                // Cache cleanup failure must not crash the preload executor.
             } finally {
                 if (done != null) {
                     new android.os.Handler(android.os.Looper.getMainLooper()).post(done);
