@@ -51,6 +51,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
         void onToggleChrome();
         void onMediaReady(RedditPost post);
         void onMediaFailed(RedditPost post);
+        void onMediaEnded(RedditPost post);
         void onRestoreHidden(RedditPost post);
         void onSave(RedditPost post);
         void onComments(RedditPost post);
@@ -92,6 +93,7 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     };
     private int activePosition = 0;
     private boolean muted = true;
+    private boolean autoAdvanceOnVideoEnd = false;
     private boolean chromeVisible = false;
     private boolean hiddenMode = false;
     private boolean pagerScrolling = false;
@@ -145,6 +147,23 @@ public final class PostPagerAdapter extends RecyclerView.Adapter<PostPagerAdapte
     }
 
     public boolean isMuted() { return muted; }
+
+    /** When enabled, video playback ends advance the pager instead of looping. */
+    public void setAutoAdvanceOnVideoEnd(boolean enabled) {
+        autoAdvanceOnVideoEnd = enabled;
+        int repeat = enabled ? ExoPlayer.REPEAT_MODE_OFF : ExoPlayer.REPEAT_MODE_ONE;
+        if (defaultPlayer != null) defaultPlayer.setRepeatMode(repeat);
+        if (redgifsPlayer != null) redgifsPlayer.setRepeatMode(repeat);
+    }
+
+    /** Replays the last loaded clip when there is not yet a next post. */
+    public void replayActiveVideo() {
+        if (activePlayer == null || currentActivePost() == null || pagerScrolling) return;
+        try {
+            activePlayer.seekTo(0L);
+            activePlayer.play();
+        } catch (RuntimeException ignored) {}
+    }
 
     public void setHiddenMode(boolean hiddenMode) {
         if (this.hiddenMode == hiddenMode) return;
@@ -315,7 +334,8 @@ public void setActivePosition(int position) {
         ExoPlayer player = redgifs ? redgifsPlayer : defaultPlayer;
         if (player != null) return player;
         player = HighQualityPlayerFactory.create(context, url);
-        player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
+        player.setRepeatMode(autoAdvanceOnVideoEnd
+                ? ExoPlayer.REPEAT_MODE_OFF : ExoPlayer.REPEAT_MODE_ONE);
         final boolean familyRedgifs = redgifs;
         final ExoPlayer observedPlayer = player;
         player.addListener(new Player.Listener() {
@@ -327,6 +347,14 @@ public void setActivePosition(int position) {
             @Override
             public void onIsPlayingChanged(boolean isPlaying) {
                 sampleVideoViewProgress(true);
+            }
+
+            @Override
+            public void onPlaybackStateChanged(int playbackState) {
+                if (playbackState != Player.STATE_ENDED || !autoAdvanceOnVideoEnd
+                        || pagerScrolling || observedPlayer != activePlayer) return;
+                RedditPost post = familyRedgifs ? redgifsPlayerPost : defaultPlayerPost;
+                if (isPostActive(post)) listener.onMediaEnded(post);
             }
 
             @Override
