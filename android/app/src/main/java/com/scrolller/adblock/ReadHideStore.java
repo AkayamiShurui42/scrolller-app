@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.util.Log;
 
 import org.json.JSONArray;
 
@@ -54,6 +55,42 @@ final class ReadHideStore extends SQLiteOpenHelper {
         }
     }
 
+    private static final String[] REQUIRED_COLUMNS = {
+            "id", "title", "author", "subreddit", "permalink", "source_url",
+            "score", "comments", "created_utc", "saved", "nsfw",
+            "media_kind", "image_urls", "video_url", "poster_url",
+            "media_width", "media_height", "media_key", "hidden_at"
+    };
+
+    private void ensureSchema(SQLiteDatabase db) {
+        java.util.HashSet<String> existing = new java.util.HashSet<>();
+        try (Cursor cursor = db.rawQuery("PRAGMA table_info(" + TABLE + ")", null)) {
+            while (cursor.moveToNext()) existing.add(cursor.getString(1));
+        }
+        if (!existing.contains("id")) {
+            throw new android.database.sqlite.SQLiteException("Hidden-post database lacks primary key; preserving data");
+        }
+        for (String column : REQUIRED_COLUMNS) {
+            if (existing.contains(column)) continue;
+            String type = column.equals("hidden_at") ? "INTEGER NOT NULL DEFAULT 0"
+                    : column.equals("score") || column.equals("comments")
+                    || column.equals("created_utc") || column.equals("saved")
+                    || column.equals("nsfw") || column.equals("media_width")
+                    || column.equals("media_height") ? "INTEGER" : "TEXT";
+            db.execSQL("ALTER TABLE " + TABLE + " ADD COLUMN " + column + " " + type);
+        }
+        db.execSQL("CREATE INDEX IF NOT EXISTS hidden_posts_time ON " + TABLE + "(hidden_at DESC)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS hidden_posts_subreddit ON " + TABLE + "(subreddit COLLATE NOCASE)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS hidden_posts_kind ON " + TABLE + "(media_kind)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS hidden_posts_media_key ON " + TABLE + "(media_key)");
+    }
+
+    @Override
+    public void onOpen(SQLiteDatabase db) {
+        super.onOpen(db);
+        if (!db.isReadOnly()) ensureSchema(db);
+    }
+
     @Override
     public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         // Never destroy saved hidden-post data when installing an older APK.
@@ -71,12 +108,18 @@ final class ReadHideStore extends SQLiteOpenHelper {
     void hideAsync(RedditPost post, String mediaKey) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
         final String key = mediaKey == null ? "" : mediaKey;
-        io.execute(() -> upsertPost(post, key));
+        io.execute(() -> {
+            try { upsertPost(post, key); }
+            catch (RuntimeException e) { Log.e("ReadHideStore", "Unable to save hidden post", e); }
+        });
     }
 
     void deleteAsync(String id) {
         if (id == null || id.isEmpty()) return;
-        io.execute(() -> getWritableDatabase().delete(TABLE, "id=?", new String[]{id}));
+        io.execute(() -> {
+            try { getWritableDatabase().delete(TABLE, "id=?", new String[]{id}); }
+            catch (RuntimeException e) { Log.e("ReadHideStore", "Unable to delete hidden post", e); }
+        });
     }
 
     void importIds(Set<String> ids) {
