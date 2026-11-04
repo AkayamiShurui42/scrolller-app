@@ -760,6 +760,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                             closeBrowser();
                             loadSubscriptions(null);
                             if (screen == Screen.FAVORITES) loadFavoritesInternal();
+                            else if (screen == Screen.HOME && context.equals("home")) loadFeed(true);
                         }
                     });
                 }
@@ -3970,7 +3971,14 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         }
         if (username.isEmpty()) {
             updateChrome();
-            openBrowser(REDDIT + "/login/?dest=" + enc(REDDIT + "/"), BrowserPurpose.LOGIN);
+            refreshIdentity(() -> {
+                if (screen != Screen.FAVORITES || !favoritesView.equals("saved")) return;
+                if (username.isEmpty()) {
+                    openBrowser(REDDIT + "/login/?dest=" + enc(REDDIT + "/"), BrowserPurpose.LOGIN);
+                } else {
+                    loadFavoritesInternal();
+                }
+            });
             return;
         }
         if (favoritesLoading) return;
@@ -6381,11 +6389,30 @@ private void installCompactNavigation() {
         });
         viewed.setOnClickListener(v -> {
             dialog.dismiss();
-            loadFavorites();
+            cancelObsoleteRedditRequests();
+            commitSessionReadCatalog();
+            if (screen != Screen.FAVORITES) pushCurrentState();
             favoritesView = "hidden";
+            screen = Screen.FAVORITES;
+            profileUser = "";
+            updateChrome();
             loadHiddenPostsView();
         });
-        subscribed.setOnClickListener(v -> { dialog.dismiss(); showSubscribedCollectionsSheet(); });
+        subscribed.setOnClickListener(v -> {
+            dialog.dismiss();
+            if (username.isEmpty()) {
+                refreshIdentity(() -> {
+                    if (username.isEmpty()) {
+                        openBrowser(REDDIT + "/login/?dest=" + enc(REDDIT + "/"),
+                                BrowserPurpose.LOGIN);
+                    } else {
+                        loadSubscriptions(this::showSubscribedCollectionsSheet);
+                    }
+                });
+            } else {
+                loadSubscriptions(this::showSubscribedCollectionsSheet);
+            }
+        });
         presets.setOnClickListener(v -> { dialog.dismiss(); showPresetSubmenu(); });
         dialog.setContentView(body);
         dialog.show();
