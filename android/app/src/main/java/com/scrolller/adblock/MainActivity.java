@@ -818,8 +818,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (initialized || browserPurpose != BrowserPurpose.NONE) return;
         initialized = true;
         setStatus("Loading Reddit media…", true);
-        refreshIdentity(() -> loadSubscriptions(null));
-        loadFeed(true);
+        // Resolve the authenticated identity before choosing the Home transport.
+        // Otherwise startup races /api/me against an anonymous personalized feed.
+        refreshIdentity(() -> loadSubscriptions(() -> {
+            if (screen == Screen.HOME) loadFeed(true);
+        }));
     }
 
     private boolean handleWebNavigation(String url) {
