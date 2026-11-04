@@ -168,6 +168,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private Runnable feedRecoveryRunnable;
     private int feedRecoveryToken = 0;
     private boolean feedRecoveryRetried = false;
+    private long lastManualFeedRecoveryAtMs = 0L;
     private ScrollView accountView;
     private Button browserBack;
     private Button compactMenuButton;
@@ -5453,15 +5454,13 @@ private void trackFullscreenVisit(int position) {
                 recoveryHud.bringToFront();
             }
 
-            if (!feedRecoveryRetried) {
-                feedRecoveryRetried = true;
-                recoverStalledFeed(false);
-            } else {
-                commitSessionReadCatalog();
-                feedRecoveryRetried = false;
-                loading = false;
-                history.clear();
-                navigateHome("home", false);
+            // Never enter an automatic reset loop: a rejected/empty feed can
+            // otherwise repeatedly clear the pager and queue more requests.
+            feedRecoveryRetried = true;
+            loading = false;
+            feedLoading = false;
+            if (recoveryHud != null) {
+                recoveryHud.setText("Feed stalled · Tap to retry");
             }
         };
         root.postDelayed(feedRecoveryRunnable, 24000L);
@@ -5469,6 +5468,12 @@ private void trackFullscreenVisit(int position) {
 
     private void recoverStalledFeed(boolean userRequested) {
         if (screen != Screen.HOME) return;
+        if (userRequested) {
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (now - lastManualFeedRecoveryAtMs < 3000L) return;
+            lastManualFeedRecoveryAtMs = now;
+            if (feedLoading) return;
+        }
         clearReadUndoHud();
 
         if (context.equals("subreddit") && subreddit != null && !subreddit.isEmpty()) {
@@ -5505,7 +5510,6 @@ private void trackFullscreenVisit(int position) {
 
         cancelObsoleteRedditRequests();
         loadFeed(true);
-        armFeedRecoveryWatchdog();
     }
 
     private void noteFeedContentAvailable() {
