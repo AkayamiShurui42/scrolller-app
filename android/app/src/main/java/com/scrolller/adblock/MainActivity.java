@@ -405,8 +405,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     postAdapter.setPagerScrolling(true);
                 } else if (state == ViewPager2.SCROLL_STATE_IDLE) {
                     postAdapter.setPagerScrolling(false);
-                    // ViewPager2 has finished layout; only now mutate Home feed items.
-                    if (screen == Screen.HOME) drainFeedReservoir();
                     if (fullscreenUserGesture && pendingUserFullscreenPosition >= 0
                             && layoutMode.equals("fullscreen")
                             && screen != Screen.ACCOUNT
@@ -2699,10 +2697,6 @@ private void loadQualityCollection(boolean reset) {
 
     private void drainFeedReservoir() {
         if (screen != Screen.HOME) return;
-        // onPageSelected fires during settling. RecyclerView adapter mutations
-        // there can race with layout and crash the Home pager.
-        if (layoutMode.equals("fullscreen") && pager != null
-                && pager.getScrollState() != ViewPager2.SCROLL_STATE_IDLE) return;
 
         int current = layoutMode.equals("fullscreen") && pager != null
                 ? Math.max(0, pager.getCurrentItem()) : 0;
