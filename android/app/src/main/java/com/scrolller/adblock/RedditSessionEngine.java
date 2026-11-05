@@ -13,6 +13,8 @@ import java.util.ArrayDeque;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class RedditSessionEngine {
     public interface Callback {
@@ -28,22 +30,35 @@ public final class RedditSessionEngine {
         public final int status;
         public final String body;
         public final String error;
+        private final JSONObject parsedObject;
 
         ApiResult(boolean ok, int status, String body, String error) {
+            this(ok, status, body, error, null);
+        }
+
+        ApiResult(boolean ok, int status, String body, String error, JSONObject parsedObject) {
             this.ok = ok;
             this.status = status;
             this.body = body == null ? "" : body;
             this.error = error == null ? "" : error;
+            this.parsedObject = parsedObject;
         }
 
         public JSONObject jsonObject() {
+            if (parsedObject != null) return parsedObject;
             try { return new JSONObject(body); } catch (Exception ignored) { return null; }
         }
     }
 
-    private static final long MIN_REQUEST_GAP_MS = 900L;
+    private static final long MIN_REQUEST_GAP_MS = 650L;
     private static final long REQUEST_TIMEOUT_MS = 20000L;
     private static final int MAX_429_RETRIES = 2;
+    private static final ExecutorService RESPONSE_PARSER =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "reddit-response-parser");
+                t.setDaemon(true);
+                return t;
+            });
 
     private static final class PendingRequest {
         final String path;
@@ -94,6 +109,22 @@ public final class RedditSessionEngine {
         request(path, "POST", body, callback);
     }
 
+    public void cancelPendingRequests() {
+        handler.post(() -> {
+            requestQueue.clear();
+            inFlight.clear();
+            abortAllJavascriptRequests();
+
+            // The WebView fetches themselves are aborted above, so releasing the
+            // Java-side lane cannot accumulate orphan requests across tab/sort
+            // changes.
+            requestInFlight = false;
+            nextRequestAtMs = 0L;
+            drainScheduled = false;
+        });
+    }
+
+
     public void request(String path, String method, String body, Callback callback) {
         handler.post(() -> {
             requestQueue.addLast(new PendingRequest(path, method, body, callback));
@@ -130,6 +161,7 @@ public final class RedditSessionEngine {
         handler.postDelayed(() -> {
             PendingRequest timedOut = inFlight.remove(token);
             if (timedOut == null) return;
+            abortJavascriptRequest(token);
             finishRequest(timedOut, new ApiResult(false, 0, "", "Request timed out"));
         }, REQUEST_TIMEOUT_MS);
 
@@ -137,17 +169,48 @@ public final class RedditSessionEngine {
         String methodJs = JSONObject.quote(pending.method);
         String bodyJs = JSONObject.quote(pending.body);
         String tokenJs = JSONObject.quote(token);
-        String js = "(async()=>{try{" +
+        String js = "(async()=>{" +
+                "window.__redditMediaControllers=window.__redditMediaControllers||{};" +
+                "const token=" + tokenJs + ";" +
+                "const controller=new AbortController();" +
+                "window.__redditMediaControllers[token]=controller;" +
+                "try{" +
                 "const m=" + methodJs + ";" +
-                "const opts={method:m,credentials:'include',headers:{'Accept':'application/json'}};" +
+                "const opts={method:m,credentials:'include',signal:controller.signal,headers:{'Accept':'application/json'}};" +
                 "if(m==='POST'){opts.headers['Content-Type']='application/x-www-form-urlencoded; charset=UTF-8';opts.body=" + bodyJs + ";}" +
                 "const r=await fetch(" + pathJs + ",opts);" +
                 "const t=await r.text();" +
                 "const ra=r.headers.get('retry-after')||'';" +
                 "const rr=r.headers.get('x-ratelimit-reset')||'';" +
-                "NativeRedditBridge.deliver(" + tokenJs + ",JSON.stringify({ok:r.ok,status:r.status,body:t,error:'',retryAfter:ra,rateReset:rr}));" +
-                "}catch(e){NativeRedditBridge.deliver(" + tokenJs + ",JSON.stringify({ok:false,status:0,body:'',error:String(e),retryAfter:'',rateReset:''}));}})();";
+                "NativeRedditBridge.deliver(token,JSON.stringify({ok:r.ok,status:r.status,body:t,error:'',retryAfter:ra,rateReset:rr}));" +
+                "}catch(e){" +
+                "if(!(e&&e.name==='AbortError')){" +
+                "NativeRedditBridge.deliver(token,JSON.stringify({ok:false,status:0,body:'',error:String(e),retryAfter:'',rateReset:''}));" +
+                "}" +
+                "}finally{" +
+                "try{delete window.__redditMediaControllers[token];}catch(_e){}" +
+                "}})();";
         webView.evaluateJavascript(js, null);
+    }
+
+    private void abortJavascriptRequest(String token) {
+        if (token == null || token.isEmpty()) return;
+        String tokenJs = JSONObject.quote(token);
+        String js = "(function(){try{" +
+                "const m=window.__redditMediaControllers||{};" +
+                "const c=m[" + tokenJs + "];" +
+                "if(c){c.abort();delete m[" + tokenJs + "];}" +
+                "}catch(e){}})();";
+        try { webView.evaluateJavascript(js, null); } catch (RuntimeException ignored) {}
+    }
+
+    private void abortAllJavascriptRequests() {
+        String js = "(function(){try{" +
+                "const m=window.__redditMediaControllers||{};" +
+                "Object.keys(m).forEach(k=>{try{m[k].abort();}catch(e){}});" +
+                "window.__redditMediaControllers={};" +
+                "}catch(e){}})();";
+        try { webView.evaluateJavascript(js, null); } catch (RuntimeException ignored) {}
     }
 
     private void handleResult(
@@ -211,23 +274,35 @@ public final class RedditSessionEngine {
     private final class Bridge {
         @JavascriptInterface
         public void deliver(String token, String payload) {
-            handler.post(() -> {
+            RESPONSE_PARSER.execute(() -> {
+                ApiResult apiResult;
+                String retryAfter = "";
+                String rateReset = "";
                 try {
                     JSONObject result = new JSONObject(payload);
-                    handleResult(
-                            token,
-                            new ApiResult(
-                                    result.optBoolean("ok", false),
-                                    result.optInt("status", 0),
-                                    result.optString("body", ""),
-                                    result.optString("error", "")
-                            ),
-                            result.optString("retryAfter", ""),
-                            result.optString("rateReset", "")
+                    String responseBody = result.optString("body", "");
+                    JSONObject parsedBody = null;
+                    if (!responseBody.isEmpty()) {
+                        try { parsedBody = new JSONObject(responseBody); } catch (Exception ignored) {}
+                    }
+                    apiResult = new ApiResult(
+                            result.optBoolean("ok", false),
+                            result.optInt("status", 0),
+                            responseBody,
+                            result.optString("error", ""),
+                            parsedBody
                     );
+                    retryAfter = result.optString("retryAfter", "");
+                    rateReset = result.optString("rateReset", "");
                 } catch (Exception e) {
-                    handleResult(token, new ApiResult(false, 0, "", e.getMessage()), "", "");
+                    apiResult = new ApiResult(false, 0, "", e.getMessage());
                 }
+
+                ApiResult finalResult = apiResult;
+                String finalRetryAfter = retryAfter;
+                String finalRateReset = rateReset;
+                handler.post(() -> handleResult(
+                        token, finalResult, finalRetryAfter, finalRateReset));
             });
         }
     }
