@@ -1,0 +1,2 @@
+Open PR to main to trigger the one-shot RedView native build workflow.
+Retrigger after fixing SortMode.OLDEST exhaustiveness in MainActivity and RedViewActivity.
