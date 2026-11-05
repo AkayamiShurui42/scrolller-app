@@ -3,7 +3,7 @@ name: Hotfix Reddit Media v3.9.3
 on:
   push:
     branches:
-      - fix/redview-read-filter-v3.9.3
+      - reddit-native-redview-v3.8
     paths:
       - 'android/tools/hotfix_v3_9_3.py'
       - '.github/workflows/hotfix-reddit-media-v3.9.3.yml'
@@ -23,9 +23,9 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          ref: fix/redview-read-filter-v3.9.3
+          ref: reddit-native-redview-v3.8
 
-      - name: Apply v3.9.3 read/filter hotfix
+      - name: Apply v3.9.3 chrome cleanup
         working-directory: android
         run: python3 tools/hotfix_v3_9_3.py
 
@@ -33,13 +33,11 @@ jobs:
         run: |
           grep -q 'versionCode 50' android/app/build.gradle
           grep -q 'versionName "3.9.3"' android/app/build.gradle
-          grep -q 'if (classified == 0) return true;' android/app/src/main/java/com/scrolller/adblock/ContentTaxonomy.java
-          grep -q 'VIDEO_VIEW_THRESHOLD_MS = 1000L' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q 'void onRenderedFirstFrame()' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q 'activePlayer.isPlaying()' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
-          grep -q 'boolean actuallyViewed = previous != null' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          ! grep -q 'dwellMs >= 350L' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
-          ! grep -q 'mediaFailedPostIds.contains(previous.id)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'private void detachLegacyChrome()' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'removeView(topBar)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'removeView(bottomBar)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'ap.topMargin = systemTopPx + dp(8)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'ap.bottomMargin = systemBottomPx + dp(8)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -82,14 +80,12 @@ jobs:
           rm -rf android/app/build android/.gradle android/gradle android/gradlew android/gradlew.bat
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add android/app/src/main/java/com/scrolller/adblock/ContentTaxonomy.java \
-                  android/app/src/main/java/com/scrolller/adblock/MainActivity.java \
-                  android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java \
+          git add android/app/src/main/java/com/scrolller/adblock/MainActivity.java \
                   android/app/build.gradle
-          git diff --cached --quiet || git commit -m 'fix: make read hiding media-driven and category filtering tolerant [v393]'
+          git diff --cached --quiet || git commit -m 'fix: remove legacy chrome beneath compact UI [v393-migrated]'
           git reset --hard HEAD
-          git pull --rebase origin fix/redview-read-filter-v3.9.3
-          git push origin HEAD:fix/redview-read-filter-v3.9.3
+          git pull --rebase origin reddit-native-redview-v3.8
+          git push origin HEAD:reddit-native-redview-v3.8
 
       - name: Upload v3.9.3 APK
         uses: actions/upload-artifact@v4
