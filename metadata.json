@@ -1,0 +1,6 @@
+{
+  "name": "Scrolller",
+  "description": "Smooth modern client for Scrolller with full-screen media feed, video auto-playback, density selector, categories, search, and bookmarks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
