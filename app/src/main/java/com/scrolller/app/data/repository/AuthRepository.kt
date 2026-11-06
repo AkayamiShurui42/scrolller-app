@@ -51,9 +51,12 @@ class AuthRepository(
 
     suspend fun loginWithCredentials(usernameOrEmail: String, password: String): UserAccount {
         val account = apiClient.loginWithCredentials(usernameOrEmail, password)
-        saveAccount(account)
+        val verified = apiClient.fetchLoggedInUser(account.token, account.cookieHeader)
+            ?: throw IllegalStateException("Scrolller did not confirm the account. Sign-in was not completed.")
+        require(verified.username.isNotBlank()) { "Scrolller returned an invalid account profile." }
+        saveAccount(verified)
         refreshUserCollections()
-        return account
+        return verified
     }
 
     suspend fun completeWebSignIn(extractedToken: String?, fallbackUsername: String?): UserAccount {
@@ -72,17 +75,11 @@ class AuthRepository(
             apiClient.fetchLoggedInUser(tokenOverride = cleanToken, cookieOverride = combinedCookies)
         }.getOrNull()
 
-        val resolvedAccount = remoteUser ?: UserAccount(
-            id = fallbackUsername?.ifBlank { "scrolller_user" } ?: "scrolller_user",
-            username = fallbackUsername?.ifBlank { "Scrolller Member" } ?: "Scrolller Member",
-            token = cleanToken,
-            cookieHeader = combinedCookies,
-            isWebSession = true
-        )
-
-        saveAccount(resolvedAccount)
+        val verified = remoteUser?.takeIf { it.username.isNotBlank() }
+            ?: throw IllegalStateException("Scrolller could not verify the web session. Please sign in again.")
+        saveAccount(verified)
         refreshUserCollections()
-        return resolvedAccount
+        return verified
     }
 
     suspend fun verifyAndRefreshSession(): UserAccount? {
