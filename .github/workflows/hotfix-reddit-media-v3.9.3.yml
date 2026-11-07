@@ -25,14 +25,13 @@ jobs:
         with:
           ref: reddit-native-redview-v3.8
 
-      - name: Apply v3.9.3 chrome cleanup
-        working-directory: android
-        run: python3 tools/hotfix_v3_9_3.py
-
-      - name: Validate v3.9.3 invariants
+      - name: Validate existing v3.9.3 invariants
         run: |
           grep -q 'versionCode 50' android/app/build.gradle
           grep -q 'versionName "3.9.3"' android/app/build.gradle
+          grep -q 'showReadUndoHud(previous)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
+          grep -q 'VIDEO_VIEW_THRESHOLD_MS' android/app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java
+          grep -q 'if (classified == 0) return true;' android/app/src/main/java/com/scrolller/adblock/ContentTaxonomy.java
           grep -q 'private void detachLegacyChrome()' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'removeView(topBar)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
           grep -q 'removeView(bottomBar)' android/app/src/main/java/com/scrolller/adblock/MainActivity.java
@@ -75,6 +74,7 @@ jobs:
           cp "$APK" dist/Reddit-Media-v3.9.3-debug.apk
 
       - name: Commit ordinary v3.9.3 source
+        if: ${{ false }}
         run: |
           rm -f android/app/scrolller-debug.keystore
           rm -rf android/app/build android/.gradle android/gradle android/gradlew android/gradlew.bat
