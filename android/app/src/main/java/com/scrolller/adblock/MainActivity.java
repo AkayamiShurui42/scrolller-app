@@ -7,6 +7,7 @@ import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.util.Log;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
@@ -19,6 +20,8 @@ import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -64,6 +67,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     // v3.9.24: joined-subreddit search uses per-community requests and strict membership filtering.
 
     private static final String REDDIT = "https://www.reddit.com";
+    private static final String WEB_LOG_TAG = "RedviewWeb";
     private static final String[][] CURATED_CATEGORY_ROWS = {
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
             {"NSFW", "Adult", "GIF & video", "nsfw_gif,NSFW_GIF"},
@@ -751,9 +755,32 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             }
 
             @Override
+            public void onReceivedError(WebView view, WebResourceRequest request,
+                                        WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (view != sessionView || request == null || !request.isForMainFrame()) return;
+                Log.e(WEB_LOG_TAG, "Session page load error host="
+                        + (request.getUrl() == null ? "unknown" : request.getUrl().getHost())
+                        + " code=" + (error == null ? "unknown" : error.getErrorCode())
+                        + " description=" + (error == null ? "" : error.getDescription()));
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request,
+                                            WebResourceResponse response) {
+                super.onReceivedHttpError(view, request, response);
+                if (view != sessionView || request == null || !request.isForMainFrame()) return;
+                Log.e(WEB_LOG_TAG, "Session HTTP error host="
+                        + (request.getUrl() == null ? "unknown" : request.getUrl().getHost())
+                        + " status=" + (response == null ? "unknown" : response.getStatusCode()));
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 if (view != sessionView || engine == null) return;
+                Log.i(WEB_LOG_TAG, "Session page finished host="
+                        + (Uri.parse(url) == null ? "unknown" : Uri.parse(url).getHost()));
                 engine.markReady(url);
                 if (browserPurpose == BrowserPurpose.LOGIN && !isLoginUrl(url)) {
                     refreshIdentity(() -> {
@@ -5930,6 +5957,7 @@ private void setFullscreenChrome(boolean visible) {
         progress.setVisibility(View.GONE);
         statusText.setText(text);
         statusPanel.setVisibility(View.VISIBLE);
+        if (text.startsWith("Reddit feed failed:")) Log.e(WEB_LOG_TAG, text);
 
         // Informational/error banners are self-clearing so a late successful
         // async result can never leave a stale failure message stuck on screen.
