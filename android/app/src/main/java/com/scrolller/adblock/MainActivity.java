@@ -780,7 +780,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 super.onPageFinished(view, url);
                 if (view != sessionView || engine == null) return;
                 Log.i(WEB_LOG_TAG, "Session page finished host="
-                        + (Uri.parse(url) == null ? "unknown" : Uri.parse(url).getHost()));
+                        + (url == null ? "unknown" : Uri.parse(url).getHost()));
                 engine.markReady(url);
                 if (browserPurpose == BrowserPurpose.LOGIN && !isLoginUrl(url)) {
                     refreshIdentity(() -> {
