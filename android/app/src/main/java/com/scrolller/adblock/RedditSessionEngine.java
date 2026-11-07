@@ -3,6 +3,7 @@ package com.scrolller.adblock;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
@@ -50,6 +51,7 @@ public final class RedditSessionEngine {
         }
     }
 
+    private static final String TAG = "RedviewAPI";
     private static final long MIN_REQUEST_GAP_MS = 650L;
     private static final long REQUEST_TIMEOUT_MS = 20000L;
     private static final int MAX_429_RETRIES = 2;
@@ -235,6 +237,12 @@ public final class RedditSessionEngine {
     }
 
     private void finishRequest(PendingRequest pending, ApiResult result) {
+        if (!result.ok) {
+            String route = pending.path == null ? "" : pending.path.split("\\?", 2)[0];
+            Log.e(TAG, "Request failed: " + pending.method
+                    + " " + route + " HTTP " + result.status
+                    + " error=" + result.error);
+        }
         try {
             if (pending.callback != null) pending.callback.onResult(result);
         } finally {
