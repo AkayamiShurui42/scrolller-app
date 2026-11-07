@@ -2,6 +2,7 @@ package com.scrolller.adblock;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -25,6 +26,7 @@ final class ScrolllerClient {
         void onError(String error);
     }
 
+    private static final String TAG = "RedviewScrolller";
     private static final String ENDPOINT = "https://api.scrolller.com/admin";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
@@ -108,6 +110,7 @@ final class ScrolllerClient {
                 MAIN.post(callback::onComplete);
             } catch (Exception e) {
                 String message = e.getMessage() == null ? "Scrolller request failed" : e.getMessage();
+                Log.w(TAG, "Optional Scrolller archive unavailable: " + message);
                 MAIN.post(() -> callback.onError(message));
             }
         });
@@ -154,6 +157,7 @@ final class ScrolllerClient {
         }
 
         int status = connection.getResponseCode();
+        String contentType = connection.getContentType();
         InputStream stream = status >= 200 && status < 300
                 ? connection.getInputStream() : connection.getErrorStream();
         StringBuilder text = new StringBuilder();
@@ -165,10 +169,24 @@ final class ScrolllerClient {
             }
         }
         connection.disconnect();
+        String response = text.toString();
+        String trimmed = response.trim();
+        boolean html = trimmed.regionMatches(true, 0, "<!doctype html", 0, 14)
+                || trimmed.regionMatches(true, 0, "<html", 0, 5);
+        boolean challenge = html && (trimmed.contains("_cf_chl_opt")
+                || trimmed.contains("challenge-platform")
+                || trimmed.contains("Just a moment"));
+        if (challenge) {
+            throw new IllegalStateException("Scrolller verification challenge (HTTP " + status
+                    + "); this source requires normal browser verification");
+        }
         if (status < 200 || status >= 300) {
             throw new IllegalStateException("Scrolller HTTP " + status);
         }
-        JSONObject result = new JSONObject(text.toString());
+        if (html || contentType != null && contentType.toLowerCase(java.util.Locale.ROOT).contains("text/html")) {
+            throw new IllegalStateException("Scrolller returned HTML instead of JSON");
+        }
+        JSONObject result = new JSONObject(response);
         JSONArray errors = result.optJSONArray("errors");
         if (errors != null && errors.length() > 0) {
             throw new IllegalStateException("Scrolller GraphQL error");
