@@ -125,10 +125,12 @@ class AuthRepository(
             .remove("user_account_json")
             .remove("user_collections_json")
             .apply()
-        runCatching {
-            CookieManager.getInstance().removeAllCookies(null)
-            CookieManager.getInstance().flush()
-        }
+        // Do not clear the process-wide WebView cookie jar here.
+        // Reddit and other providers may share CookieManager, so a global
+        // deletion would silently sign the user out of unrelated accounts.
+        // The Scrolller API session is invalidated above and its persisted
+        // credentials are removed. Provider-specific WebView cookie cleanup
+        // requires a separately scoped cookie store.
     }
 
     private fun saveAccount(account: UserAccount) {
