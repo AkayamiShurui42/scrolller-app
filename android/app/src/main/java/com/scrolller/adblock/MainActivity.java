@@ -146,6 +146,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private WebView sessionView;
     private FrameLayout appLayer;
     private ViewPager2 pager;
+    private View emptyFeedTapTarget;
     private RecyclerView gridView;
     private PostPagerAdapter postAdapter;
     private GridPostAdapter gridAdapter;
@@ -393,10 +394,27 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
         appLayer.addView(pager, match());
 
+        // PostPagerAdapter handles media taps, but an empty pager has no media
+        // holder to receive one. Keep navigation available during feed errors.
+        emptyFeedTapTarget = new View(this);
+        emptyFeedTapTarget.setContentDescription("Show or hide main controls");
+        emptyFeedTapTarget.setOnClickListener(v -> toggleFullscreenChrome());
+        emptyFeedTapTarget.setVisibility(View.GONE);
+        appLayer.addView(emptyFeedTapTarget, match());
+
         postAdapter = new PostPagerAdapter(this, this);
         postAdapter.setMuted(muted);
         HighQualityPlayerFactory.warmup(getApplicationContext());
         pager.setAdapter(postAdapter);
+        postAdapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
+            @Override public void onChanged() { syncEmptyFeedTapTarget(); }
+            @Override public void onItemRangeInserted(int start, int count) {
+                syncEmptyFeedTapTarget();
+            }
+            @Override public void onItemRangeRemoved(int start, int count) {
+                syncEmptyFeedTapTarget();
+            }
+        });
         pager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
             @Override
             public void onPageScrollStateChanged(int state) {
@@ -3033,6 +3051,7 @@ private void loadQualityCollection(boolean reset) {
             gridView.setVisibility(View.GONE);
             postAdapter.setActivePosition(-1);
             setFullscreenChrome(true);
+            syncEmptyFeedTapTarget();
             return;
         }
         boolean grid = layoutMode.equals("grid");
@@ -3050,6 +3069,15 @@ private void loadQualityCollection(boolean reset) {
             postAdapter.setActivePosition(pager.getCurrentItem());
         }
         setFullscreenChrome(grid || fullscreenChromeVisible);
+        syncEmptyFeedTapTarget();
+    }
+
+    private void syncEmptyFeedTapTarget() {
+        if (emptyFeedTapTarget == null || postAdapter == null) return;
+        boolean emptyFullscreen = screen != Screen.ACCOUNT
+                && layoutMode.equals("fullscreen")
+                && postAdapter.getItemCount() == 0;
+        emptyFeedTapTarget.setVisibility(emptyFullscreen ? View.VISIBLE : View.GONE);
     }
 
     private void loadSearchInternal() {
