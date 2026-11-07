@@ -1,5 +1,34 @@
 from pathlib import Path
 
+# This legacy patch targets v3.9.2 only. Newer branches already contain its
+# category and media-view changes, with a redesigned read/undo lifecycle.
+# Never rewrite modern MainActivity using old exact-match snippets.
+import re
+
+def already_migrated() -> bool:
+    build = Path("app/build.gradle").read_text()
+    version_match = re.search(r"\bversionCode\s+(\d+)\b", build)
+    if not version_match or int(version_match.group(1)) < 50:
+        return False
+    taxonomy = Path("app/src/main/java/com/scrolller/adblock/ContentTaxonomy.java").read_text()
+    adapter = Path("app/src/main/java/com/scrolller/adblock/PostPagerAdapter.java").read_text()
+    main = Path("app/src/main/java/com/scrolller/adblock/MainActivity.java").read_text()
+    checks = {
+        "unknown-safe category matching": "if (classified == 0) return true;" in taxonomy,
+        "video view threshold": "VIDEO_VIEW_THRESHOLD_MS" in adapter,
+        "visual load tracking": "markVisualLoaded(post)" in adapter,
+        "read/undo lifecycle": "showReadUndoHud(previous)" in main,
+    }
+    missing = [label for label, present in checks.items() if not present]
+    if missing:
+        raise SystemExit("v3.9.3 hotfix is obsolete; newer implementation missing: " + ", ".join(missing))
+    print("v3.9.3 hotfix already superseded by current code; verified modern markers, no changes needed")
+    return True
+
+if already_migrated():
+    raise SystemExit(0)
+
+
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
     count = text.count(old)
