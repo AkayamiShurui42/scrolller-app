@@ -38,16 +38,29 @@ jobs:
           packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
       - name: Install SDK packages
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-      - name: Generate CI debug signing keystore
+      - name: Restore stable debug signing keystore
         run: |
-          keytool -genkeypair -noprompt -keystore app/scrolller-debug.keystore \
-            -alias androiddebugkey -storepass android -keypass android \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          set -euo pipefail
+          test -s app/scrolller-debug.keystore.b64
+          base64 --decode app/scrolller-debug.keystore.b64 > app/scrolller-debug.keystore
+          chmod 600 app/scrolller-debug.keystore
       - name: Build debug APK
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon :app:assembleDebug --stacktrace
+      - name: Verify signing matches the original debug APK
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          actual=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)
+          expected="191e5f6808941797362d844076f428cee94af60ae2929eecc70fc1c8e4da38b9"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::APK signing certificate does not match the original user APKs"
+            exit 1
+          fi
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
