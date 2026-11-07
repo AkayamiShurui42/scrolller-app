@@ -1477,10 +1477,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private boolean homeSubscriptionRandomEnabled() {
+        // Cached joined subscriptions remain usable when the separate /api/me
+        // identity lookup fails. Don't downgrade Random to the global /new.json
+        // request just because username is temporarily unavailable.
         return screen == Screen.HOME
                 && context.equals("home")
                 && sort.equals("random")
-                && !username.isEmpty()
                 && !subscriptions.isEmpty();
     }
 
