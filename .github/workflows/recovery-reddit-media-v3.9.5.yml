@@ -18,13 +18,15 @@ jobs:
     steps:
       - name: Checkout frozen v3.9.5 source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Verify known-good source lineage
         shell: bash
         run: |
           set -euo pipefail
           baseline=79c6f760169a968bd71387181eed9b84c2b9ba2b
-          test "$(git rev-parse HEAD^)" = "$baseline"
+          git merge-base --is-ancestor "$baseline" HEAD
           test "$(git diff --name-only "$baseline" HEAD)" = ".github/workflows/recovery-reddit-media-v3.9.5.yml"
           grep -q 'versionCode 52' android/app/build.gradle
           grep -q 'versionName "3.9.5"' android/app/build.gradle
