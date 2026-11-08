@@ -1,0 +1,117 @@
+name: Forensic Recovery Reddit Media v3.9.5
+
+on:
+  push:
+    branches:
+      - recovery/reddit-media-v3.9.5-baseline-20261108
+    paths:
+      - .github/workflows/recovery-reddit-media-v3.9.5.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout frozen v3.9.5 source
+        uses: actions/checkout@v4
+
+      - name: Verify known-good source lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=79c6f760169a968bd71387181eed9b84c2b9ba2b
+          test "$(git rev-parse HEAD^)" = "$baseline"
+          test "$(git diff --name-only "$baseline" HEAD)" = ".github/workflows/recovery-reddit-media-v3.9.5.yml"
+          grep -q 'versionCode 52' android/app/build.gradle
+          grep -q 'versionName "3.9.5"' android/app/build.gradle
+          grep -q 'applicationId "com.crimson.redditmedia"' android/app/build.gradle
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: android/**/*.gradle*
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - name: Install required SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Restore legacy debug signing key
+        run: |
+          set -euo pipefail
+          test -s android/app/scrolller-debug.keystore.b64
+          base64 --decode android/app/scrolller-debug.keystore.b64 > android/app/scrolller-debug.keystore
+          chmod 600 android/app/scrolller-debug.keystore
+
+      - name: Build original source without modifications
+        working-directory: android
+        run: |
+          set -euo pipefail
+          gradle wrapper --gradle-version 8.11.1
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleDebug
+          mkdir -p ../dist
+          cp app/build/outputs/apk/debug/app-debug.apk ../dist/Reddit-Media-v3.9.5-original-forensic.apk
+
+      - name: Create isolated side-by-side recovery package
+        working-directory: android
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("app/build.gradle")
+          text = p.read_text()
+          old_id = 'applicationId "com.crimson.redditmedia"'
+          old_name = 'versionName "3.9.5"'
+          assert text.count(old_id) == 1, "Missing original package ID"
+          assert text.count(old_name) == 1, "Missing original version name"
+          text = text.replace(old_id, 'applicationId "com.crimson.redditmedia.recovery395"')
+          text = text.replace(old_name, 'versionName "3.9.5-recovery"')
+          p.write_text(text)
+          PY
+          ./gradlew --no-daemon :app:assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk ../dist/Reddit-Media-v3.9.5-recovery-side-by-side.apk
+
+      - name: Verify APK package identities and signing
+        run: |
+          set -euo pipefail
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          SIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          original=dist/Reddit-Media-v3.9.5-original-forensic.apk
+          recovery=dist/Reddit-Media-v3.9.5-recovery-side-by-side.apk
+          test -s "$original"
+          test -s "$recovery"
+          for apk in "$original" "$recovery"; do
+            "$SIGNER" verify --verbose "$apk"
+            actual=$("$SIGNER" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)
+            test "$actual" = "191e5f6808941797362d844076f428cee94af60ae2929eecc70fc1c8e4da38b9"
+            sha256sum "$apk"
+          done
+          "$AAPT" dump badging "$original" | grep -F "package: name='com.crimson.redditmedia' versionCode='52' versionName='3.9.5'"
+          "$AAPT" dump badging "$recovery" | grep -F "package: name='com.crimson.redditmedia.recovery395' versionCode='52' versionName='3.9.5-recovery'"
+
+      - name: Upload original forensic reference
+        uses: actions/upload-artifact@v4
+        with:
+          name: v395-original-reference-not-for-in-place-downgrade
+          path: dist/Reddit-Media-v3.9.5-original-forensic.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload isolated recovery test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: v395-side-by-side-safe-recovery-test
+          path: dist/Reddit-Media-v3.9.5-recovery-side-by-side.apk
+          retention-days: 30
+          if-no-files-found: error
