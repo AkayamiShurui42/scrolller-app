@@ -80,6 +80,11 @@ jobs:
           text = text.replace(old_id, 'applicationId "com.crimson.redditmedia.recovery395"')
           text = text.replace(old_name, 'versionName "3.9.5-recovery"')
           p.write_text(text)
+          manifest = Path("app/src/main/AndroidManifest.xml")
+          xml = manifest.read_text()
+          old_label = 'android:label="Reddit Media"'
+          assert xml.count(old_label) == 1, "Missing original app label"
+          manifest.write_text(xml.replace(old_label, 'android:label="Reddit Media Recovery 3.9.5"'))
           PY
           ./gradlew --no-daemon :app:assembleDebug
           cp app/build/outputs/apk/debug/app-debug.apk ../dist/Reddit-Media-v3.9.5-recovery-side-by-side.apk
