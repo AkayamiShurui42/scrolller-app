@@ -211,6 +211,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private int homeRandomGeneration = 0;
     private int homeRandomRequestsThisLoad = 0;
     private int homeRandomFailuresThisLoad = 0;
+    private int homeRandomArchiveFailuresThisLoad = 0;
+    private boolean homeRandomPreferArchive = false;
+    private String homeRandomLastSource = "none";
     private String lastFeedFailurePath = "";
     private int lastFeedFailureStatus = 0;
     private String lastFeedFailureDetail = "";
@@ -1484,17 +1487,18 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private boolean homeSubscriptionRandomEnabled() {
-        // Cached joined subscriptions remain usable when the separate /api/me
-        // identity lookup fails. Don't downgrade Random to the global /new.json
-        // request just because username is temporarily unavailable.
+        // The Home Random mode must not silently fall through to /new.json
+        // merely because /api/me or joined-subscription discovery failed.
         return screen == Screen.HOME
                 && context.equals("home")
-                && sort.equals("random")
-                && !subscriptions.isEmpty();
+                && sort.equals("random");
     }
 
     private void loadHomeSubscriptionRandom(boolean reset) {
-        if (!engine.isReady()) return;
+        if (engine == null || !engine.isReady()) {
+            setStatus("Random is waiting for a Reddit session.", false);
+            return;
+        }
         if (reset) cancelObsoleteRedditRequests();
         if (feedLoading && !reset) return;
 
@@ -1502,6 +1506,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             feedGeneration++;
             homeRandomGeneration++;
             homeRandomFailuresThisLoad = 0;
+            homeRandomArchiveFailuresThisLoad = 0;
+            homeRandomPreferArchive = false;
+            homeRandomLastSource = "none";
             lastFeedFailurePath = "";
             lastFeedFailureStatus = 0;
             lastFeedFailureDetail = "";
@@ -1524,18 +1531,51 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             setStatus("Shuffling subscriptions…", true);
         }
 
-        if (homeRandomRoundIndex >= homeRandomRound.size()) {
-            prepareHomeRandomRound();
+        if (subscriptions.isEmpty()) {
+            loading = false;
+            feedLoading = false;
+            setStatus("Random needs joined subreddits. Sign in via Settings > Account and refresh Home.", false);
+            return;
         }
+
+        if (homeRandomRoundIndex >= homeRandomRound.size()) prepareHomeRandomRound();
         if (homeRandomRound.isEmpty()) {
             loading = false;
             feedLoading = false;
-            setStatus("No subscriptions are available for Random.", false);
+            setStatus("No usable joined subreddits are available for Random.", false);
             return;
         }
 
         final int feedGen = feedGeneration;
         final int randomGen = homeRandomGeneration;
+
+        // The local cache makes Random usable during temporary .json outages
+        // without replacing the user's joined-community or unread filters.
+        if (reset && feedCacheStore != null && !subscriptionNames.isEmpty()) {
+            feedCacheStore.searchSubredditsAsync(
+                    new HashSet<>(subscriptionNames), "", 500, cached -> {
+                        if (!homeRandomContextValid(feedGen, randomGen)) return;
+                        Collections.shuffle(cached);
+                        ArrayList<RedditPost> selected = new ArrayList<>();
+                        HashSet<String> selectedCommunities = new HashSet<>();
+                        for (RedditPost post : cached) {
+                            if (post == null || !matchesMedia(post)
+                                    || isReadHiddenForDiscovery(post)
+                                    || isSavedForUnread(post)
+                                    || isContentBlocked(post)) continue;
+                            String community = post.subreddit == null ? ""
+                                    : post.subreddit.toLowerCase(Locale.US);
+                            if (!selectedCommunities.add(community)) continue;
+                            selected.add(post);
+                            if (selected.size() >= 24) break;
+                        }
+                        if (!selected.isEmpty()) {
+                            homeRandomLastSource = "local cache";
+                            appendUnique(selected);
+                        }
+                    });
+        }
+
         homeRandomRequestsThisLoad = 0;
         loading = true;
         feedLoading = true;
@@ -1561,39 +1601,48 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 && homeSubscriptionRandomEnabled();
     }
 
+    private void finishHomeRandomBatch() {
+        loading = false;
+        // Critical: the old 12-subreddit cutoff neglected to clear this flag
+        // and permanently prevented subsequent Random refills and rerolls.
+        feedLoading = false;
+        after = "home-random-round";
+        if (postAdapter.getItemCount() == 0) {
+            if (homeRandomFailuresThisLoad > 0 || homeRandomArchiveFailuresThisLoad > 0) {
+                String reason = lastFeedFailureDetail.isEmpty()
+                        ? "No live or archived content could be loaded"
+                        : lastFeedFailureDetail;
+                setStatus("Random failed: " + lastFeedFailurePath + " · " + reason
+                        + " · live failures=" + homeRandomFailuresThisLoad
+                        + " archive failures=" + homeRandomArchiveFailuresThisLoad
+                        + (username.isEmpty() ? " · Sign in via Settings > Account" : ""), false);
+            } else {
+                setStatus("No matching media across joined subreddits and current filters.", false);
+            }
+        } else {
+            hideStatus();
+        }
+        updateChrome();
+        restorePendingPosition();
+    }
+
     private void fetchHomeRandomRoundNext(int feedGen, int randomGen) {
         if (!homeRandomContextValid(feedGen, randomGen)) return;
-        if (homeRandomRoundIndex >= homeRandomRound.size()) {
-            loading = false;
-            feedLoading = false;
-            after = "home-random-round";
-            if (postAdapter.getItemCount() == 0) {
-                if (homeRandomFailuresThisLoad > 0) {
-                    setStatus("Random failed: " + lastFeedFailurePath
-                            + " · " + lastFeedFailureDetail
-                            + (username.isEmpty() ? " · Sign in via Settings > Account" : ""), false);
-                } else {
-                    setStatus("No matching media was found across your subscriptions.", false);
-                }
-            } else {
-                hideStatus();
-            }
-            updateChrome();
-            restorePendingPosition();
-            return;
-        }
-
-        if (homeRandomRequestsThisLoad >= 12 && postAdapter.getItemCount() > 0) {
-            loading = false;
-            after = "home-random-round";
-            hideStatus();
-            updateChrome();
-            restorePendingPosition();
+        // Bound both success and failure rounds. A blocked endpoint should not
+        // queue hundreds of requests for an account with many subscriptions.
+        if (homeRandomRoundIndex >= homeRandomRound.size()
+                || homeRandomRequestsThisLoad >= 12) {
+            finishHomeRandomBatch();
             return;
         }
 
         final String targetSubreddit = homeRandomRound.get(homeRandomRoundIndex++);
         homeRandomRequestsThisLoad++;
+        if (homeRandomPreferArchive) {
+            fetchHomeRandomArchive(targetSubreddit, feedGen, randomGen);
+            return;
+        }
+
         String path = "/r/" + enc(targetSubreddit)
                 + "/new.json?limit=100&raw_json=1&show=all";
         engine.get(path, result -> {
@@ -1602,45 +1651,85 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 JSONObject rootJson = result.jsonObject();
                 JSONObject data = rootJson != null ? rootJson.optJSONObject("data") : null;
                 JSONArray children = data != null ? data.optJSONArray("children") : null;
-                ArrayList<RedditPost> candidates = new ArrayList<>();
-                if (children != null) {
-                    for (int i = 0; i < children.length(); i++) {
-                        RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                        if (post == null || !matchesMedia(post)) continue;
-                        if (post.id == null || post.id.isEmpty()) continue;
-                        if (isReadHiddenForDiscovery(post)
-                                || isSavedForUnread(post)
-                                || isContentBlocked(post)) continue;
-                        String key = canonicalPostKey(post);
-                        if (key.isEmpty() || homeRandomSeenPostIds.contains(key)) continue;
-                        candidates.add(post);
-                    }
+                if (children != null && appendHomeRandomListingCandidate(children, false)) {
+                    homeRandomLastSource = "Reddit live";
                 }
-
-                if (!candidates.isEmpty()) {
-                    Collections.shuffle(candidates);
-                    RedditPost selected = candidates.get(0);
-                    String key = canonicalPostKey(selected);
-                    if (!key.isEmpty()) {
-                        homeRandomSeenPostIds.add(key);
-                        feedSeenPostIds.add(key);
-                    }
-                    ArrayList<RedditPost> one = new ArrayList<>();
-                    one.add(selected);
-                    appendUnique(one);
-                    hideStatus();
-                }
+                advanceHomeRandomRound(feedGen, randomGen);
             } else {
                 homeRandomFailuresThisLoad++;
                 recordFeedFailure(path, result);
+                // Status 0 is a WebView transport error, not proof of HTTP 403.
+                // Both 403 and status 0 can make further live .json calls futile.
+                if (result.status == 0 || result.status == 401
+                        || result.status == 403 || result.status == 429) {
+                    homeRandomPreferArchive = true;
+                }
+                fetchHomeRandomArchive(targetSubreddit, feedGen, randomGen);
+            }
+        });
+    }
+
+    private boolean appendHomeRandomListingCandidate(JSONArray children, boolean archived) {
+        if (children == null) return false;
+        ArrayList<RedditPost> candidates = new ArrayList<>();
+        for (int i = 0; i < children.length(); i++) {
+            JSONObject raw = children.optJSONObject(i);
+            RedditPost post = archived
+                    ? redditPostFromArcticArchive(raw)
+                    : RedditPost.fromChild(raw);
+            if (post == null || !matchesMedia(post)
+                    || post.id == null || post.id.isEmpty()
+                    || isReadHiddenForDiscovery(post)
+                    || isSavedForUnread(post)
+                    || isContentBlocked(post)) continue;
+            String key = canonicalPostKey(post);
+            if (key.isEmpty() || homeRandomSeenPostIds.contains(key)) continue;
+            candidates.add(post);
+        }
+        if (candidates.isEmpty()) return false;
+        Collections.shuffle(candidates);
+        RedditPost selected = candidates.get(0);
+        String key = canonicalPostKey(selected);
+        homeRandomSeenPostIds.add(key);
+        feedSeenPostIds.add(key);
+        ArrayList<RedditPost> one = new ArrayList<>();
+        one.add(selected);
+        appendUnique(one);
+        return true;
+    }
+
+    private void fetchHomeRandomArchive(
+            String targetSubreddit, int feedGen, int randomGen) {
+        final boolean[] found = {false};
+        ArcticShiftClient.crawlSubreddit(targetSubreddit, 100, new ArcticShiftClient.CrawlCallback() {
+            @Override
+            public void onBatch(JSONArray items) {
+                if (!homeRandomContextValid(feedGen, randomGen) || found[0]) return;
+                if (appendHomeRandomListingCandidate(items, true)) {
+                    found[0] = true;
+                    homeRandomLastSource = "Arctic Shift archive";
+                }
             }
 
-            // Keep Reddit request cadence sane. This is intentionally much slower
-            // than the old 55 ms loop and is chunked by normal pagination.
-            root.postDelayed(
-                    () -> fetchHomeRandomRoundNext(feedGen, randomGen),
-                    280L);
+            @Override
+            public void onComplete() {
+                if (!homeRandomContextValid(feedGen, randomGen)) return;
+                advanceHomeRandomRound(feedGen, randomGen);
+            }
+
+            @Override
+            public void onError(String error) {
+                if (!homeRandomContextValid(feedGen, randomGen)) return;
+                homeRandomArchiveFailuresThisLoad++;
+                Log.e(WEB_LOG_TAG, "Random archive r/" + targetSubreddit + ": " + error);
+                advanceHomeRandomRound(feedGen, randomGen);
+            }
         });
+    }
+
+    private void advanceHomeRandomRound(int feedGen, int randomGen) {
+        if (!homeRandomContextValid(feedGen, randomGen)) return;
+        root.postDelayed(() -> fetchHomeRandomRoundNext(feedGen, randomGen), 280L);
     }
 
     private String listingPath(String cursor) {
@@ -4770,7 +4859,13 @@ private void showCategoryRoot() {
                 if (sort.equals("top")) {
                     showTopTimeSheet();
                 } else if (repeatRandom) {
-                    reshuffleCurrentRandomOrder();
+                    if (screen == Screen.HOME && context.equals("home")
+                            && postAdapter.getItemCount() == 0) {
+                        // An empty reroll must retry data loading, not reshuffle nothing.
+                        loadFeed(true);
+                    } else {
+                        reshuffleCurrentRandomOrder();
+                    }
                 } else {
                     reloadCurrent();
                 }
@@ -7650,6 +7745,11 @@ private void installCompactNavigation() {
             out.append("Failure: ").append(lastFeedFailureDetail).append('\n');
         }
         out.append("Random requests failed this load: ").append(homeRandomFailuresThisLoad).append('\n');
+        out.append("Random archive failures: ").append(homeRandomArchiveFailuresThisLoad).append('\n');
+        out.append("Random source: ").append(homeRandomLastSource).append('\n');
+        out.append("Random archive fallback: ").append(homeRandomPreferArchive).append('\n');
+        out.append("Random requests this batch: ").append(homeRandomRequestsThisLoad).append('\n');
+        out.append("Joined communities available: ").append(subscriptions.size()).append('\n');
         if (subreddit != null && !subreddit.isEmpty()) out.append("Subreddit: r/").append(subreddit).append('\n');
         out.append("Visible posts: ").append(postAdapter == null ? 0 : postAdapter.getItemCount()).append('\n');
         out.append("Read/hidden IDs: ").append(hiddenPosts.size()).append('\n');
