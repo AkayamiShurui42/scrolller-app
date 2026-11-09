@@ -1651,7 +1651,18 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 JSONObject rootJson = result.jsonObject();
                 JSONObject data = rootJson != null ? rootJson.optJSONObject("data") : null;
                 JSONArray children = data != null ? data.optJSONArray("children") : null;
-                if (children != null && appendHomeRandomListingCandidate(children, false)) {
+                if (children == null) {
+                    // A 200 response containing an HTML login/challenge page,
+                    // or an error JSON object, is not a valid Reddit listing.
+                    homeRandomFailuresThisLoad++;
+                    recordFeedFailure(path, new RedditSessionEngine.ApiResult(
+                            false, result.status, "",
+                            "Reddit returned no listing JSON (possible login/challenge response)"));
+                    homeRandomPreferArchive = true;
+                    fetchHomeRandomArchive(targetSubreddit, feedGen, randomGen);
+                    return;
+                }
+                if (appendHomeRandomListingCandidate(children, false)) {
                     homeRandomLastSource = "Reddit live";
                 }
                 advanceHomeRandomRound(feedGen, randomGen);
