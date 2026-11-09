@@ -1722,7 +1722,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private void fetchHomeRandomArchive(
             String targetSubreddit, int feedGen, int randomGen) {
         final boolean[] found = {false};
-        ArcticShiftClient.crawlSubreddit(targetSubreddit, 100, new ArcticShiftClient.CrawlCallback() {
+        ArcticShiftClient.crawlSubredditNsfw(targetSubreddit, 100, new ArcticShiftClient.CrawlCallback() {
             @Override
             public void onBatch(JSONArray items) {
                 if (!homeRandomContextValid(feedGen, randomGen) || found[0]) return;
