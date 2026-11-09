@@ -93,13 +93,13 @@ jobs:
           activity = Path("app/src/main/java/com/scrolller/adblock/MainActivity.java")
           java = activity.read_text()
           old_chrome = '''        boolean showBottom = !layoutMode.equals("fullscreen")
-                || screen == Screen.ACCOUNT
-                || visible;'''
+                          || screen == Screen.ACCOUNT
+                          || visible;'''
           new_chrome = '''        boolean showBottom = !layoutMode.equals("fullscreen")
-                || screen == Screen.ACCOUNT
-                || visible
-                || postAdapter == null
-                || postAdapter.getItemCount() == 0;'''
+                          || screen == Screen.ACCOUNT
+                          || visible
+                          || postAdapter == null
+                          || postAdapter.getItemCount() == 0;'''
           assert java.count(old_chrome) == 1, "Unexpected Home control source"
           java = java.replace(old_chrome, new_chrome)
           old_failure = 'setStatus("Reddit feed failed: " + friendlyError(result), false);'
