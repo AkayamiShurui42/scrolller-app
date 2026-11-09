@@ -210,6 +210,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private int homeRandomRoundIndex = 0;
     private int homeRandomGeneration = 0;
     private int homeRandomRequestsThisLoad = 0;
+    private int homeRandomFailuresThisLoad = 0;
+    private String lastFeedFailurePath = "";
+    private int lastFeedFailureStatus = 0;
+    private String lastFeedFailureDetail = "";
     private final ArrayList<RedditPost> searchCollectorSnapshot = new ArrayList<>();
     private final LinkedHashMap<String, RedditPost> searchLayerResults = new LinkedHashMap<>();
     private final HashSet<String> searchLayerMediaKeys = new HashSet<>();
@@ -1268,6 +1272,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         engine.get(path, result -> {
             if (generation != feedGeneration || screen != Screen.HOME) return;
             if (!result.ok) {
+                recordFeedFailure(path, result);
                 // If at least one live page already arrived, keep it instead of
                 // turning a later pagination/rate-limit failure into a dead feed.
                 if (!collected.isEmpty()) {
@@ -1296,7 +1301,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     return;
                 }
                 if (postAdapter.getItemCount() == 0) {
-                    setStatus("Reddit feed failed: " + friendlyError(result), false);
+                    setStatus("Reddit feed failed: " + lastFeedFailurePath
+                            + " · " + friendlyError(result)
+                            + (username.isEmpty() ? " · Sign in via Settings > Account" : ""), false);
                 }
                 return;
             }
@@ -1494,6 +1501,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (reset) {
             feedGeneration++;
             homeRandomGeneration++;
+            homeRandomFailuresThisLoad = 0;
+            lastFeedFailurePath = "";
+            lastFeedFailureStatus = 0;
+            lastFeedFailureDetail = "";
             loading = false;
             after = "";
             homeRandomRound.clear();
@@ -1557,7 +1568,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             feedLoading = false;
             after = "home-random-round";
             if (postAdapter.getItemCount() == 0) {
-                setStatus("No matching media was found across your subscriptions.", false);
+                if (homeRandomFailuresThisLoad > 0) {
+                    setStatus("Random failed: " + lastFeedFailurePath
+                            + " · " + lastFeedFailureDetail
+                            + (username.isEmpty() ? " · Sign in via Settings > Account" : ""), false);
+                } else {
+                    setStatus("No matching media was found across your subscriptions.", false);
+                }
             } else {
                 hideStatus();
             }
@@ -1613,6 +1630,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     appendUnique(one);
                     hideStatus();
                 }
+            } else {
+                homeRandomFailuresThisLoad++;
+                recordFeedFailure(path, result);
             }
 
             // Keep Reddit request cadence sane. This is intentionally much slower
@@ -5659,8 +5679,10 @@ private void trackFullscreenVisit(int position) {
 private void setFullscreenChrome(boolean visible) {
         fullscreenChromeVisible = visible;
         if (topBar != null) topBar.setVisibility(View.GONE);
+        // Navigation must stay visible if there is nothing to tap in the feed.
         boolean showBottom = !layoutMode.equals("fullscreen")
                 || screen == Screen.ACCOUNT
+                || (postAdapter != null && postAdapter.getItemCount() == 0)
                 || visible;
         if (bottomBar != null) bottomBar.setVisibility(showBottom ? View.VISIBLE : View.GONE);
         if (compactMenuButton != null) compactMenuButton.setVisibility(View.GONE);
@@ -5997,7 +6019,9 @@ private void setFullscreenChrome(boolean visible) {
             statusText.setText("");
             statusDismissRunnable = null;
         };
-        if (root != null) root.postDelayed(statusDismissRunnable, 3500L);
+        long holdMs = text.startsWith("Reddit feed failed:") || text.startsWith("Random failed:")
+                ? 20000L : 3500L;
+        if (root != null) root.postDelayed(statusDismissRunnable, holdMs);
     }
 
     private void hideStatus() {
@@ -6009,6 +6033,15 @@ private void setFullscreenChrome(boolean visible) {
         if (progress != null) progress.setVisibility(View.GONE);
         if (statusText != null) statusText.setText("");
         if (statusPanel != null) statusPanel.setVisibility(View.GONE);
+    }
+
+    private void recordFeedFailure(String path, RedditSessionEngine.ApiResult result) {
+        lastFeedFailurePath = path == null ? "" : path.split("\\?", 2)[0];
+        lastFeedFailureStatus = result.status;
+        lastFeedFailureDetail = friendlyError(result);
+        Log.e(WEB_LOG_TAG, "Feed request failed: " + lastFeedFailurePath
+                + " status=" + lastFeedFailureStatus
+                + " reason=" + lastFeedFailureDetail);
     }
 
     private String friendlyError(RedditSessionEngine.ApiResult result) {
@@ -7608,6 +7641,15 @@ private void installCompactNavigation() {
     private String buildFeedDiagnostics() {
         StringBuilder out = new StringBuilder();
         out.append("Context: ").append(context).append('\n');
+        out.append("Sort: ").append(sort).append('\n');
+        out.append("Reddit session ready: ").append(engine != null && engine.isReady()).append('\n');
+        out.append("Signed in: ").append(!username.isEmpty()).append('\n');
+        if (!lastFeedFailurePath.isEmpty()) {
+            out.append("Last failed request: ").append(lastFeedFailurePath).append('\n');
+            out.append("HTTP status: ").append(lastFeedFailureStatus).append('\n');
+            out.append("Failure: ").append(lastFeedFailureDetail).append('\n');
+        }
+        out.append("Random requests failed this load: ").append(homeRandomFailuresThisLoad).append('\n');
         if (subreddit != null && !subreddit.isEmpty()) out.append("Subreddit: r/").append(subreddit).append('\n');
         out.append("Visible posts: ").append(postAdapter == null ? 0 : postAdapter.getItemCount()).append('\n');
         out.append("Read/hidden IDs: ").append(hiddenPosts.size()).append('\n');
