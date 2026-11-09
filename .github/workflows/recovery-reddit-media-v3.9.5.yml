@@ -78,13 +78,42 @@ jobs:
           assert text.count(old_id) == 1, "Missing original package ID"
           assert text.count(old_name) == 1, "Missing original version name"
           text = text.replace(old_id, 'applicationId "com.crimson.redditmedia.recovery395"')
-          text = text.replace(old_name, 'versionName "3.9.5-recovery"')
+          text = text.replace(old_name, 'versionName "3.9.5-recovery-diag1"')
+          assert text.count('versionCode 52') == 1
+          text = text.replace('versionCode 52', 'versionCode 53')
           p.write_text(text)
           manifest = Path("app/src/main/AndroidManifest.xml")
           xml = manifest.read_text()
           old_label = 'android:label="Reddit Media"'
           assert xml.count(old_label) == 1, "Missing original app label"
           manifest.write_text(xml.replace(old_label, 'android:label="Reddit Media Recovery 3.9.5"'))
+
+          # Keep the controls reachable when the feed has zero posts, and show
+          # the failed path/status rather than requiring an ADB session.
+          activity = Path("app/src/main/java/com/scrolller/adblock/MainActivity.java")
+          java = activity.read_text()
+          old_chrome = '''        boolean showBottom = !layoutMode.equals("fullscreen")
+                || screen == Screen.ACCOUNT
+                || visible;'''
+          new_chrome = '''        boolean showBottom = !layoutMode.equals("fullscreen")
+                || screen == Screen.ACCOUNT
+                || visible
+                || postAdapter == null
+                || postAdapter.getItemCount() == 0;'''
+          assert java.count(old_chrome) == 1, "Unexpected Home control source"
+          java = java.replace(old_chrome, new_chrome)
+          old_failure = 'setStatus("Reddit feed failed: " + friendlyError(result), false);'
+          new_failure = ('setStatus("Reddit feed failed at " + path + " (status "'
+                         ' + result.status + "): " + friendlyError(result)'
+                         ' + (username.isEmpty() ? " · Use Account > Sign in to Reddit." : ""), false);')
+          assert java.count(old_failure) == 1, "Unexpected feed failure source"
+          java = java.replace(old_failure, new_failure)
+          old_delay = 'if (root != null) root.postDelayed(statusDismissRunnable, 3500L);'
+          new_delay = ('if (root != null) root.postDelayed(statusDismissRunnable,'
+                       ' text.startsWith("Reddit feed failed") ? 20000L : 3500L);')
+          assert java.count(old_delay) == 1, "Unexpected status banner source"
+          java = java.replace(old_delay, new_delay)
+          activity.write_text(java)
           PY
           ./gradlew --no-daemon :app:assembleDebug
           cp app/build/outputs/apk/debug/app-debug.apk ../dist/Reddit-Media-v3.9.5-recovery-side-by-side.apk
@@ -105,7 +134,7 @@ jobs:
             sha256sum "$apk"
           done
           "$AAPT" dump badging "$original" | grep -F "package: name='com.crimson.redditmedia' versionCode='52' versionName='3.9.5'"
-          "$AAPT" dump badging "$recovery" | grep -F "package: name='com.crimson.redditmedia.recovery395' versionCode='52' versionName='3.9.5-recovery'"
+          "$AAPT" dump badging "$recovery" | grep -F "package: name='com.crimson.redditmedia.recovery395' versionCode='53' versionName='3.9.5-recovery-diag1'"
 
       - name: Upload original forensic reference
         uses: actions/upload-artifact@v4
