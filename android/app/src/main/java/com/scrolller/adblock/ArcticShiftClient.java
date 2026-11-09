@@ -46,6 +46,12 @@ final class ArcticShiftClient {
         crawl("subreddit", subreddit, maxItems, callback);
     }
 
+    // Dedicated NSFW-only archive query for Random. The standard crawler is
+    // deliberately unchanged for historical and non-Random views.
+    static void crawlSubredditNsfw(String subreddit, int maxItems, CrawlCallback callback) {
+        crawl("subreddit", subreddit, maxItems, callback, true);
+    }
+
     static void crawlAuthor(String author, int maxItems, CrawlCallback callback) {
         crawl("author", author, maxItems, callback);
     }
@@ -119,6 +125,12 @@ final class ArcticShiftClient {
     }
 
     private static void crawl(String field, String value, int maxItems, CrawlCallback callback) {
+        crawl(field, value, maxItems, callback, false);
+    }
+
+    private static void crawl(
+            String field, String value, int maxItems,
+            CrawlCallback callback, boolean nsfwOnly) {
         EXECUTOR.execute(() -> {
             try {
                 int delivered = 0;
@@ -131,6 +143,7 @@ final class ArcticShiftClient {
                             .append(field).append('=').append(enc(value))
                             .append("&limit=").append(limit)
                             .append("&sort=desc");
+                    if (nsfwOnly) url.append("&over_18=true");
                     if (!before.isEmpty()) url.append("&before=").append(enc(before));
 
                     JSONObject root = getJson(url.toString());
