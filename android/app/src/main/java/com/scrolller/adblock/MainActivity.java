@@ -871,11 +871,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (initialized || browserPurpose != BrowserPurpose.NONE) return;
         initialized = true;
         setStatus("Loading Reddit media…", true);
-        // Resolve the authenticated identity before choosing the Home transport.
-        // Otherwise startup races /api/me against an anonymous personalized feed.
-        refreshIdentity(() -> loadSubscriptions(() -> {
+        // The identity request establishes the session, but fetching up to twelve
+        // pages of joined communities must not gate the first Home render.
+        // Cached joined communities can feed Random immediately; a newly
+        // discovered subscription list can refresh Random once it changes.
+        refreshIdentity(() -> {
             if (screen == Screen.HOME) loadFeed(true);
-        }));
+            loadSubscriptions(null);
+        });
     }
 
     private boolean handleWebNavigation(String url) {
@@ -973,6 +976,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             @Nullable Runnable done,
             ArrayList<Subscription> pendingSubscriptions,
             LinkedHashSet<String> pendingNames) {
+        boolean joinedChanged = pendingNames != null
+                && !pendingNames.isEmpty()
+                && !subscriptionNames.equals(pendingNames);
         if (pendingNames != null && !pendingNames.isEmpty()) {
             subscriptions.clear();
             subscriptionNames.clear();
@@ -986,8 +992,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         subscriptions.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
         if (done != null) done.run();
         if (screen == Screen.ACCOUNT) renderAccount();
-        if (screen == Screen.HOME && context.equals("home") && sort.equals("random")
-                && !subscriptions.isEmpty()) loadFeed(true);
+        // Don't cancel an in-progress Random round when the refresh found
+        // exactly the same joined communities. In particular, the old startup
+        // callback launched loadFeed(true) here and then launched it again.
+        if (done == null && joinedChanged
+                && screen == Screen.HOME && context.equals("home")
+                && sort.equals("random")) loadFeed(true);
         updateChrome();
     }
 
