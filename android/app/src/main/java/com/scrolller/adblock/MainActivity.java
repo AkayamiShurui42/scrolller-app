@@ -195,7 +195,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private BrowserPurpose browserPurpose = BrowserPurpose.NONE;
     private String context = "home";
     private String subreddit = "";
-    private String sort = "new";
+    private String sort = "random";
     private String topTime = "all";
     private String media = "all";
     private String layoutMode = "fullscreen";
@@ -327,7 +327,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             }
         }
         loadSubredditPresets();
-        sort = "new";
+        sort = "random";
         topTime = prefs.getString("topTime", "all");
         media = prefs.getString("media", "all");
         layoutMode = prefs.getString("layout", "fullscreen");
@@ -1034,10 +1034,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         searchScope = state.searchScope;
         favoriteSort = state.favoriteSort;
         favoritesView = state.favoritesView;
-        // Old Home navigation history may still contain the paused Random mode.
-        if (screen == Screen.HOME && !context.equals("multi") && sort.equals("random")) {
-            sort = "new";
-        }
         pendingRestorePosition = Math.max(0, state.pagerPosition);
 
         accountView.setVisibility(View.GONE);
@@ -1077,7 +1073,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (pushHistory && !(screen == Screen.HOME && context.equals(which) && subreddit.isEmpty())) {
             pushCurrentState();
         }
-        sort = "new";
+        sort = "random";
         screen = Screen.HOME;
         context = which;
         subreddit = "";
@@ -1193,11 +1189,6 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private void loadFeed(boolean reset) {
-        // Prevent automatic or restored Home Random from restarting the failing loader.
-        // Multi-subreddit presets use a separate fair-rotation implementation.
-        if (screen == Screen.HOME && !context.equals("multi") && sort.equals("random")) {
-            sort = "new";
-        }
         if (reset && screen == Screen.HOME
                 && context.equals("subreddit")
                 && subreddit != null
@@ -2074,7 +2065,7 @@ private void showQualityBrowseSheet() {
 
 private void loadQualityCollection(boolean reset) {
         context = "home";
-        sort = "new";
+        sort = "random";
         loadFeed(reset);
     }
 
@@ -4745,8 +4736,7 @@ private void showCategoryRoot() {
         } else if (screen == Screen.USER) {
             values = new String[]{"best", "new", "oldest", "hot", "top", "random"};
         } else {
-            // Home Random is paused. Other listed sort modes remain selectable.
-            values = new String[]{"best", "hot", "new", "oldest", "top", "rising"};
+            values = new String[]{"best", "hot", "new", "oldest", "top", "rising", "random"};
         }
 
         for (String value : values) {
