@@ -1497,11 +1497,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private boolean homeSubscriptionRandomEnabled() {
-        // The Home Random mode must not silently fall through to /new.json
-        // merely because /api/me or joined-subscription discovery failed.
+        // Use fair joined-community rotation only when subscriptions exist.
+        // Without a joined snapshot, retain the v3.9.5 behavior: load the
+        // working Home /new.json listing and shuffle it. Joined-only filtering
+        // still fails closed when membership cannot be verified.
         return screen == Screen.HOME
                 && context.equals("home")
-                && sort.equals("random");
+                && sort.equals("random")
+                && !subscriptions.isEmpty();
     }
 
     private void loadHomeSubscriptionRandom(boolean reset) {
@@ -1613,10 +1616,31 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void finishHomeRandomBatch() {
         loading = false;
-        // Critical: the old 12-subreddit cutoff neglected to clear this flag
-        // and permanently prevented subsequent Random refills and rerolls.
+        // Always release the refill lane when a batch finishes.
         feedLoading = false;
         after = "home-random-round";
+
+        // No visible post means the pager cannot trigger the usual near-end
+        // refill. Continue the remaining joined communities automatically,
+        // rather than abandoning Random after the first twelve SFW-only
+        // communities. On actual source failures stop and show diagnostics;
+        // don't repeat blocked requests indefinitely.
+        if (postAdapter.getItemCount() == 0
+                && homeRandomRoundIndex < homeRandomRound.size()
+                && homeRandomFailuresThisLoad == 0
+                && homeRandomArchiveFailuresThisLoad == 0) {
+            final int feedGen = feedGeneration;
+            final int randomGen = homeRandomGeneration;
+            setStatus("Random checking more joined communities…", true);
+            root.postDelayed(() -> {
+                if (homeRandomContextValid(feedGen, randomGen)
+                        && postAdapter.getItemCount() == 0 && !feedLoading) {
+                    loadHomeSubscriptionRandom(false);
+                }
+            }, 650L);
+            return;
+        }
+
         if (postAdapter.getItemCount() == 0) {
             if (homeRandomFailuresThisLoad > 0 || homeRandomArchiveFailuresThisLoad > 0) {
                 String reason = lastFeedFailureDetail.isEmpty()
