@@ -17,6 +17,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
@@ -68,6 +69,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private static final String REDDIT = "https://www.reddit.com";
     private static final String WEB_LOG_TAG = "RedviewWeb";
+    private static final float REQUESTED_DISPLAY_HZ = 120f;
     private static final String[][] CURATED_CATEGORY_ROWS = {
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
             {"NSFW", "Adult", "GIF & video", "nsfw_gif,NSFW_GIF"},
@@ -306,6 +308,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        request120HzDisplay();
         CrashReporter.install(this);
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.BLACK);
@@ -6318,9 +6321,30 @@ private void setFullscreenChrome(boolean visible) {
     @Override
     protected void onResume() {
         super.onResume();
+        request120HzDisplay();
         if (postAdapter != null && pager != null && layoutMode.equals("fullscreen")) {
             postAdapter.setActivePosition(pager.getCurrentItem());
         }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) request120HzDisplay();
+    }
+
+    private void request120HzDisplay() {
+        // Request 120 Hz for the entire Activity (Home, navigation, and video).
+        // The compositor and OEM remain free to honor power/thermal constraints.
+        WindowManager.LayoutParams params = getWindow().getAttributes();
+        if (params.preferredDisplayModeId == 0
+                && Math.abs(params.preferredRefreshRate - REQUESTED_DISPLAY_HZ) < 0.01f) {
+            return;
+        }
+        // A display-mode ID overrides preferredRefreshRate, so clear it.
+        params.preferredDisplayModeId = 0;
+        params.preferredRefreshRate = REQUESTED_DISPLAY_HZ;
+        getWindow().setAttributes(params);
     }
 
     @Override
