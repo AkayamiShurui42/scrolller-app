@@ -349,6 +349,7 @@ public void setActivePosition(int position) {
     private ExoPlayer obtainPlayer(String url, boolean redgifs) {
         ExoPlayer player = redgifs ? redgifsPlayer : defaultPlayer;
         if (player != null) return player;
+        AppDiagnostics.record("player-create", redgifs ? "family=redgifs" : "family=default");
         player = HighQualityPlayerFactory.create(context, url);
         player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
         final boolean familyRedgifs = redgifs;
@@ -356,6 +357,8 @@ public void setActivePosition(int position) {
         player.addListener(new Player.Listener() {
             @Override
             public void onRenderedFirstFrame() {
+                AppDiagnostics.record("player-first-frame",
+                        familyRedgifs ? "family=redgifs" : "family=default");
                 onVideoFirstFrame(observedPlayer, familyRedgifs);
             }
 
@@ -366,6 +369,10 @@ public void setActivePosition(int position) {
 
             @Override
             public void onPlayerError(PlaybackException error) {
+                AppDiagnostics.record("player-error",
+                        (familyRedgifs ? "family=redgifs " : "family=default ")
+                        + "media3-code=" + error.errorCodeName);
+                AppDiagnostics.failure("player-error-stack", error);
                 RedditPost post = familyRedgifs ? redgifsPlayerPost : defaultPlayerPost;
                 if (post != null) listener.onMediaFailed(post);
             }
@@ -380,6 +387,9 @@ public void setActivePosition(int position) {
         if (pagerScrolling || position != activePosition || holder.boundPosition != position || holder.boundPost != post) return;
 
         boolean redgifs = isRedgifsUrl(url);
+        AppDiagnostics.record("player-attach",
+                "position=" + position + " family=" + (redgifs ? "redgifs" : "default")
+                + " kind=" + post.mediaKind + " scrolling=" + pagerScrolling);
         try {
             ExoPlayer target = obtainPlayer(url, redgifs);
             ExoPlayer other = redgifs ? defaultPlayer : redgifsPlayer;
@@ -411,7 +421,10 @@ public void setActivePosition(int position) {
             }
             target.setVolume(muted ? 0f : 1f);
             target.setPlayWhenReady(true);
+            AppDiagnostics.record("player-attached",
+                    "position=" + position + " kind=" + post.mediaKind);
         } catch (RuntimeException playerError) {
+            AppDiagnostics.failure("player-attach-crash", playerError);
             listener.onMediaFailed(post);
         }
     }
