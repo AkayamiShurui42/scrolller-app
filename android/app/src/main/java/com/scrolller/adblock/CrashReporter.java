@@ -99,24 +99,33 @@ final class CrashReporter {
             ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
             if (manager == null) return "";
             List<ApplicationExitInfo> exits = manager.getHistoricalProcessExitReasons(
-                    context.getPackageName(), 0, 1);
+                    context.getPackageName(), 0, 12);
             if (exits == null || exits.isEmpty()) return "";
-            ApplicationExitInfo info = exits.get(0);
-            int reason = info.getReason();
-            if (reason != ApplicationExitInfo.REASON_CRASH
-                    && reason != ApplicationExitInfo.REASON_CRASH_NATIVE
-                    && reason != ApplicationExitInfo.REASON_ANR
-                    && reason != ApplicationExitInfo.REASON_LOW_MEMORY
-                    && reason != ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE
-                    && reason != ApplicationExitInfo.REASON_SIGNALED) {
-                return "";
+            StringBuilder details = new StringBuilder();
+            int found = 0;
+            for (ApplicationExitInfo info : exits) {
+                int reason = info.getReason();
+                if (reason != ApplicationExitInfo.REASON_CRASH
+                        && reason != ApplicationExitInfo.REASON_CRASH_NATIVE
+                        && reason != ApplicationExitInfo.REASON_ANR
+                        && reason != ApplicationExitInfo.REASON_LOW_MEMORY
+                        && reason != ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE
+                        && reason != ApplicationExitInfo.REASON_SIGNALED) {
+                    continue;
+                }
+                if (found++ >= 4) break;
+                details.append("Android process exit #").append(found).append('\n')
+                        .append("Reason: ").append(reasonName(reason))
+                        .append(" (").append(reason).append(")\n")
+                        .append("Timestamp: ")
+                        .append(DateFormat.getDateTimeInstance()
+                                .format(new Date(info.getTimestamp()))).append('\n')
+                        .append("Status: ").append(info.getStatus()).append('\n')
+                        .append("Importance: ").append(info.getImportance()).append('\n')
+                        .append("Description: ")
+                        .append(String.valueOf(info.getDescription())).append("\n\n");
             }
-            return "Android process-exit record\n"
-                    + "Reason: " + reasonName(reason) + " (" + reason + ")\n"
-                    + "Timestamp: " + DateFormat.getDateTimeInstance().format(new Date(info.getTimestamp())) + "\n"
-                    + "Status: " + info.getStatus() + "\n"
-                    + "Importance: " + info.getImportance() + "\n"
-                    + "Description: " + String.valueOf(info.getDescription());
+            return details.toString();
         } catch (Throwable ignored) {
             return "";
         }
