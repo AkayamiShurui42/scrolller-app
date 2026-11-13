@@ -77,6 +77,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private static final String SELF_DIAGNOSTIC_BUILD_TAG = "self-dump-anr-traces-v2-20261112";
     private static final java.util.concurrent.ExecutorService DIAGNOSTICS_EXECUTOR =
             java.util.concurrent.Executors.newSingleThreadExecutor();
+    // Rank search results away from Android's input-dispatch/UI thread.
+    private static final java.util.concurrent.ExecutorService SEARCH_SORT_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.atomic.AtomicInteger searchSortRevision =
+            new java.util.concurrent.atomic.AtomicInteger();
     private int diagnosticCaptureGeneration = 0;
     private String pendingDiagnosticExport = "";
     // Registered before onStart, so Save TXT works after process recreation.
@@ -3337,8 +3342,8 @@ private void loadQualityCollection(boolean reset) {
                 if (!localWithinTopTime(post)) continue;
                 if (ids.add(post.id)) matches.add(post);
             }
-            sortLocalSearch(matches);
-            finishLocalSearchCollection(generation, matches);
+            sortLocalSearchAsync(generation, matches,
+                    sorted -> finishLocalSearchCollection(generation, sorted));
             return;
         }
 
@@ -3511,9 +3516,18 @@ private void loadQualityCollection(boolean reset) {
 
     private void mergeSearchLayerResults(int generation, List<RedditPost> candidates) {
         if (!searchStillValid(generation) || candidates == null || candidates.isEmpty()) return;
+        // Source callbacks arrive on the main Handler. Yield while checking costly
+        // fuzzy matches rather than processing 1,000 cached posts in one callback.
+        mergeSearchLayerBatch(generation, new ArrayList<>(candidates), 0, 0);
+    }
 
-        int acceptedCount = 0;
-        for (RedditPost post : candidates) {
+    private void mergeSearchLayerBatch(
+            int generation, List<RedditPost> candidates, int start, int acceptedCount) {
+        if (!searchStillValid(generation)) return;
+        final int end = Math.min(candidates.size(), start + 12);
+        int accepted = acceptedCount;
+        for (int i = start; i < end; i++) {
+            RedditPost post = candidates.get(i);
             if (!searchLayerCandidateAccepted(post)) continue;
 
             String key = canonicalPostKey(post);
@@ -3523,15 +3537,28 @@ private void loadQualityCollection(boolean reset) {
             if (!mediaKey.isEmpty() && searchLayerMediaKeys.contains(mediaKey)) continue;
 
             searchLayerResults.put(key, post);
-            acceptedCount++;
+            accepted++;
             if (!mediaKey.isEmpty()) searchLayerMediaKeys.add(mediaKey);
         }
+        if (end < candidates.size()) {
+            final int nextAccepted = accepted;
+            if (root != null) {
+                root.post(() -> mergeSearchLayerBatch(
+                        generation, candidates, end, nextAccepted));
+            }
+            return;
+        }
 
-        // Duplicate/filtered batches must not rebuild every view and video player.
-        if (acceptedCount == 0) return;
+        // Duplicate/filtered batches must not rebuild the pager or video players.
+        if (accepted == 0) return;
+        ArrayList<RedditPost> snapshot = new ArrayList<>(searchLayerResults.values());
+        sortLocalSearchAsync(generation, snapshot,
+                sorted -> applySortedSearchLayerResults(generation, sorted));
+    }
 
-        ArrayList<RedditPost> merged = new ArrayList<>(searchLayerResults.values());
-        sortLocalSearch(merged);
+    private void applySortedSearchLayerResults(
+            int generation, ArrayList<RedditPost> merged) {
+        if (!searchStillValid(generation)) return;
 
         String activeKey = "";
         RedditPost active = currentPagerPost();
@@ -3878,8 +3905,8 @@ private void loadQualityCollection(boolean reset) {
             int rawFetched) {
         if (!searchStillValid(generation)) return;
         if (!cursor.isEmpty() && !seenCursors.add(cursor)) {
-            sortLocalSearch(collected);
-            finishLocalSearchCollection(generation, collected);
+            sortLocalSearchAsync(generation, collected,
+                    sorted -> finishLocalSearchCollection(generation, sorted));
             return;
         }
 
@@ -3923,8 +3950,8 @@ private void loadQualityCollection(boolean reset) {
                         page + 1, nextRawFetched);
                 return;
             }
-            sortLocalSearch(collected);
-            finishLocalSearchCollection(generation, collected);
+            sortLocalSearchAsync(generation, collected,
+                    sorted -> finishLocalSearchCollection(generation, sorted));
         });
     }
 
@@ -3970,24 +3997,53 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
         return post.createdUtc > 0L && now - post.createdUtc <= seconds;
     }
 
-    private void sortLocalSearch(ArrayList<RedditPost> items) {
-        if (sort.equals("random")) {
-            Collections.shuffle(items);
-        } else if (sort.equals("new")) {
-            items.sort((a, b) -> Long.compare(b.createdUtc, a.createdUtc));
-        } else if (sort.equals("oldest")) {
-            items.sort((a, b) -> Long.compare(a.createdUtc, b.createdUtc));
-        } else if (sort.equals("top")) {
-            items.sort((a, b) -> Integer.compare(b.score, a.score));
-        } else if (sort.equals("hot")) {
-            items.sort((a, b) -> Double.compare(localHotScore(b), localHotScore(a)));
-        } else {
-            items.sort((a, b) -> {
-                int relevance = Integer.compare(localSearchRelevance(b), localSearchRelevance(a));
-                if (relevance != 0) return relevance;
-                return Integer.compare(b.score, a.score);
+    // Snapshot query/sort on UI, rank each post ONCE on a background executor,
+    // then deliver only the most recent search generation to the Android UI.
+    private void sortLocalSearchAsync(
+            int generation, ArrayList<RedditPost> items,
+            java.util.function.Consumer<ArrayList<RedditPost>> onSorted) {
+        final int revision = searchSortRevision.incrementAndGet();
+        final String requestedSort = sort;
+        final String requestedQuery = query;
+        SEARCH_SORT_EXECUTOR.execute(() -> {
+            if (revision != searchSortRevision.get()) return;
+            if (requestedSort.equals("random")) {
+                Collections.shuffle(items);
+            } else if (requestedSort.equals("new")) {
+                items.sort((a, b) -> Long.compare(b.createdUtc, a.createdUtc));
+            } else if (requestedSort.equals("oldest")) {
+                items.sort((a, b) -> Long.compare(a.createdUtc, b.createdUtc));
+            } else if (requestedSort.equals("top")) {
+                items.sort((a, b) -> Integer.compare(b.score, a.score));
+            } else if (requestedSort.equals("hot")) {
+                items.sort((a, b) -> Double.compare(localHotScore(b), localHotScore(a)));
+            } else {
+                // TimSort may compare the same post dozens of times. A full
+                // Damerau-Levenshtein distance and regex normalization on each
+                // comparison caused the November 13 input-dispatch ANR.
+                java.util.IdentityHashMap<RedditPost, Integer> relevance =
+                        new java.util.IdentityHashMap<>();
+                for (int i = 0; i < items.size(); i++) {
+                    if ((i & 7) == 0 && revision != searchSortRevision.get()) return;
+                    RedditPost post = items.get(i);
+                    relevance.put(post, fuzzyPostSearchScore(post, requestedQuery));
+                }
+                if (revision != searchSortRevision.get()) return;
+                items.sort((a, b) -> {
+                    int compare = Integer.compare(
+                            relevance.getOrDefault(b, 0), relevance.getOrDefault(a, 0));
+                    return compare != 0 ? compare : Integer.compare(b.score, a.score);
+                });
+            }
+            if (revision != searchSortRevision.get()) return;
+            runOnUiThread(() -> {
+                if (revision != searchSortRevision.get()
+                        || !searchStillValid(generation)
+                        || !sort.equals(requestedSort)
+                        || !query.equals(requestedQuery)) return;
+                onSorted.accept(items);
             });
-        }
+        });
     }
 
     private void finishLocalSearchCollection(int generation, ArrayList<RedditPost> collected) {
