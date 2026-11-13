@@ -1612,23 +1612,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                     new HashSet<>(subscriptionNames), "", 500, cached -> {
                         if (!homeRandomContextValid(feedGen, randomGen)) return;
                         Collections.shuffle(cached);
-                        ArrayList<RedditPost> selected = new ArrayList<>();
-                        HashSet<String> selectedCommunities = new HashSet<>();
-                        for (RedditPost post : cached) {
-                            if (post == null || !matchesMedia(post)
-                                    || isReadHiddenForDiscovery(post)
-                                    || isSavedForUnread(post)
-                                    || isContentBlocked(post)) continue;
-                            String community = post.subreddit == null ? ""
-                                    : post.subreddit.toLowerCase(Locale.US);
-                            if (!selectedCommunities.add(community)) continue;
-                            selected.add(post);
-                            if (selected.size() >= 24) break;
-                        }
-                        if (!selected.isEmpty()) {
-                            homeRandomLastSource = "local cache";
-                            appendUnique(selected);
-                        }
+                        // The cache callback runs on the main thread.
+                        // Yield between small groups to keep touch input responsive.
+                        filterHomeRandomCacheBatch(
+                                cached, feedGen, randomGen, 0,
+                                new ArrayList<>(), new HashSet<>());
                     });
         }
 
@@ -1636,6 +1624,38 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         loading = true;
         feedLoading = true;
         fetchHomeRandomRoundNext(feedGen, randomGen);
+    }
+
+    private void filterHomeRandomCacheBatch(
+            List<RedditPost> cached,
+            int feedGen, int randomGen, int start,
+            ArrayList<RedditPost> selected,
+            HashSet<String> selectedCommunities) {
+        if (!homeRandomContextValid(feedGen, randomGen)) return;
+        final int end = Math.min(cached.size(), start + 20);
+        for (int i = start; i < end && selected.size() < 24; i++) {
+            RedditPost post = cached.get(i);
+            if (post == null || !matchesMedia(post)
+                    || isReadHiddenForDiscovery(post)
+                    || isSavedForUnread(post)
+                    || isContentBlocked(post)) continue;
+            String community = post.subreddit == null ? ""
+                    : post.subreddit.toLowerCase(Locale.US);
+            if (!selectedCommunities.add(community)) continue;
+            selected.add(post);
+        }
+        if (end < cached.size() && selected.size() < 24) {
+            if (root != null) {
+                root.postDelayed(() -> filterHomeRandomCacheBatch(
+                        cached, feedGen, randomGen, end,
+                        selected, selectedCommunities), 8L);
+            }
+            return;
+        }
+        if (!selected.isEmpty()) {
+            homeRandomLastSource = "local cache";
+            appendUnique(selected);
+        }
     }
 
     private void prepareHomeRandomRound() {
