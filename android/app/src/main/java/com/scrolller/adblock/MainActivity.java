@@ -11,6 +11,8 @@ import android.util.Log;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.os.Process;
+import android.os.Debug;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -39,6 +41,8 @@ import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 import androidx.activity.OnBackPressedCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -49,6 +53,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.OutputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
@@ -69,6 +74,23 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private static final String REDDIT = "https://www.reddit.com";
     private static final String WEB_LOG_TAG = "RedviewWeb";
+    private String pendingDiagnosticExport = "";
+    // Registered before onStart, so Save TXT works after process recreation.
+    private final ActivityResultLauncher<String> diagnosticSaveLauncher =
+            registerForActivityResult(
+                    new ActivityResultContracts.CreateDocument("text/plain"), uri -> {
+                        if (uri == null || pendingDiagnosticExport.isEmpty()) return;
+                        try (OutputStream stream = getContentResolver().openOutputStream(uri)) {
+                            if (stream == null) throw new java.io.IOException("Document provider returned no stream");
+                            stream.write(pendingDiagnosticExport.getBytes(StandardCharsets.UTF_8));
+                            android.widget.Toast.makeText(this, "Diagnostic TXT saved", android.widget.Toast.LENGTH_SHORT).show();
+                        } catch (Exception error) {
+                            AppDiagnostics.failure("diagnostic-file-export", error);
+                            android.widget.Toast.makeText(this, "Could not save diagnostics", android.widget.Toast.LENGTH_LONG).show();
+                        } finally {
+                            pendingDiagnosticExport = "";
+                        }
+                    });
     private static final float REQUESTED_DISPLAY_HZ = 120f;
     private static final String[][] CURATED_CATEGORY_ROWS = {
             {"NSFW", "Adult", "General", "NSFW,gonewild,RealGirls"},
@@ -310,6 +332,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         super.onCreate(savedInstanceState);
         // Install crash capture before any OEM display-mode interaction.
         CrashReporter.install(this);
+        AppDiagnostics.record("lifecycle", "MainActivity.onCreate");
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.BLACK);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -454,6 +477,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
             @Override
             public void onPageSelected(int position) {
+                RedditPost selected = postAdapter.getPost(position);
+                AppDiagnostics.record("pager", "page=" + position
+                        + " total=" + postAdapter.getItemCount()
+                        + " media=" + (selected == null ? "unknown" : selected.mediaKind));
                 postAdapter.setActivePosition(layoutMode.equals("fullscreen") ? position : -1);
                 boolean readEligible = layoutMode.equals("fullscreen")
                         && screen != Screen.ACCOUNT
@@ -5968,6 +5995,7 @@ private void setFullscreenChrome(boolean visible) {
     @Override
     public void onMediaReady(RedditPost post) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
+        AppDiagnostics.record("media-ready", "kind=" + post.mediaKind);
         mediaFailedPostIds.remove(post.id);
         mediaReadyPostIds.add(post.id);
     }
@@ -5975,6 +6003,7 @@ private void setFullscreenChrome(boolean visible) {
     @Override
     public void onMediaFailed(RedditPost post) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
+        AppDiagnostics.record("media-failed", "kind=" + post.mediaKind);
         mediaReadyPostIds.remove(post.id);
         mediaFailedPostIds.add(post.id);
         // Failure remains uncertain until the user leaves the page. The swipe
@@ -6317,6 +6346,7 @@ private void setFullscreenChrome(boolean visible) {
 
     @Override
     protected void onPause() {
+        AppDiagnostics.record("lifecycle", "MainActivity.onPause");
         super.onPause();
         if (postAdapter != null) postAdapter.setActivePosition(-1);
     }
@@ -6324,6 +6354,7 @@ private void setFullscreenChrome(boolean visible) {
     @Override
     protected void onResume() {
         super.onResume();
+        AppDiagnostics.record("lifecycle", "MainActivity.onResume");
         if (root != null) root.post(this::request120HzDisplay);
         if (postAdapter != null && pager != null && layoutMode.equals("fullscreen")) {
             postAdapter.setActivePosition(pager.getCurrentItem());
@@ -6354,12 +6385,14 @@ private void setFullscreenChrome(boolean visible) {
         } catch (RuntimeException displayError) {
             // Keep the already-working feed and Random loader usable even if
             // a vendor display policy refuses this window preference.
+            AppDiagnostics.failure("display-120hz-rejected", displayError);
             Log.w(WEB_LOG_TAG, "120 Hz window preference was refused", displayError);
         }
     }
 
     @Override
     protected void onDestroy() {
+        AppDiagnostics.record("lifecycle", "MainActivity.onDestroy");
         commitSessionReadCatalog();
         if (postAdapter != null) postAdapter.releaseAll();
         if (sessionView != null) sessionView.destroy();
@@ -6714,14 +6747,17 @@ private void installCompactNavigation() {
         Button layout = sheetButton("Layout");
         Button cache = sheetButton("Media cache");
         Button diagnostics = sheetButton("Feed diagnostics");
+        Button crashDump = sheetButton("Crash logs & diagnostic dump");
         body.addView(account, sectionButtonParams());
         body.addView(layout, sectionButtonParams());
         body.addView(cache, sectionButtonParams());
         body.addView(diagnostics, sectionButtonParams());
+        body.addView(crashDump, sectionButtonParams());
         account.setOnClickListener(v -> { dialog.dismiss(); showAccount(); });
         layout.setOnClickListener(v -> { dialog.dismiss(); showLayoutSheet(); });
         cache.setOnClickListener(v -> { dialog.dismiss(); showCacheControlSheet(); });
         diagnostics.setOnClickListener(v -> { dialog.dismiss(); showFeedDiagnosticsSheet(); });
+        crashDump.setOnClickListener(v -> { dialog.dismiss(); showCrashDiagnosticDumpSheet(); });
         dialog.setContentView(body);
         dialog.show();
     }
