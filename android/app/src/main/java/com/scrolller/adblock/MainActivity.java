@@ -74,6 +74,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private static final String REDDIT = "https://www.reddit.com";
     private static final String WEB_LOG_TAG = "RedviewWeb";
+    private static final String SELF_DIAGNOSTIC_BUILD_TAG = "self-dump-v1-20261112";
     private String pendingDiagnosticExport = "";
     // Registered before onStart, so Save TXT works after process recreation.
     private final ActivityResultLauncher<String> diagnosticSaveLauncher =
@@ -7924,6 +7925,7 @@ private void installCompactNavigation() {
         out.append("REDDIT MEDIA — SELF-DIAGNOSTIC DUMP\n");
         out.append("Captured: ").append(new java.util.Date()).append('\n');
         out.append("Package: ").append(getPackageName()).append('\n');
+        out.append("Diagnostic build tag: ").append(SELF_DIAGNOSTIC_BUILD_TAG).append('\n');
         try {
             android.content.pm.PackageInfo packageInfo =
                     getPackageManager().getPackageInfo(getPackageName(), 0);
