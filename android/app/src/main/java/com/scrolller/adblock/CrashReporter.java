@@ -10,7 +10,9 @@ import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.os.Build;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStream;
 import java.io.FileOutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -58,12 +60,10 @@ final class CrashReporter {
 
     private static void showPreviousExitIfUseful(Activity activity) {
         activity.getWindow().getDecorView().post(() -> {
+            // Show only the app's saved Java exception automatically.
+            // Android exit-history calls can block the main thread, so the
+            // Settings dump fetches ANR records and stacks on a worker.
             String report = read(activity);
-            String exit = previousExitSummary(activity);
-            if (!exit.isEmpty()) {
-                if (!report.isEmpty()) report += "\n\n";
-                report += exit;
-            }
             if (report.isEmpty()) return;
 
             String currentBuild = "Current installed build: " + versionLabel(activity);
@@ -123,11 +123,43 @@ final class CrashReporter {
                         .append("Status: ").append(info.getStatus()).append('\n')
                         .append("Importance: ").append(info.getImportance()).append('\n')
                         .append("Description: ")
-                        .append(String.valueOf(info.getDescription())).append("\n\n");
+                        .append(String.valueOf(info.getDescription())).append("\n");
+                if (reason == ApplicationExitInfo.REASON_ANR) {
+                    details.append("System-captured ANR thread trace\n")
+                            .append(readAnrTrace(info)).append("\n");
+                }
+                details.append('\n');
             }
             return details.toString();
         } catch (Throwable ignored) {
             return "";
+        }
+    }
+
+    private static String readAnrTrace(ApplicationExitInfo info) {
+        // Android 11+ owns this circular trace buffer. It may have been
+        // overwritten. Never attempt to read other apps' logcat.
+        final int maxBytes = 64 * 1024;
+        try (InputStream in = info.getTraceInputStream()) {
+            if (in == null) return "(system ANR trace unavailable or expired)\n";
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int remaining = maxBytes;
+            while (remaining > 0) {
+                int n = in.read(buffer, 0, Math.min(buffer.length, remaining));
+                if (n < 0) break;
+                if (n == 0) continue;
+                out.write(buffer, 0, n);
+                remaining -= n;
+            }
+            String result = new String(out.toByteArray(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            if (result.isEmpty()) return "(system trace stream was empty)\n";
+            return result + (remaining == 0
+                    ? "\n[ANR trace limited to first 64 KiB for safe export]\n" : "");
+        } catch (Exception error) {
+            return "(system trace could not be read: "
+                    + error.getClass().getSimpleName() + ")\n";
         }
     }
 
