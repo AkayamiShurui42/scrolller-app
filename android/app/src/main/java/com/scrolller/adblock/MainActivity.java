@@ -287,6 +287,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private final ArrayList<Subscription> subscriptions = new ArrayList<>();
     private final Set<String> subscriptionNames = new HashSet<>();
+    // Joined membership changes rarely; evaluating 500 cached posts must not
+    // rebuild it hundreds of times on the UI thread.
+    private Set<String> joinedSnapshotCache = Collections.emptySet();
+    private boolean joinedSnapshotDirty = true;
     private final Set<String> searchJoinedSnapshot = new HashSet<>();
     private final Set<String> feedSeenPostIds = new HashSet<>();
     private final Set<String> feedSeenCursors = new HashSet<>();
@@ -1022,6 +1026,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             subscriptionNames.clear();
             subscriptions.addAll(pendingSubscriptions);
             subscriptionNames.addAll(pendingNames);
+            joinedSnapshotDirty = true;
             prefs.edit()
                     .putStringSet("joinedSubredditsV1", new HashSet<>(subscriptionNames))
                     .apply();
@@ -1895,6 +1900,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         if (post == null) return false;
         if (!ContentTaxonomy.matches(post, peopleFilterMask)) return true;
         if (!passesDiscoveryFilters(post)) return true;
+        if (!blockLgbtTopics && !blockGoreContent) return false;
 
         String title = post.title == null ? "" : post.title;
         String community = post.subreddit == null ? "" : post.subreddit;
@@ -1955,10 +1961,20 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     }
 
     private static String normalizeFilterText(String value) {
-        String clean = value == null ? "" : value.toLowerCase(Locale.US)
-                .replaceAll("[^a-z0-9]+", " ")
-                .trim();
-        return " " + clean + " ";
+        String raw = value == null ? "" : value.toLowerCase(Locale.US);
+        StringBuilder normalized = new StringBuilder(raw.length() + 2);
+        normalized.append(' ');
+        boolean gap = false;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                if (gap && normalized.length() > 1) normalized.append(' ');
+                normalized.append(c);
+                gap = false;
+            } else gap = true;
+        }
+        normalized.append(' ');
+        return normalized.toString();
     }
 
     private static boolean containsFilterPhrase(String normalized, String... phrases) {
@@ -3519,7 +3535,8 @@ private void loadQualityCollection(boolean reset) {
         updateChrome();
     }
 
-    private LinkedHashSet<String> joinedSubredditSnapshot() {
+    private Set<String> joinedSubredditSnapshot() {
+        if (!joinedSnapshotDirty) return joinedSnapshotCache;
         LinkedHashSet<String> joined = new LinkedHashSet<>();
         for (String name : subscriptionNames) {
             String clean = cleanSubredditName(name);
@@ -3530,7 +3547,9 @@ private void loadQualityCollection(boolean reset) {
             String clean = cleanSubredditName(sub.name);
             if (!clean.isEmpty()) joined.add(clean.toLowerCase(Locale.US));
         }
-        return joined;
+        joinedSnapshotCache = Collections.unmodifiableSet(joined);
+        joinedSnapshotDirty = false;
+        return joinedSnapshotCache;
     }
 
     private boolean postAllowedBySearchScope(RedditPost post) {
@@ -3588,7 +3607,7 @@ private void loadQualityCollection(boolean reset) {
             return;
         }
 
-        LinkedHashSet<String> joined = joinedSubredditSnapshot();
+        Set<String> joined = joinedSubredditSnapshot();
         ArrayList<String> groups = new ArrayList<>();
         if (!joined.isEmpty()) {
             searchJoinedSnapshot.clear();
@@ -5310,8 +5329,25 @@ private void showCategoryRoot() {
     private String cleanSubredditName(String value) {
         if (value == null) return "";
         String clean = value.trim();
-        if (clean.toLowerCase(Locale.US).startsWith("r/")) clean = clean.substring(2);
-        return clean.replaceAll("[^A-Za-z0-9_]", "");
+        if (clean.length() >= 2
+                && (clean.charAt(0) == 'r' || clean.charAt(0) == 'R')
+                && clean.charAt(1) == '/') clean = clean.substring(2);
+
+        // Equivalent ASCII whitelist without compiling a regex for every post.
+        StringBuilder filtered = null;
+        for (int i = 0; i < clean.length(); i++) {
+            char c = clean.charAt(i);
+            boolean valid = (c >= 'A' && c <= 'Z')
+                    || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9') || c == '_';
+            if (valid) {
+                if (filtered != null) filtered.append(c);
+            } else if (filtered == null) {
+                filtered = new StringBuilder(clean.length());
+                filtered.append(clean, 0, i);
+            }
+        }
+        return filtered == null ? clean : filtered.toString();
     }
 
     private String searchScopeDescription() {
@@ -5916,6 +5952,7 @@ private void setFullscreenChrome(boolean visible) {
                 subscriptions.add(new Subscription(target, ""));
                 subscriptions.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
             }
+            joinedSnapshotDirty = true;
 
             setStatus((currentlySubscribed ? "Left r/" : "Joined r/") + target, false);
             updateChrome();
