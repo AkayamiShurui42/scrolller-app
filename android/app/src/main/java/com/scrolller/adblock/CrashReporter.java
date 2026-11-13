@@ -26,6 +26,7 @@ final class CrashReporter {
     private CrashReporter() {}
 
     static synchronized void install(Activity activity) {
+        AppDiagnostics.init(activity);
         if (installed) {
             showPreviousExitIfUseful(activity);
             return;
@@ -35,6 +36,7 @@ final class CrashReporter {
         Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             try {
+                AppDiagnostics.failure("UNCAUGHT CRASH thread=" + thread.getName(), throwable);
                 StringWriter sw = new StringWriter();
                 PrintWriter pw = new PrintWriter(sw);
                 pw.println("Reddit Media uncaught exception");
@@ -118,6 +120,22 @@ final class CrashReporter {
         } catch (Throwable ignored) {
             return "";
         }
+    }
+
+    static String diagnosticSnapshot(Context context) {
+        StringBuilder out = new StringBuilder();
+        out.append("Last captured uncaught Java crash\n");
+        String previous = read(context);
+        out.append(previous.isEmpty() ? "(none saved by this app)\n" : previous);
+        out.append("\nAndroid process-exit information\n");
+        String exit = previousExitSummary(context);
+        out.append(exit.isEmpty() ? "(no recent crash or ANR record exposed)\n" : exit);
+        return out.toString();
+    }
+
+    static void clearCapturedCrash(Context context) {
+        clear(context);
+        // The Android process exit history is managed by the OS.
     }
 
     private static String versionLabel(Context context) {
