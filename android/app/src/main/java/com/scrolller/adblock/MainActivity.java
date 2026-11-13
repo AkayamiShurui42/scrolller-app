@@ -74,7 +74,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private static final String REDDIT = "https://www.reddit.com";
     private static final String WEB_LOG_TAG = "RedviewWeb";
-    private static final String SELF_DIAGNOSTIC_BUILD_TAG = "self-dump-v1-20261112";
+    private static final String SELF_DIAGNOSTIC_BUILD_TAG = "self-dump-anr-traces-v2-20261112";
+    private static final java.util.concurrent.ExecutorService DIAGNOSTICS_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+    private int diagnosticCaptureGeneration = 0;
     private String pendingDiagnosticExport = "";
     // Registered before onStart, so Save TXT works after process recreation.
     private final ActivityResultLauncher<String> diagnosticSaveLauncher =
@@ -7843,8 +7846,8 @@ private void installCompactNavigation() {
                 + "information and current playback/feed state. No ADB or root is needed. "
                 + "Crash stack traces and device details may be sensitive; review before sharing."));
 
-        final String[] report = {buildSelfDiagnosticDump()};
-        TextView preview = bodyText(previewDiagnosticDump(report[0]));
+        final String[] report = {""};
+        TextView preview = bodyText("Collecting Android ANR traces and app events…");
         preview.setTextIsSelectable(true);
         body.addView(preview);
 
@@ -7859,12 +7862,8 @@ private void installCompactNavigation() {
         body.addView(save, sectionButtonParams());
         body.addView(clear, sectionButtonParams());
 
-        refresh.setOnClickListener(v -> {
-            report[0] = buildSelfDiagnosticDump();
-            preview.setText(previewDiagnosticDump(report[0]));
-            android.widget.Toast.makeText(this, "Fresh diagnostics captured",
-                    android.widget.Toast.LENGTH_SHORT).show();
-        });
+        refresh.setOnClickListener(v ->
+                captureCrashDumpAsync(report, preview, copy, share, save));
         copy.setOnClickListener(v -> {
             android.content.ClipboardManager clipboard = (android.content.ClipboardManager)
                     getSystemService(android.content.Context.CLIPBOARD_SERVICE);
@@ -7902,13 +7901,72 @@ private void installCompactNavigation() {
                         + "cannot be cleared here.")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Clear logs", (confirm, which) -> {
-                    AppDiagnostics.clear(this);
-                    CrashReporter.clearCapturedCrash(this);
-                    report[0] = buildSelfDiagnosticDump();
-                    preview.setText(previewDiagnosticDump(report[0]));
+                    // Deleting or reading log files is disk I/O: never do
+                    // this on the touch-input/UI thread.
+                    diagnosticCaptureGeneration++;
+                    copy.setEnabled(false);
+                    share.setEnabled(false);
+                    save.setEnabled(false);
+                    preview.setText("Clearing application logs…");
+                    DIAGNOSTICS_EXECUTOR.execute(() -> {
+                        AppDiagnostics.clear(getApplicationContext());
+                        CrashReporter.clearCapturedCrash(getApplicationContext());
+                        runOnUiThread(() -> {
+                            if (!isFinishing() && !isDestroyed()) {
+                                captureCrashDumpAsync(report, preview, copy, share, save);
+                            }
+                        });
+                    });
                 }).show());
         dialog.setContentView(scroll);
         dialog.show();
+        captureCrashDumpAsync(report, preview, copy, share, save);
+    }
+
+    private void captureCrashDumpAsync(
+            String[] report, TextView preview, Button copy, Button share, Button save) {
+        // Capture view/model state on the UI thread, then do OS binder calls
+        // and filesystem reads on a bounded single background executor.
+        final String header = buildSelfDiagnosticHeader();
+        final int generation = ++diagnosticCaptureGeneration;
+        report[0] = "";
+        preview.setText("Collecting Android ANR traces and app events…");
+        copy.setEnabled(false);
+        share.setEnabled(false);
+        save.setEnabled(false);
+        final android.content.Context app = getApplicationContext();
+        DIAGNOSTICS_EXECUTOR.execute(() -> {
+            String assembled;
+            try {
+                StringBuilder out = new StringBuilder(header);
+                out.append("\n=== SAVED CRASHES / OS ANR TRACES ===\n");
+                out.append(CrashReporter.diagnosticSnapshot(app)).append('\n');
+                out.append("\n=== APPLICATION EVENT JOURNAL ===\n");
+                String events = AppDiagnostics.snapshot(app);
+                final int maxEvents = 120000;
+                if (events.length() > maxEvents) {
+                    out.append("[Older events trimmed; newest retained]\n");
+                    events = events.substring(events.length() - maxEvents);
+                }
+                out.append(events);
+                assembled = out.toString();
+            } catch (Exception error) {
+                AppDiagnostics.failure("anr-dump-collection", error);
+                assembled = header + "\nANR trace collection failed: "
+                        + error.getClass().getSimpleName();
+            }
+            final String finished = assembled;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || generation != diagnosticCaptureGeneration) {
+                    return;
+                }
+                report[0] = finished;
+                preview.setText(previewDiagnosticDump(finished));
+                copy.setEnabled(true);
+                share.setEnabled(true);
+                save.setEnabled(true);
+            });
+        });
     }
 
     private String previewDiagnosticDump(String report) {
@@ -7919,7 +7977,7 @@ private void installCompactNavigation() {
                 + "\n\n[Preview shortened. Copy, Share, or Save TXT contains the full dump.]";
     }
 
-    private String buildSelfDiagnosticDump() {
+    private String buildSelfDiagnosticHeader() {
         AppDiagnostics.record("diagnostics", "self-diagnostic snapshot captured");
         StringBuilder out = new StringBuilder();
         out.append("REDDIT MEDIA — SELF-DIAGNOSTIC DUMP\n");
@@ -7987,17 +8045,8 @@ private void installCompactNavigation() {
         out.append("Random failed requests: ").append(homeRandomFailuresThisLoad).append('\n');
         out.append("Archive failed requests: ").append(homeRandomArchiveFailuresThisLoad).append('\n');
         out.append("Last HTTP failure status: ").append(lastFeedFailureStatus).append('\n');
-        // Deliberately exclude raw URLs, post IDs, usernames and credentials.
-        out.append("\n=== CAPTURED CRASH / OS EXIT ===\n");
-        out.append(CrashReporter.diagnosticSnapshot(this)).append('\n');
-        out.append("\n=== APPLICATION EVENT JOURNAL ===\n");
-        String events = AppDiagnostics.snapshot(this);
-        final int maxEvents = 120000;
-        if (events.length() > maxEvents) {
-            out.append("[Older events truncated for safe sharing; newest retained]\n");
-            events = events.substring(events.length() - maxEvents);
-        }
-        out.append(events);
+        // This header contains only state that belongs to the UI thread.
+        // OS exit/ANR binder calls and all log file reads run asynchronously.
         return out.toString();
     }
 
