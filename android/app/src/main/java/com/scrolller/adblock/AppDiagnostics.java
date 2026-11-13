@@ -8,8 +8,9 @@ import android.util.Log;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -121,8 +122,15 @@ final class AppDiagnostics {
     private static String read(File file) {
         try {
             if (!file.isFile()) return "";
-            byte[] bytes = Files.readAllBytes(file.toPath());
-            return new String(bytes, StandardCharsets.UTF_8);
+            try (FileInputStream in = new FileInputStream(file);
+                    ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, count);
+                }
+                return new String(out.toByteArray(), StandardCharsets.UTF_8);
+            }
         } catch (Exception error) {
             return "(App event file unavailable: " + error.getClass().getSimpleName() + ")\n";
         }
