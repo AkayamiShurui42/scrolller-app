@@ -306,13 +306,6 @@ public void setActivePosition(int position) {
         if (player == null || player != activePlayer || !isPostActive(post)) return;
         if (post.id == null || !post.id.equals(videoViewPostId)) return;
         videoFirstFrameRendered = true;
-        // TextureView surfaces are pooled, but the old post's decoded frame
-        // must never flash on the new page. Reveal only the new first frame.
-        if (activePlayerHolder != null
-                && activePlayerHolder.boundPost == post
-                && activePlayerHolder.playerView != null) {
-            activePlayerHolder.playerView.setAlpha(1f);
-        }
         videoLastSampleAtMs = SystemClock.elapsedRealtime();
         sampleVideoViewProgress(true);
     }
@@ -394,31 +387,10 @@ public void setActivePosition(int position) {
                 try { other.setPlayWhenReady(false); other.pause(); } catch (RuntimeException ignored) {}
             }
 
-            String currentUrl = redgifs ? redgifsPlayerUrl : defaultPlayerUrl;
-            boolean newMedia = !url.equals(currentUrl) || target.getPlayerError() != null;
-            boolean newSurface = activePlayerHolder != holder
-                    || holder.playerView.getPlayer() != target;
-            // During a video-to-video swipe, never expose the old TextureView
-            // frame while a pooled decoder is attached to the incoming page.
-            if (newSurface || newMedia) holder.playerView.setAlpha(0f);
             if (activePlayerHolder != null && activePlayerHolder != holder
                     && activePlayerHolder.playerView != null) {
-                activePlayerHolder.playerView.setAlpha(0f);
                 try { activePlayerHolder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
                 activePlayerHolder.player = null;
-            }
-
-            if (redgifs) redgifsPlayerPost = post;
-            else defaultPlayerPost = post;
-            if (newMedia) {
-                // Replace the decoded media BEFORE attaching its video surface.
-                // Reusing a PlayerView with the old media first is what exposed
-                // the previous clip for one frame on some device compositors.
-                target.setPlayWhenReady(false);
-                target.setMediaItem(MediaItem.fromUri(url));
-                target.prepare();
-                if (redgifs) redgifsPlayerUrl = url;
-                else defaultPlayerUrl = url;
             }
 
             activePlayer = target;
@@ -426,6 +398,17 @@ public void setActivePosition(int position) {
             holder.player = target;
             holder.playerView.setPlayer(target);
             holder.playerView.setOnClickListener(null);
+
+            String currentUrl = redgifs ? redgifsPlayerUrl : defaultPlayerUrl;
+            if (redgifs) redgifsPlayerPost = post;
+            else defaultPlayerPost = post;
+
+            if (!url.equals(currentUrl) || target.getPlayerError() != null) {
+                target.setMediaItem(MediaItem.fromUri(url));
+                target.prepare();
+                if (redgifs) redgifsPlayerUrl = url;
+                else defaultPlayerUrl = url;
+            }
             target.setVolume(muted ? 0f : 1f);
             target.setPlayWhenReady(true);
         } catch (RuntimeException playerError) {
@@ -436,7 +419,6 @@ public void setActivePosition(int position) {
     private void detachPooledPlayer(PostHolder holder) {
         if (holder == null) return;
         if (holder.playerView != null) {
-            holder.playerView.setAlpha(0f);
             try { holder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
         }
         holder.player = null;
@@ -457,7 +439,6 @@ public void setActivePosition(int position) {
             try { redgifsPlayer.setPlayWhenReady(false); redgifsPlayer.pause(); } catch (RuntimeException ignored) {}
         }
         if (activePlayerHolder != null && activePlayerHolder.playerView != null) {
-            activePlayerHolder.playerView.setAlpha(0f);
             try { activePlayerHolder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
             activePlayerHolder.player = null;
         }
@@ -609,7 +590,7 @@ public void setActivePosition(int position) {
 
                 playerView = (PlayerView) android.view.LayoutInflater.from(context)
                         .inflate(R.layout.view_texture_player, root, false);
-                playerView.setKeepContentOnPlayerReset(false);
+                playerView.setKeepContentOnPlayerReset(true);
                 playerView.setShutterBackgroundColor(Color.TRANSPARENT);
                 playerView.setBackgroundColor(Color.TRANSPARENT);
                 root.addView(playerView, fullParams());
@@ -704,7 +685,7 @@ public void setActivePosition(int position) {
 
             PlayerView nextView = (PlayerView) android.view.LayoutInflater.from(context)
                     .inflate(R.layout.view_texture_player, root, false);
-            nextView.setKeepContentOnPlayerReset(false);
+            nextView.setKeepContentOnPlayerReset(true);
             nextView.setShutterBackgroundColor(Color.TRANSPARENT);
             nextView.setBackgroundColor(Color.TRANSPARENT);
 
