@@ -5458,9 +5458,13 @@ private void trackFullscreenVisit(int position) {
             }
         }
 
-        // The previous page was already classified the moment it became active.
-        // Swiping away only exposes the unobtrusive undo HUD.
-        if (previous != null) showReadUndoHud(previous);
+        // Persist the page just exited; otherwise an app ANR/process kill
+        // before the next subreddit boundary loses the read/hide history.
+        // Keep it in the visible pager so swiping remains undisturbed.
+        if (previous != null) {
+            persistViewedPost(previous);
+            showReadUndoHud(previous);
+        }
         lastFullscreenPostId = currentId;
     }
 
@@ -5526,17 +5530,23 @@ private void trackFullscreenVisit(int position) {
         }, 1100L);
     }
 
+    private void persistViewedPost(RedditPost post) {
+        if (post == null || post.id == null || post.id.isEmpty()
+                || post.saved || savedContainsPostId(post.id)) return;
+        String bare = barePostId(post.id);
+        if (!bare.isEmpty()) sessionReadCatalog.remove(bare);
+        String mediaKey = canonicalMediaKey(post);
+        if (!hiddenContainsPostId(post.id)) hiddenPosts.put(post.id, post);
+        if (!mediaKey.isEmpty()) hiddenMediaKeys.add(mediaKey);
+        // Serialized on the ReadHideStore database executor, never the UI.
+        readHideStore.hideAsync(post, mediaKey);
+    }
+
     private void commitSessionReadCatalog() {
         clearReadUndoHud();
         if (!sessionReadCatalog.isEmpty()) {
             for (RedditPost post : new ArrayList<>(sessionReadCatalog.values())) {
-                if (post == null || post.id == null || post.id.isEmpty()) continue;
-                if (post.saved || savedContainsPostId(post.id)) continue;
-
-                String mediaKey = canonicalMediaKey(post);
-                if (!hiddenContainsPostId(post.id)) hiddenPosts.put(post.id, post);
-                if (!mediaKey.isEmpty()) hiddenMediaKeys.add(mediaKey);
-                readHideStore.hideAsync(post, mediaKey);
+                persistViewedPost(post);
             }
         }
 
@@ -6410,6 +6420,12 @@ private void setFullscreenChrome(boolean visible) {
     @Override
     protected void onPause() {
         AppDiagnostics.record("lifecycle", "MainActivity.onPause");
+        // Persist the currently visible post and any pending page transitions
+        // before the OS backgrounds/kills the process. No synchronous DB I/O.
+        if (pager != null && postAdapter != null && layoutMode.equals("fullscreen")) {
+            markVisiblePostRead(pager.getCurrentItem());
+        }
+        commitSessionReadCatalog();
         super.onPause();
         if (postAdapter != null) postAdapter.setActivePosition(-1);
     }
