@@ -764,6 +764,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 }
 
     private void installSessionTransport(boolean loadNow) {
+        AppDiagnostics.record("session", "creating Reddit transport reload=" + loadNow);
         WebView oldView = sessionView;
         RedditSessionEngine oldEngine = engine;
 
@@ -6214,6 +6215,7 @@ private void setFullscreenChrome(boolean visible) {
         lastFeedFailurePath = path == null ? "" : path.split("\\?", 2)[0];
         lastFeedFailureStatus = result.status;
         lastFeedFailureDetail = friendlyError(result);
+        AppDiagnostics.record("feed-request-failed", "HTTP=" + result.status);
         Log.e(WEB_LOG_TAG, "Feed request failed: " + lastFeedFailurePath
                 + " status=" + lastFeedFailureStatus
                 + " reason=" + lastFeedFailureDetail);
@@ -6382,6 +6384,7 @@ private void setFullscreenChrome(boolean visible) {
             params.preferredDisplayModeId = 0;
             params.preferredRefreshRate = REQUESTED_DISPLAY_HZ;
             getWindow().setAttributes(params);
+            AppDiagnostics.record("display", "requested window refresh Hz=" + REQUESTED_DISPLAY_HZ);
         } catch (RuntimeException displayError) {
             // Keep the already-working feed and Random loader usable even if
             // a vendor display policy refuses this window preference.
