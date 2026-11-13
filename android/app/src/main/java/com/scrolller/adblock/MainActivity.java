@@ -7827,6 +7827,175 @@ private void installCompactNavigation() {
         dialog.show();
     }
 
+    private void showCrashDiagnosticDumpSheet() {
+        AppDiagnostics.record("diagnostics", "Settings crash dump opened");
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = sheetBody("Crash logs & diagnostic dump");
+        scroll.addView(body);
+
+        body.addView(bodyText("This report is captured by Reddit Media itself. It includes "
+                + "recent app events, saved uncaught Java crashes, Android process-exit "
+                + "information and current playback/feed state. No ADB or root is needed. "
+                + "Crash stack traces and device details may be sensitive; review before sharing."));
+
+        final String[] report = {buildSelfDiagnosticDump()};
+        TextView preview = bodyText(previewDiagnosticDump(report[0]));
+        preview.setTextIsSelectable(true);
+        body.addView(preview);
+
+        Button refresh = sheetButton("Capture fresh diagnostic dump");
+        Button copy = sheetButton("Copy full report");
+        Button share = sheetButton("Share report");
+        Button save = sheetButton("Save report as TXT");
+        Button clear = sheetButton("Clear stored crash & app logs");
+        body.addView(refresh, sectionButtonParams());
+        body.addView(copy, sectionButtonParams());
+        body.addView(share, sectionButtonParams());
+        body.addView(save, sectionButtonParams());
+        body.addView(clear, sectionButtonParams());
+
+        refresh.setOnClickListener(v -> {
+            report[0] = buildSelfDiagnosticDump();
+            preview.setText(previewDiagnosticDump(report[0]));
+            android.widget.Toast.makeText(this, "Fresh diagnostics captured",
+                    android.widget.Toast.LENGTH_SHORT).show();
+        });
+        copy.setOnClickListener(v -> {
+            android.content.ClipboardManager clipboard = (android.content.ClipboardManager)
+                    getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText(
+                        "Reddit Media crash dump", report[0]));
+                android.widget.Toast.makeText(this, "Crash report copied",
+                        android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
+        share.setOnClickListener(v -> {
+            try {
+                Intent intent = new Intent(Intent.ACTION_SEND);
+                intent.setType("text/plain");
+                intent.putExtra(Intent.EXTRA_SUBJECT, "Reddit Media self-diagnostic report");
+                intent.putExtra(Intent.EXTRA_TEXT, report[0]);
+                startActivity(Intent.createChooser(intent, "Share Reddit Media diagnostics"));
+            } catch (RuntimeException error) {
+                AppDiagnostics.failure("diagnostic-share", error);
+                android.widget.Toast.makeText(this, "Sharing unavailable",
+                        android.widget.Toast.LENGTH_LONG).show();
+            }
+        });
+        save.setOnClickListener(v -> {
+            pendingDiagnosticExport = report[0];
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
+                    .format(new java.util.Date());
+            diagnosticSaveLauncher.launch("reddit-media-crash-dump-" + stamp + ".txt");
+        });
+        clear.setOnClickListener(v -> new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Clear captured logs?")
+                .setMessage("Only the app-owned event journal and saved Java crash report "
+                        + "will be erased. Reddit settings, account, read history and "
+                        + "media cache will not be changed. Android OS exit history "
+                        + "cannot be cleared here.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Clear logs", (confirm, which) -> {
+                    AppDiagnostics.clear(this);
+                    CrashReporter.clearCapturedCrash(this);
+                    report[0] = buildSelfDiagnosticDump();
+                    preview.setText(previewDiagnosticDump(report[0]));
+                }).show());
+        dialog.setContentView(scroll);
+        dialog.show();
+    }
+
+    private String previewDiagnosticDump(String report) {
+        // Rendering hundreds of KB in an Android BottomSheet would cause jank.
+        final int maxPreview = 14000;
+        if (report.length() <= maxPreview) return report;
+        return report.substring(0, maxPreview)
+                + "\n\n[Preview shortened. Copy, Share, or Save TXT contains the full dump.]";
+    }
+
+    private String buildSelfDiagnosticDump() {
+        AppDiagnostics.record("diagnostics", "self-diagnostic snapshot captured");
+        StringBuilder out = new StringBuilder();
+        out.append("REDDIT MEDIA — SELF-DIAGNOSTIC DUMP\n");
+        out.append("Captured: ").append(new java.util.Date()).append('\n');
+        out.append("Package: ").append(getPackageName()).append('\n');
+        try {
+            android.content.pm.PackageInfo packageInfo =
+                    getPackageManager().getPackageInfo(getPackageName(), 0);
+            out.append("App version: ").append(packageInfo.versionName).append('\n');
+            out.append("Version code: ");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                out.append(packageInfo.getLongVersionCode());
+            } else {
+                out.append(packageInfo.versionCode);
+            }
+            out.append('\n');
+        } catch (Exception ignored) {
+            out.append("App version: unavailable\n");
+        }
+        out.append("Device: ").append(Build.MANUFACTURER).append(' ')
+                .append(Build.MODEL).append('\n');
+        out.append("Android: ").append(Build.VERSION.RELEASE)
+                .append(" (SDK ").append(Build.VERSION.SDK_INT).append(")\n");
+        out.append("Process PID: ").append(Process.myPid()).append('\n');
+        out.append("Process uptime: ").append(SystemClock.elapsedRealtime()).append("ms since boot\n");
+
+        Runtime runtime = Runtime.getRuntime();
+        out.append("Java heap (used/limit MB): ")
+                .append((runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024))
+                .append('/').append(runtime.maxMemory() / (1024 * 1024)).append('\n');
+        out.append("Native allocated heap MB: ")
+                .append(Debug.getNativeHeapAllocatedSize() / (1024 * 1024)).append('\n');
+        try {
+            android.view.Display display = getDisplay();
+            if (display != null) {
+                out.append("Actual reported display Hz: ")
+                        .append(display.getRefreshRate()).append('\n');
+            }
+            out.append("App requested window Hz: ")
+                    .append(getWindow().getAttributes().preferredRefreshRate).append('\n');
+        } catch (RuntimeException error) {
+            out.append("Display metadata unavailable: ")
+                    .append(error.getClass().getSimpleName()).append('\n');
+        }
+
+        out.append("\nCURRENT APP STATE\n");
+        out.append("Screen: ").append(screen).append('\n');
+        out.append("Context: ").append(context).append('\n');
+        out.append("Sort: ").append(sort).append('\n');
+        out.append("Layout: ").append(layoutMode).append('\n');
+        out.append("Media filter: ").append(media).append('\n');
+        out.append("Reddit session ready: ")
+                .append(engine != null && engine.isReady()).append('\n');
+        out.append("Signed in: ").append(username != null && !username.isEmpty()).append('\n');
+        out.append("Visible posts: ")
+                .append(postAdapter == null ? 0 : postAdapter.getItemCount()).append('\n');
+        out.append("Current pager index: ")
+                .append(pager == null ? -1 : pager.getCurrentItem()).append('\n');
+        RedditPost active = currentPagerPost();
+        out.append("Current media type: ")
+                .append(active == null ? "none" : active.mediaKind).append('\n');
+        out.append("Feed loading: ").append(feedLoading).append('\n');
+        out.append("Random source: ").append(homeRandomLastSource).append('\n');
+        out.append("Random failed requests: ").append(homeRandomFailuresThisLoad).append('\n');
+        out.append("Archive failed requests: ").append(homeRandomArchiveFailuresThisLoad).append('\n');
+        out.append("Last HTTP failure status: ").append(lastFeedFailureStatus).append('\n');
+        // Deliberately exclude raw URLs, post IDs, usernames and credentials.
+        out.append("\n=== CAPTURED CRASH / OS EXIT ===\n");
+        out.append(CrashReporter.diagnosticSnapshot(this)).append('\n');
+        out.append("\n=== APPLICATION EVENT JOURNAL ===\n");
+        String events = AppDiagnostics.snapshot(this);
+        final int maxEvents = 120000;
+        if (events.length() > maxEvents) {
+            out.append("[Older events truncated for safe sharing; newest retained]\n");
+            events = events.substring(events.length() - maxEvents);
+        }
+        out.append(events);
+        return out.toString();
+    }
+
     private void showFeedDiagnosticsSheet() {
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         ScrollView scroll = new ScrollView(this);
