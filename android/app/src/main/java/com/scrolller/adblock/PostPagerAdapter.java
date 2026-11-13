@@ -371,7 +371,7 @@ public void setActivePosition(int position) {
             public void onPlayerError(PlaybackException error) {
                 AppDiagnostics.record("player-error",
                         (familyRedgifs ? "family=redgifs " : "family=default ")
-                        + "media3-code=" + error.errorCodeName);
+                        + "media3-code=" + error.getErrorCodeName());
                 AppDiagnostics.failure("player-error-stack", error);
                 RedditPost post = familyRedgifs ? redgifsPlayerPost : defaultPlayerPost;
                 if (post != null) listener.onMediaFailed(post);
