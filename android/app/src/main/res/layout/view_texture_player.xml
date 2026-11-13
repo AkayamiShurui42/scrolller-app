@@ -10,4 +10,4 @@
     app:use_controller="true"
     app:auto_show="false"
     app:show_timeout="4000"
-    app:keep_content_on_player_reset="false" />
+    app:keep_content_on_player_reset="true" />
