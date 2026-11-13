@@ -308,7 +308,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        request120HzDisplay();
+        // Install crash capture before any OEM display-mode interaction.
         CrashReporter.install(this);
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.BLACK);
@@ -386,6 +386,9 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
         buildNativeUi();
         root.requestApplyInsets();
+        // Window refresh preferences are only safe to apply after the native
+        // root is attached, not while the Activity window is first created.
+        root.post(this::request120HzDisplay);
         sessionView.loadUrl(REDDIT + "/");
     }
 
@@ -6321,7 +6324,7 @@ private void setFullscreenChrome(boolean visible) {
     @Override
     protected void onResume() {
         super.onResume();
-        request120HzDisplay();
+        if (root != null) root.post(this::request120HzDisplay);
         if (postAdapter != null && pager != null && layoutMode.equals("fullscreen")) {
             postAdapter.setActivePosition(pager.getCurrentItem());
         }
@@ -6334,17 +6337,25 @@ private void setFullscreenChrome(boolean visible) {
     }
 
     private void request120HzDisplay() {
-        // Request 120 Hz for the entire Activity (Home, navigation, and video).
-        // The compositor and OEM remain free to honor power/thermal constraints.
-        WindowManager.LayoutParams params = getWindow().getAttributes();
-        if (params.preferredDisplayModeId == 0
-                && Math.abs(params.preferredRefreshRate - REQUESTED_DISPLAY_HZ) < 0.01f) {
+        // This is a preference, not a forced display mode. Some OEM window
+        // implementations throw when refresh metadata is changed at startup.
+        if (root == null || !root.isAttachedToWindow() || isFinishing() || isDestroyed()) {
             return;
         }
-        // A display-mode ID overrides preferredRefreshRate, so clear it.
-        params.preferredDisplayModeId = 0;
-        params.preferredRefreshRate = REQUESTED_DISPLAY_HZ;
-        getWindow().setAttributes(params);
+        try {
+            WindowManager.LayoutParams params = getWindow().getAttributes();
+            if (params.preferredDisplayModeId == 0
+                    && Math.abs(params.preferredRefreshRate - REQUESTED_DISPLAY_HZ) < 0.01f) {
+                return;
+            }
+            params.preferredDisplayModeId = 0;
+            params.preferredRefreshRate = REQUESTED_DISPLAY_HZ;
+            getWindow().setAttributes(params);
+        } catch (RuntimeException displayError) {
+            // Keep the already-working feed and Random loader usable even if
+            // a vendor display policy refuses this window preference.
+            Log.w(WEB_LOG_TAG, "120 Hz window preference was refused", displayError);
+        }
     }
 
     @Override
