@@ -770,7 +770,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
         postAdapter.setSystemInsets(systemTopPx, systemBottomPx);
 
-        if (topBar != null) topBar.setVisibility(View.GONE);
+        // System-inset/keyboard updates must not hide Search's input bar.
+        // Visibility is controlled by setFullscreenChrome() for the screen.
         if (gridView != null) gridView.setPadding(0, systemTopPx + dp(8), 0, systemBottomPx + dp(72));
         if (statusPanel != null && statusPanel.getLayoutParams() instanceof FrameLayout.LayoutParams) {
             FrameLayout.LayoutParams statusParams = (FrameLayout.LayoutParams) statusPanel.getLayoutParams();
