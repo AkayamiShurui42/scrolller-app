@@ -39,6 +39,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
     private final Listener listener;
     private final ArrayList<RedditPost> posts = new ArrayList<>();
     private final ArrayList<Holder> activeHolders = new ArrayList<>();
+    @Nullable private RecyclerView attachedRecyclerView;
 
     public GridPostAdapter(Context context, Listener listener) {
         this.context = context;
@@ -75,6 +76,38 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         for (Holder holder : new ArrayList<>(activeHolders)) {
             holder.releasePlayer();
         }
+    }
+
+    @Override
+    public void onAttachedToRecyclerView(@NonNull RecyclerView recyclerView) {
+        super.onAttachedToRecyclerView(recyclerView);
+        attachedRecyclerView = recyclerView;
+    }
+
+    @Override
+    public void onDetachedFromRecyclerView(@NonNull RecyclerView recyclerView) {
+        if (attachedRecyclerView == recyclerView) attachedRecyclerView = null;
+        super.onDetachedFromRecyclerView(recyclerView);
+    }
+
+    // A cached RedGIFs result may invoke onResolved synchronously from bind().
+    // Always defer notifications until RecyclerView finishes the current layout,
+    // and re-check the post's position because search/feed updates can replace it.
+    private void notifyResolvedPostChanged(RedditPost post) {
+        RecyclerView recyclerView = attachedRecyclerView;
+        if (recyclerView == null) return;
+        recyclerView.post(new Runnable() {
+            @Override
+            public void run() {
+                if (attachedRecyclerView != recyclerView) return;
+                if (recyclerView.isComputingLayout()) {
+                    recyclerView.post(this);
+                    return;
+                }
+                int index = posts.indexOf(post);
+                if (index >= 0) notifyItemChanged(index);
+            }
+        });
     }
 
     @Override
@@ -165,9 +198,9 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                 RedgifsResolver.resolve(id, new RedgifsResolver.Callback() {
                     @Override
                     public void onResolved(String url) {
-                        if (post.videoUrl.equals(unresolved)) post.videoUrl = url;
-                        int index = posts.indexOf(post);
-                        if (index >= 0) notifyItemChanged(index);
+                        if (!unresolved.equals(post.videoUrl)) return;
+                        post.videoUrl = url;
+                        notifyResolvedPostChanged(post);
                     }
 
                     @Override
