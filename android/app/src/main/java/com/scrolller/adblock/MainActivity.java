@@ -74,7 +74,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private static final String REDDIT = "https://www.reddit.com";
     private static final String WEB_LOG_TAG = "RedviewWeb";
-    private static final String SELF_DIAGNOSTIC_BUILD_TAG = "search-fuzzy-anr-v3-20261113";
+    private static final String SELF_DIAGNOSTIC_BUILD_TAG = "grid-redgifs-layout-v4-20261114";
     private static final java.util.concurrent.ExecutorService DIAGNOSTICS_EXECUTOR =
             java.util.concurrent.Executors.newSingleThreadExecutor();
     // Rank search results away from Android's input-dispatch/UI thread.
