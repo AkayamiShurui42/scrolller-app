@@ -82,6 +82,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             java.util.concurrent.Executors.newSingleThreadExecutor();
     private final java.util.concurrent.atomic.AtomicInteger searchSortRevision =
             new java.util.concurrent.atomic.AtomicInteger();
+    // Equal-layer search remains pending until all primary sources and their
+    // incremental UI match batches finish. Each new query resets this state.
+    private int searchPendingSources = 0;
+    private int searchPendingMergeBatches = 0;
+    private String searchLiveSourceError = "";
     private int diagnosticCaptureGeneration = 0;
     private String pendingDiagnosticExport = "";
     // Registered before onStart, so Save TXT works after process recreation.
@@ -1220,7 +1225,8 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         }
         query = next;
         prefs.edit().remove("lastSearch").apply();
-        searchInput.setText("");
+        // Keep the submitted term editable/visible instead of blanking it.
+        // A new search can replace the query without reopening the menu.
         screen = Screen.SEARCH;
         cancelObsoleteRedditRequests();
         loadSearchInternal();
@@ -3327,6 +3333,10 @@ private void loadQualityCollection(boolean reset) {
         final int generation = ++searchGeneration;
         searchLayerResults.clear();
         searchLayerMediaKeys.clear();
+        searchPendingSources = 0;
+        searchPendingMergeBatches = 0;
+        searchLiveSourceError = "";
+        searchSortRevision.incrementAndGet();
         if (!searchScope.equals("subscribed")) searchJoinedSnapshot.clear();
         loading = true;
         searchLoading = true;
@@ -3420,67 +3430,121 @@ private void loadQualityCollection(boolean reset) {
             }
         }
 
-        // Already-discovered posts are one layer, equal to every remote/cache layer.
+        // An in-memory collection, local cache, live Reddit, PullPush, and
+        // Arctic Shift are independent candidate sources. No one provider may
+        // make the entire search look empty or prematurely complete.
+        ArrayList<String> redditGroups = new ArrayList<>(allowed);
+        if (redditGroups.isEmpty()) redditGroups.add("__global__");
+        searchPendingSources = (feedCacheStore == null ? 0 : 1)
+                + (allowed.isEmpty() ? 1 : allowed.size())
+                + 1 // Native Reddit
+                + 1; // Arctic Shift
+        AppDiagnostics.record("search-start",
+                "scope=" + searchScope + " providers=" + searchPendingSources);
+
         mergeSearchLayerResults(generation, new ArrayList<>(searchCollectorSnapshot));
 
-        // Persistent cache is another layer. Scope is applied here only as an
-        // efficient prefilter; mergeSearchLayerResults re-applies the exact same
-        // term/scope/media/read/content contract to every returned post.
         if (feedCacheStore != null) {
+            FeedCacheStore.LoadCallback cacheCallback = cached -> {
+                if (!searchStillValid(generation)) return;
+                mergeSearchLayerResults(generation, cached);
+                finishEqualSearchSource(generation);
+            };
             if (allowed.isEmpty()) {
-                feedCacheStore.searchAllAsync(query, 1000,
-                        cached -> mergeSearchLayerResults(generation, cached));
+                feedCacheStore.searchAllAsync(query, 1000, cacheCallback);
             } else {
-                feedCacheStore.searchSubredditsAsync(allowed, query, 1000,
-                        cached -> mergeSearchLayerResults(generation, cached));
+                feedCacheStore.searchSubredditsAsync(allowed, query, 1000, cacheCallback);
             }
         }
 
-        // PullPush is an equal candidate layer. It does not own ranking or
-        // filtering; returned posts still go through the local property matcher.
+        // Restore Reddit's own search.json endpoint, previously left unreachable
+        // by the equal-layer search rewrite. Keep paging bounded as before.
+        fetchRemoteSearchGroup(
+                generation, redditGroups, 0, "", new ArrayList<>(),
+                new HashSet<>(), new HashSet<>(), 0, 0);
+
+        // Independent archive fallback, useful when live Reddit rejects a
+        // request; its submissions must still pass the same local filters.
+        ArcticShiftClient.searchPosts(query, 200, new ArcticShiftClient.CrawlCallback() {
+            @Override public void onBatch(JSONArray items) {
+                if (!searchStillValid(generation)) return;
+                ArrayList<RedditPost> posts = archivePostsFromArray(items);
+                mergeSearchLayerResults(generation, posts);
+            }
+            @Override public void onComplete() {
+                if (!searchStillValid(generation)) return;
+                finishEqualSearchSource(generation);
+            }
+            @Override public void onError(String error) {
+                if (!searchStillValid(generation)) return;
+                AppDiagnostics.record("search-arctic-error", error);
+                finishEqualSearchSource(generation);
+            }
+        });
+
         if (allowed.isEmpty()) {
             PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
-                @Override
-                public void onComplete(JSONArray items) {
+                @Override public void onComplete(JSONArray items) {
                     if (!searchStillValid(generation)) return;
                     mergeSearchLayerResults(generation, postsFromPullPush(items));
+                    finishEqualSearchSource(generation);
                 }
-
-                @Override
-                public void onError(String error) {
-                    // One layer failing must not invalidate the other layers.
+                @Override public void onError(String error) {
+                    if (!searchStillValid(generation)) return;
+                    AppDiagnostics.record("search-pullpush-error", error);
+                    finishEqualSearchSource(generation);
                 }
             });
         } else {
-            ArrayList<String> communities = new ArrayList<>(allowed);
-            for (String target : communities) {
+            for (String target : allowed) {
                 PullPushClient.searchSubreddit(target, query, 100, new PullPushClient.Callback() {
-                    @Override
-                    public void onComplete(JSONArray items) {
+                    @Override public void onComplete(JSONArray items) {
                         if (!searchStillValid(generation)) return;
                         mergeSearchLayerResults(generation, postsFromPullPush(items));
+                        finishEqualSearchSource(generation);
                     }
-
-                    @Override
-                    public void onError(String error) {
-                        // Equal-layer failure is isolated to this source request.
+                    @Override public void onError(String error) {
+                        if (!searchStillValid(generation)) return;
+                        AppDiagnostics.record("search-pullpush-error", error);
+                        finishEqualSearchSource(generation);
                     }
                 });
             }
         }
 
-        // The term search itself is local. No source-specific search result is
-        // trusted until the post properties pass searchLayerCandidateAccepted().
-        searchLoading = false;
+        // Discovery lead-ins are separate sources; do not leave them unreachable
+        // when the Reddit endpoint fails or returns an empty page.
+        startHiddenSearchLeadIns(generation);
+        startCategoryMetadataLeadIns(generation);
+        startSubredditNameLeadIns(generation);
+        updateEqualSearchStatus(generation);
+    }
+
+    private void finishEqualSearchSource(int generation) {
+        if (!searchStillValid(generation)) return;
+        if (searchPendingSources > 0) searchPendingSources--;
+        updateEqualSearchStatus(generation);
+    }
+
+    private void updateEqualSearchStatus(int generation) {
+        if (!searchStillValid(generation)) return;
+        if (postAdapter.getItemCount() > 0) {
+            hideStatus();
+            return;
+        }
+        if (searchPendingSources > 0 || searchPendingMergeBatches > 0) {
+            return; // Still searching/matching. Do not announce a false zero.
+        }
         loading = false;
-        if (root != null) {
-            root.postDelayed(() -> {
-                if (!searchStillValid(generation)) return;
-                if (searchLayerResults.isEmpty()) {
-                    setStatus("No matching media found for “" + query + "” in "
-                            + searchScopeDescription() + ".", false);
-                }
-            }, 10000L);
+        searchLoading = false;
+        if (!searchLayerResults.isEmpty()) {
+            setStatus("Ranking matching posts…", true);
+        } else if (!searchLiveSourceError.isEmpty()) {
+            setStatus("No matching media yet; live Reddit: "
+                    + searchLiveSourceError + ".", false);
+        } else {
+            setStatus("No matching media found for “" + query + "” in "
+                    + searchScopeDescription() + ".", false);
         }
     }
 
@@ -3518,6 +3582,7 @@ private void loadQualityCollection(boolean reset) {
         if (!searchStillValid(generation) || candidates == null || candidates.isEmpty()) return;
         // Source callbacks arrive on the main Handler. Yield while checking costly
         // fuzzy matches rather than processing 1,000 cached posts in one callback.
+        searchPendingMergeBatches++;
         mergeSearchLayerBatch(generation, new ArrayList<>(candidates), 0, 0);
     }
 
@@ -3550,10 +3615,13 @@ private void loadQualityCollection(boolean reset) {
         }
 
         // Duplicate/filtered batches must not rebuild the pager or video players.
-        if (accepted == 0) return;
-        ArrayList<RedditPost> snapshot = new ArrayList<>(searchLayerResults.values());
-        sortLocalSearchAsync(generation, snapshot,
-                sorted -> applySortedSearchLayerResults(generation, sorted));
+        if (searchPendingMergeBatches > 0) searchPendingMergeBatches--;
+        if (accepted > 0) {
+            ArrayList<RedditPost> snapshot = new ArrayList<>(searchLayerResults.values());
+            sortLocalSearchAsync(generation, snapshot,
+                    sorted -> applySortedSearchLayerResults(generation, sorted));
+        }
+        updateEqualSearchStatus(generation);
     }
 
     private void applySortedSearchLayerResults(
@@ -3579,6 +3647,7 @@ private void loadQualityCollection(boolean reset) {
         }
 
         hideStatus();
+        searchLoading = false;
         updateChrome();
     }
 
@@ -3802,9 +3871,9 @@ private void loadQualityCollection(boolean reset) {
                 if (!collected.isEmpty()) {
                     finishSearchCollection(generation, collected);
                 } else {
-                    loading = false;
-                    searchLoading = false;
-                    setStatus("Search failed: " + friendlyError(result), false);
+                    searchLiveSourceError = friendlyError(result);
+                    AppDiagnostics.record("search-reddit-error", searchLiveSourceError);
+                    finishSearchCollection(generation, collected);
                 }
                 return;
             }
@@ -3884,15 +3953,9 @@ private void loadQualityCollection(boolean reset) {
 
     private void finishSearchCollection(int generation, ArrayList<RedditPost> collected) {
         if (!searchStillValid(generation)) return;
-        loading = false;
-        searchLoading = false;
-
-        mergeSearchLayerResults(generation, collected);
-        finishSearchUi(searchLayerResults.size());
-
-        startHiddenSearchLeadIns(generation);
-        startCategoryMetadataLeadIns(generation);
-        startSubredditNameLeadIns(generation);
+        // Each page was merged as it arrived; don't resubmit the whole collection
+        // or overwrite later cache/archive successes with a premature "no results".
+        finishEqualSearchSource(generation);
     }
 
     private void fetchFavoritesSearchPage(
