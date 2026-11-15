@@ -6041,7 +6041,11 @@ private void trackFullscreenVisit(int position) {
 
 private void setFullscreenChrome(boolean visible) {
         fullscreenChromeVisible = visible;
-        if (topBar != null) topBar.setVisibility(View.GONE);
+        // The old header is hidden for normal feeds, but Search still owns its
+        // editable query field and submit button. Hiding the whole topBar made
+        // Search impossible to use from the dedicated Search screen.
+        if (topBar != null) topBar.setVisibility(
+                screen == Screen.SEARCH ? View.VISIBLE : View.GONE);
         // Navigation must stay visible if there is nothing to tap in the feed.
         boolean showBottom = !layoutMode.equals("fullscreen")
                 || screen == Screen.ACCOUNT
