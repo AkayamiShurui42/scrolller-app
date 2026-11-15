@@ -304,6 +304,14 @@ public void setActivePosition(int position) {
     private void onVideoFirstFrame(ExoPlayer player, boolean familyRedgifs) {
         RedditPost post = familyRedgifs ? redgifsPlayerPost : defaultPlayerPost;
         if (player == null || player != activePlayer || !isPostActive(post)) return;
+        // The cover belongs to the *currently bound* holder, not the player
+        // (the player is reused between unrelated posts).
+        PostHolder holder = activePlayerHolder;
+        if (!pagerScrolling && holder != null && holder.boundPost == post
+                && holder.player == player && holder.playerView != null
+                && holder.playerView.getPlayer() == player) {
+            holder.hideVideoCover();
+        }
         if (post.id == null || !post.id.equals(videoViewPostId)) return;
         videoFirstFrameRendered = true;
         videoLastSampleAtMs = SystemClock.elapsedRealtime();
@@ -397,10 +405,34 @@ public void setActivePosition(int position) {
                 try { other.setPlayWhenReady(false); other.pause(); } catch (RuntimeException ignored) {}
             }
 
+            String currentUrl = redgifs ? redgifsPlayerUrl : defaultPlayerUrl;
+            if (activePlayer == target && activePlayerHolder == holder
+                    && holder.playerView.getPlayer() == target
+                    && url.equals(currentUrl) && target.getPlayerError() == null) {
+                target.setVolume(muted ? 0f : 1f);
+                target.setPlayWhenReady(true);
+                return;
+            }
+
+            // The outgoing page is covered before its pooled surface is detached.
+            // Keep the existing two-player pool, without presenting its old frame
+            // on the incoming page while the new item is prepared.
+            holder.showVideoCover();
             if (activePlayerHolder != null && activePlayerHolder != holder
                     && activePlayerHolder.playerView != null) {
+                activePlayerHolder.showVideoCover();
                 try { activePlayerHolder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
                 activePlayerHolder.player = null;
+            }
+            if (redgifs) redgifsPlayerPost = post;
+            else defaultPlayerPost = post;
+
+            if (!url.equals(currentUrl) || target.getPlayerError() != null) {
+                target.setPlayWhenReady(false);
+                target.setMediaItem(MediaItem.fromUri(url));
+                target.prepare();
+                if (redgifs) redgifsPlayerUrl = url;
+                else defaultPlayerUrl = url;
             }
 
             activePlayer = target;
@@ -408,17 +440,6 @@ public void setActivePosition(int position) {
             holder.player = target;
             holder.playerView.setPlayer(target);
             holder.playerView.setOnClickListener(null);
-
-            String currentUrl = redgifs ? redgifsPlayerUrl : defaultPlayerUrl;
-            if (redgifs) redgifsPlayerPost = post;
-            else defaultPlayerPost = post;
-
-            if (!url.equals(currentUrl) || target.getPlayerError() != null) {
-                target.setMediaItem(MediaItem.fromUri(url));
-                target.prepare();
-                if (redgifs) redgifsPlayerUrl = url;
-                else defaultPlayerUrl = url;
-            }
             target.setVolume(muted ? 0f : 1f);
             target.setPlayWhenReady(true);
             AppDiagnostics.record("player-attached",
@@ -431,6 +452,7 @@ public void setActivePosition(int position) {
 
     private void detachPooledPlayer(PostHolder holder) {
         if (holder == null) return;
+        holder.showVideoCover();
         if (holder.playerView != null) {
             try { holder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
         }
@@ -452,6 +474,7 @@ public void setActivePosition(int position) {
             try { redgifsPlayer.setPlayWhenReady(false); redgifsPlayer.pause(); } catch (RuntimeException ignored) {}
         }
         if (activePlayerHolder != null && activePlayerHolder.playerView != null) {
+            activePlayerHolder.showVideoCover();
             try { activePlayerHolder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
             activePlayerHolder.player = null;
         }
@@ -462,6 +485,7 @@ public void setActivePosition(int position) {
     public void releaseAll() {
         resetVideoViewTracking(null);
         if (activePlayerHolder != null && activePlayerHolder.playerView != null) {
+            activePlayerHolder.showVideoCover();
             try { activePlayerHolder.playerView.setPlayer(null); } catch (RuntimeException ignored) {}
             activePlayerHolder.player = null;
         }
@@ -531,6 +555,7 @@ public void setActivePosition(int position) {
         final FrameLayout root;
         ExoPlayer player;
         PlayerView playerView;
+        View videoCover;
         View topMeta;
         View bottomInfo;
         View mediaControl;
@@ -550,6 +575,7 @@ public void setActivePosition(int position) {
             bottomInfo = null;
             mediaControl = null;
             playerView = null;
+            videoCover = null;
             root.removeAllViews();
             root.setBackgroundColor(Color.BLACK);
             root.setOnClickListener(null);
@@ -568,6 +594,7 @@ public void setActivePosition(int position) {
                 poster.setBackgroundColor(Color.BLACK);
                 poster.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 root.addView(poster, fullParams());
+                videoCover = poster;
                 if (post.posterUrl != null && !post.posterUrl.isEmpty()) {
                     Glide.with(poster).load(post.posterUrl).fitCenter().into(poster);
                 }
@@ -593,20 +620,23 @@ public void setActivePosition(int position) {
 
             if ((post.mediaKind == RedditPost.MediaKind.VIDEO || post.mediaKind == RedditPost.MediaKind.GIF)
                     && post.videoUrl != null && !post.videoUrl.isEmpty()) {
+                // The incoming post's poster masks any stale TextureView frame.
+                // Keep the player fully visible to the decoder: no alpha=0 hack.
+                ImageView videoPoster = new ImageView(context);
+                videoPoster.setBackgroundColor(Color.BLACK);
+                videoPoster.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                root.addView(videoPoster, fullParams());
+                videoCover = videoPoster;
                 if (post.posterUrl != null && !post.posterUrl.isEmpty()) {
-                    ImageView videoPoster = new ImageView(context);
-                    videoPoster.setBackgroundColor(Color.BLACK);
-                    videoPoster.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                    root.addView(videoPoster, fullParams());
                     Glide.with(videoPoster).load(post.posterUrl).fitCenter().into(videoPoster);
                 }
 
                 playerView = (PlayerView) android.view.LayoutInflater.from(context)
                         .inflate(R.layout.view_texture_player, root, false);
-                playerView.setKeepContentOnPlayerReset(true);
+                playerView.setKeepContentOnPlayerReset(false);
                 playerView.setShutterBackgroundColor(Color.TRANSPARENT);
                 playerView.setBackgroundColor(Color.TRANSPARENT);
-                root.addView(playerView, fullParams());
+                root.addView(playerView, 0, fullParams());
 
                 if (position == activePosition) {
                     attachPooledPlayer(this, post, position, post.videoUrl);
@@ -698,12 +728,12 @@ public void setActivePosition(int position) {
 
             PlayerView nextView = (PlayerView) android.view.LayoutInflater.from(context)
                     .inflate(R.layout.view_texture_player, root, false);
-            nextView.setKeepContentOnPlayerReset(true);
+            nextView.setKeepContentOnPlayerReset(false);
             nextView.setShutterBackgroundColor(Color.TRANSPARENT);
             nextView.setBackgroundColor(Color.TRANSPARENT);
 
-            int mediaIndex = Math.min(1, root.getChildCount());
-            root.addView(nextView, mediaIndex, fullParams());
+            // Insert behind the already loaded RedGIFs poster, not over it.
+            root.addView(nextView, 0, fullParams());
             playerView = nextView;
             nextView.setOnClickListener(null);
 
@@ -725,6 +755,14 @@ public void setActivePosition(int position) {
                 listener.onMutedChanged(muted);
             });
             applyChromeVisibility();
+        }
+
+        void showVideoCover() {
+            if (videoCover != null) videoCover.setVisibility(View.VISIBLE);
+        }
+
+        void hideVideoCover() {
+            if (videoCover != null) videoCover.setVisibility(View.GONE);
         }
 
         void activateIfNeeded() {
@@ -872,6 +910,7 @@ public void setActivePosition(int position) {
             }
             player = null;
             playerView = null;
+            videoCover = null;
             boundPosition = -1;
             boundPost = null;
         }
