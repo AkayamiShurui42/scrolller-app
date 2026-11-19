@@ -120,6 +120,7 @@ final class FeedCacheStore extends SQLiteOpenHelper {
 
         io.execute(() -> {
             ArrayList<RedditPost> matches = new ArrayList<>();
+            SearchTerms parsed = SearchTerms.parse(needle);
             String normalized = FuzzySearch.normalize(needle);
             int threshold = FuzzySearch.thresholdFor(normalized.length());
 
@@ -140,7 +141,10 @@ final class FeedCacheStore extends SQLiteOpenHelper {
                 while (cursor.moveToNext() && matches.size() < boundedLimit) {
                     RedditPost post = fromCursor(cursor);
                     if (post == null) continue;
-                    if (!normalized.isEmpty()) {
+                    if (parsed.commaMode) {
+                        if (!parsed.matches(post.title, post.subreddit, post.author,
+                                post.searchMetadata, post.permalink, post.sourceUrl)) continue;
+                    } else if (!normalized.isEmpty()) {
                         int score = cachedSearchScore(post, needle);
                         if (score < threshold) continue;
                     }
@@ -175,6 +179,7 @@ final class FeedCacheStore extends SQLiteOpenHelper {
 
         io.execute(() -> {
             ArrayList<RedditPost> matches = new ArrayList<>();
+            SearchTerms parsed = SearchTerms.parse(needle);
             String normalized = FuzzySearch.normalize(needle);
             int threshold = FuzzySearch.thresholdFor(normalized.length());
 
@@ -198,7 +203,10 @@ final class FeedCacheStore extends SQLiteOpenHelper {
                     String community = post.subreddit.trim().toLowerCase(Locale.US);
                     if (!allowed.contains(community)) continue;
 
-                    if (!normalized.isEmpty()) {
+                    if (parsed.commaMode) {
+                        if (!parsed.matches(post.title, post.subreddit, post.author,
+                                post.searchMetadata, post.permalink, post.sourceUrl)) continue;
+                    } else if (!normalized.isEmpty()) {
                         int score = cachedSearchScore(post, needle);
                         if (score < threshold) continue;
                     }

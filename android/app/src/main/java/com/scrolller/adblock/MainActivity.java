@@ -260,6 +260,10 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private final HashSet<String> searchLayerMediaKeys = new HashSet<>();
     private int searchGeneration = 0;
     private String query = "";
+    private SearchTerms activeSearchTerms = SearchTerms.parse("");
+    private String lastSubmittedQuery = "";
+    private long lastSubmitAtMs = 0L;
+    private int searchProviderFailures = 0;
     private String profileUser = "";
     private String username = "";
     private String modhash = "";
@@ -1216,6 +1220,14 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private void beginSearch() {
         String next = searchInput.getText().toString().trim();
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (!next.isEmpty() && next.equals(lastSubmittedQuery)
+                && now - lastSubmitAtMs < 850L) {
+            AppDiagnostics.record("search-duplicate", "coalesced rapid repeat submission");
+            return;
+        }
+        lastSubmittedQuery = next;
+        lastSubmitAtMs = now;
         if (next.isEmpty()) {
             query = "";
             prefs.edit().remove("lastSearch").apply();
@@ -3332,6 +3344,8 @@ private void loadQualityCollection(boolean reset) {
         pager.setCurrentItem(0, false);
 
         final int generation = ++searchGeneration;
+        activeSearchTerms = SearchTerms.parse(query);
+        searchProviderFailures = 0;
         searchLayerResults.clear();
         searchLayerMediaKeys.clear();
         searchPendingSources = 0;
@@ -3448,6 +3462,8 @@ private void loadQualityCollection(boolean reset) {
         if (feedCacheStore != null) {
             FeedCacheStore.LoadCallback cacheCallback = cached -> {
                 if (!searchStillValid(generation)) return;
+                AppDiagnostics.record("search-cache-result",
+                        "candidates=" + (cached == null ? 0 : cached.size()));
                 mergeSearchLayerResults(generation, cached);
                 finishEqualSearchSource(generation);
             };
@@ -3460,13 +3476,21 @@ private void loadQualityCollection(boolean reset) {
 
         // Restore Reddit's own search.json endpoint, previously left unreachable
         // by the equal-layer search rewrite. Keep paging bounded as before.
-        fetchRemoteSearchGroup(
-                generation, redditGroups, 0, "", new ArrayList<>(),
-                new HashSet<>(), new HashSet<>(), 0, 0);
+        if (SearchProviderCooldown.allowed("reddit-search")) {
+            fetchRemoteSearchGroup(
+                    generation, redditGroups, 0, "", new ArrayList<>(),
+                    new HashSet<>(), new HashSet<>(), 0, 0);
+        } else {
+            AppDiagnostics.record("search-source-paused", "reddit HTTP="
+                    + SearchProviderCooldown.lastStatus("reddit-search"));
+            searchProviderFailures++;
+            finishEqualSearchSource(generation);
+        }
 
         // Independent archive fallback, useful when live Reddit rejects a
         // request; its submissions must still pass the same local filters.
-        ArcticShiftClient.searchPosts(query, 200, new ArcticShiftClient.CrawlCallback() {
+        if (SearchProviderCooldown.allowed("arctic-search")) {
+        ArcticShiftClient.searchPosts(SearchTerms.seed(query), 200, new ArcticShiftClient.CrawlCallback() {
             @Override public void onBatch(JSONArray items) {
                 if (!searchStillValid(generation)) return;
                 ArrayList<RedditPost> posts = archivePostsFromArray(items);
@@ -3474,38 +3498,59 @@ private void loadQualityCollection(boolean reset) {
             }
             @Override public void onComplete() {
                 if (!searchStillValid(generation)) return;
+                SearchProviderCooldown.success("arctic-search");
                 finishEqualSearchSource(generation);
             }
             @Override public void onError(String error) {
                 if (!searchStillValid(generation)) return;
+                SearchProviderCooldown.failure("arctic-search", error);
+                searchProviderFailures++;
                 AppDiagnostics.record("search-arctic-error", error);
                 finishEqualSearchSource(generation);
             }
         });
+        } else {
+            AppDiagnostics.record("search-source-paused", "arctic HTTP="
+                    + SearchProviderCooldown.lastStatus("arctic-search"));
+            searchProviderFailures++;
+            finishEqualSearchSource(generation);
+        }
 
-        if (allowed.isEmpty()) {
-            PullPushClient.searchSubmissions(query, 100, new PullPushClient.Callback() {
+        if (!SearchProviderCooldown.allowed("pullpush")) {
+            AppDiagnostics.record("search-source-paused", "pullpush HTTP="
+                    + SearchProviderCooldown.lastStatus("pullpush"));
+            searchProviderFailures++;
+            int skipped = Math.max(1, allowed.size());
+            for (int i = 0; i < skipped; i++) finishEqualSearchSource(generation);
+        } else if (allowed.isEmpty()) {
+            PullPushClient.searchSubmissions(SearchTerms.seed(query), 100, new PullPushClient.Callback() {
                 @Override public void onComplete(JSONArray items) {
                     if (!searchStillValid(generation)) return;
+                    SearchProviderCooldown.success("pullpush");
                     mergeSearchLayerResults(generation, postsFromPullPush(items));
                     finishEqualSearchSource(generation);
                 }
                 @Override public void onError(String error) {
                     if (!searchStillValid(generation)) return;
+                    SearchProviderCooldown.failure("pullpush", error);
+                    searchProviderFailures++;
                     AppDiagnostics.record("search-pullpush-error", error);
                     finishEqualSearchSource(generation);
                 }
             });
         } else {
             for (String target : allowed) {
-                PullPushClient.searchSubreddit(target, query, 100, new PullPushClient.Callback() {
+                PullPushClient.searchSubreddit(target, SearchTerms.seed(query), 100, new PullPushClient.Callback() {
                     @Override public void onComplete(JSONArray items) {
                         if (!searchStillValid(generation)) return;
+                        SearchProviderCooldown.success("pullpush");
                         mergeSearchLayerResults(generation, postsFromPullPush(items));
                         finishEqualSearchSource(generation);
                     }
                     @Override public void onError(String error) {
                         if (!searchStillValid(generation)) return;
+                        SearchProviderCooldown.failure("pullpush", error);
+                        searchProviderFailures++;
                         AppDiagnostics.record("search-pullpush-error", error);
                         finishEqualSearchSource(generation);
                     }
@@ -3540,6 +3585,9 @@ private void loadQualityCollection(boolean reset) {
         searchLoading = false;
         if (!searchLayerResults.isEmpty()) {
             setStatus("Ranking matching posts…", true);
+        } else if (searchProviderFailures > 0) {
+            setStatus("No cached matches; " + searchProviderFailures
+                    + " provider request(s) unavailable. Try after providers recover.", false);
         } else if (!searchLiveSourceError.isEmpty()) {
             setStatus("No matching media yet; live Reddit: "
                     + searchLiveSourceError + ".", false);
@@ -3618,6 +3666,8 @@ private void loadQualityCollection(boolean reset) {
         // Duplicate/filtered batches must not rebuild the pager or video players.
         if (searchPendingMergeBatches > 0) searchPendingMergeBatches--;
         if (accepted > 0) {
+            AppDiagnostics.record("search-accepted", "batch=" + accepted
+                    + " total=" + searchLayerResults.size());
             ArrayList<RedditPost> snapshot = new ArrayList<>(searchLayerResults.values());
             sortLocalSearchAsync(generation, snapshot,
                     sorted -> applySortedSearchLayerResults(generation, sorted));
@@ -3859,6 +3909,8 @@ private void loadQualityCollection(boolean reset) {
         engine.get(path, result -> {
             if (!searchStillValid(generation)) return;
             if (!result.ok) {
+                SearchProviderCooldown.failure("reddit-search", result.status);
+                searchProviderFailures++;
                 // A failed group should not poison successful groups. Global and
                 // single-subreddit searches still expose the useful Reddit error
                 // when nothing at all has been returned.
@@ -3879,6 +3931,7 @@ private void loadQualityCollection(boolean reset) {
                 return;
             }
 
+            SearchProviderCooldown.success("reddit-search");
             JSONObject rootJson = result.jsonObject();
             JSONObject data = rootJson != null ? rootJson.optJSONObject("data") : null;
             JSONArray children = data != null ? data.optJSONArray("children") : null;
@@ -4021,6 +4074,11 @@ private void loadQualityCollection(boolean reset) {
 
 private boolean matchesLocalSearch(RedditPost post, String value) {
         if (post == null || !post.nsfw) return false;
+        SearchTerms parsed = value != null && value.equals(query)
+                ? activeSearchTerms : SearchTerms.parse(value);
+        if (parsed.commaMode) return parsed.matches(
+                post.title, post.subreddit, post.author, post.searchMetadata,
+                post.permalink, post.sourceUrl);
         String normalized = FuzzySearch.normalize(value);
         if (normalized.isEmpty()) return true;
         return fuzzyPostSearchScore(post, value) >= FuzzySearch.thresholdFor(normalized.length());
@@ -4187,11 +4245,12 @@ private boolean matchesLocalSearch(RedditPost post, String value) {
     private void startHiddenSearchLeadIns(int generation) {
         if (!searchStillValid(generation) || query == null || query.trim().isEmpty()) return;
         if (searchScope.equals("collector") || searchScope.equals("favorites")) return;
+        if (!SearchProviderCooldown.allowed("pullpush")) return;
 
         Set<String> allowed = hiddenSearchAllowedSubreddits();
         String exactSubreddit = searchScope.equals("subreddit")
                 ? cleanSubredditName(searchSubreddit) : "";
-        PullPushSearchClient.searchLeadIns(query, allowed, exactSubreddit,
+        PullPushSearchClient.searchLeadIns(SearchTerms.seed(query), allowed, exactSubreddit,
                 new PullPushSearchClient.Callback() {
             @Override
             public void onComplete(ArrayList<String> submissionIds) {
