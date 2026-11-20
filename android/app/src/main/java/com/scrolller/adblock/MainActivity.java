@@ -7446,9 +7446,10 @@ private void installCompactNavigation() {
             setStatus("Preparing preset round…", true);
         }
 
+        // An exhausted pass can be reshuffled on the next near-end refill.
+        // Empty feeds still stop at the explicit bounded no-content checkpoint.
         if (multiSubredditRoundIndex >= multiSubredditRound.size()) {
-            if (reset || multiSubredditRound.isEmpty()) prepareMultiSubredditRound();
-            else { finishMultiBatch(true); return; }
+            prepareMultiSubredditRound();
         }
         if (multiSubredditRound.isEmpty()) {
             loading = false;
@@ -7533,6 +7534,10 @@ private void installCompactNavigation() {
                     : multiRejectedOther > 0
                     ? "Loaded posts excluded by filters"
                     : "No eligible media returned by the checked communities";
+            if (!allCommunitiesChecked
+                    && multiCheckedTotal >= MultiFeedBatchPolicy.MAX_AUTO_EMPTY_CHECKS) {
+                reason += "; use Refresh to sample another preset batch";
+            }
             setStatus(reason + " · checked " + multiCheckedTotal + "/"
                     + multiSubredditRound.size() + " · live errors " + multiLiveFailures
                     + " · archive errors " + multiArchiveFailures, false);
