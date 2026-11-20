@@ -222,6 +222,11 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private int multiSubredditRoundIndex = 0;
     private int multiSubredditGeneration = 0;
     private int multiSubredditRequestsThisLoad = 0;
+    private int multiCheckedTotal = 0, multiLiveFailures = 0, multiArchiveAttempts = 0;
+    private int multiArchiveFailures = 0, multiFromCache = 0, multiFromLive = 0, multiFromArchive = 0;
+    private int multiRejectedRead = 0, multiRejectedOther = 0, multiRejectedMedia = 0;
+    private boolean multiPreferArchive = false, multiArchiveUnavailable = false;
+    private String multiLastSource = "none";
     private long fullscreenVisitStartedAtMs = 0L;
 
     private RedditSessionEngine engine;
@@ -7419,6 +7424,14 @@ private void installCompactNavigation() {
             multiSubredditRound.clear();
             multiSubredditRoundIndex = 0;
             multiSubredditSeenPostIds.clear();
+            multiCheckedTotal = multiLiveFailures = multiArchiveAttempts = multiArchiveFailures = 0;
+            multiFromCache = multiFromLive = multiFromArchive = 0;
+            multiRejectedRead = multiRejectedOther = multiRejectedMedia = 0;
+            multiPreferArchive = multiArchiveUnavailable = false;
+            multiLastSource = "none";
+            lastFeedFailurePath = "";
+            lastFeedFailureStatus = 0;
+            lastFeedFailureDetail = "";
             feedSeenPostIds.clear();
             feedSeenCursors.clear();
             deferredAppends.clear();
@@ -7434,7 +7447,8 @@ private void installCompactNavigation() {
         }
 
         if (multiSubredditRoundIndex >= multiSubredditRound.size()) {
-            prepareMultiSubredditRound();
+            if (reset || multiSubredditRound.isEmpty()) prepareMultiSubredditRound();
+            else { finishMultiBatch(true); return; }
         }
         if (multiSubredditRound.isEmpty()) {
             loading = false;
@@ -7448,6 +7462,7 @@ private void installCompactNavigation() {
         multiSubredditRequestsThisLoad = 0;
         loading = true;
         feedLoading = true;
+        if (reset) loadMultiCache(feedGen, multiGen);
         fetchMultiSubredditRoundNext(feedGen, multiGen);
     }
 
@@ -7470,79 +7485,187 @@ private void installCompactNavigation() {
                 && context.equals("multi");
     }
 
+    private void loadMultiCache(int feedGen, int multiGen) {
+        if (feedCacheStore == null) return;
+        HashSet<String> allowed = new HashSet<>();
+        for (String community : multiSubredditRound) {
+            String clean = cleanSubredditName(community).toLowerCase(Locale.US);
+            if (!clean.isEmpty()) allowed.add(clean);
+        }
+        if (allowed.isEmpty()) return;
+        feedCacheStore.searchSubredditsAsync(allowed, "", 500, cached -> {
+            if (!multiSubredditContextValid(feedGen, multiGen) || cached == null) return;
+            Collections.shuffle(cached);
+            HashSet<String> usedCommunities = new HashSet<>();
+            ArrayList<RedditPost> selected = new ArrayList<>();
+            for (RedditPost post : cached) {
+                if (selected.size() >= 24) break;
+                if (post == null || !post.nsfw || !matchesMedia(post)) continue;
+                String community = cleanSubredditName(post.subreddit).toLowerCase(Locale.US);
+                if (!allowed.contains(community) || usedCommunities.contains(community)) continue;
+                if (isReadHiddenForDiscovery(post) || isSavedForUnread(post)
+                        || isContentBlocked(post)) continue;
+                String key = canonicalPostKey(post);
+                if (key.isEmpty() || !multiSubredditSeenPostIds.add(key)) continue;
+                usedCommunities.add(community);
+                feedSeenPostIds.add(key);
+                selected.add(post);
+            }
+            if (!selected.isEmpty()) {
+                multiFromCache += selected.size();
+                multiLastSource = "local cache";
+                appendUnique(selected);
+                hideStatus();
+                updateChrome();
+            }
+            AppDiagnostics.record("multi-cache", "selected=" + selected.size());
+        });
+    }
+
+    private void finishMultiBatch(boolean allCommunitiesChecked) {
+        loading = feedLoading = false;
+        after = allCommunitiesChecked ? "multi-round-complete" : "multi-round-continue";
+        if (postAdapter.getItemCount() == 0) {
+            String reason = multiPreferArchive && multiArchiveUnavailable
+                    ? "Live Reddit and archive unavailable"
+                    : multiRejectedRead > 0 && !showViewedPosts
+                    ? "No unread posts found; previously viewed posts excluded"
+                    : multiRejectedOther > 0
+                    ? "Loaded posts excluded by filters"
+                    : "No eligible media returned by the checked communities";
+            setStatus(reason + " · checked " + multiCheckedTotal + "/"
+                    + multiSubredditRound.size() + " · live errors " + multiLiveFailures
+                    + " · archive errors " + multiArchiveFailures, false);
+        } else hideStatus();
+        updateChrome();
+        restorePendingPosition();
+    }
+
     private void fetchMultiSubredditRoundNext(int feedGen, int multiGen) {
         if (!multiSubredditContextValid(feedGen, multiGen)) return;
-
         if (multiSubredditRoundIndex >= multiSubredditRound.size()) {
-            loading = false;
-            feedLoading = false;
-            after = "multi-round-complete";
-            if (postAdapter.getItemCount() == 0) {
-                setStatus("No accessible NSFW media matched this preset round.", false);
-            } else {
-                hideStatus();
-            }
-            updateChrome();
-            restorePendingPosition();
+            finishMultiBatch(true);
             return;
         }
-
-        // Keep enough posts buffered for smooth swiping without making 200 network
-        // requests at once. The next chunk resumes at the next subreddit, so no
-        // subreddit can repeat until the entire preset round has been attempted.
-        if (multiSubredditRequestsThisLoad >= 12 && postAdapter.getItemCount() > 0) {
-            loading = false;
-            feedLoading = false;
-            after = "multi-round-continue";
-            hideStatus();
-            updateChrome();
-            restorePendingPosition();
+        if (multiSubredditRequestsThisLoad >= MultiFeedBatchPolicy.BATCH_SIZE) {
+            if (MultiFeedBatchPolicy.continueEmptyBatch(postAdapter.getItemCount(),
+                    multiCheckedTotal, multiSubredditRound.size(),
+                    multiPreferArchive && multiArchiveUnavailable)) {
+                loading = feedLoading = false;
+                after = "multi-round-continue";
+                setStatus("Checking more communities " + multiCheckedTotal + "/"
+                        + multiSubredditRound.size() + "…", true);
+                root.postDelayed(() -> {
+                    if (multiSubredditContextValid(feedGen, multiGen)
+                            && postAdapter.getItemCount() == 0 && !feedLoading) {
+                        loadMultiSubredditFair(false);
+                    }
+                }, 650L);
+                return;
+            }
+            finishMultiBatch(false);
             return;
         }
 
         final String target = multiSubredditRound.get(multiSubredditRoundIndex++);
         multiSubredditRequestsThisLoad++;
-        engine.get(singlePresetListingPath(target), result -> {
+        multiCheckedTotal++;
+        if (multiPreferArchive) {
+            if (multiArchiveUnavailable) { finishMultiBatch(false); return; }
+            fetchMultiArchive(target, feedGen, multiGen);
+            return;
+        }
+        String path = singlePresetListingPath(target);
+        engine.get(path, result -> {
             if (!multiSubredditContextValid(feedGen, multiGen)) return;
-
-            if (result.ok) {
-                JSONObject rootJson = result.jsonObject();
-                JSONObject data = rootJson != null ? rootJson.optJSONObject("data") : null;
-                JSONArray children = data != null ? data.optJSONArray("children") : null;
-                ArrayList<RedditPost> candidates = new ArrayList<>();
-                if (children != null) {
-                    for (int i = 0; i < children.length(); i++) {
-                        RedditPost post = RedditPost.fromChild(children.optJSONObject(i));
-                        if (post == null || !post.nsfw || !matchesMedia(post)) continue;
-                        if (post.id == null || post.id.isEmpty()) continue;
-                        if (isReadHiddenForDiscovery(post)
-                                || isSavedForUnread(post)
-                                || isContentBlocked(post)) continue;
-                        String key = canonicalPostKey(post);
-                        if (key.isEmpty() || multiSubredditSeenPostIds.contains(key)) continue;
-                        candidates.add(post);
-                    }
-                }
-
-                if (!candidates.isEmpty()) {
-                    if (sort.equals("random")) Collections.shuffle(candidates);
-                    RedditPost selected = candidates.get(0);
-                    String key = canonicalPostKey(selected);
-                    if (!key.isEmpty()) {
-                        multiSubredditSeenPostIds.add(key);
-                        feedSeenPostIds.add(key);
-                    }
-                    ArrayList<RedditPost> one = new ArrayList<>();
-                    one.add(selected);
-                    appendUnique(one);
-                    hideStatus();
-                }
+            if (!result.ok) {
+                multiLiveFailures++;
+                recordFeedFailure(path, result);
+                if (result.status == 0 || result.status == 401 || result.status == 403
+                        || result.status == 429) multiPreferArchive = true;
+                fetchMultiArchive(target, feedGen, multiGen);
+                return;
             }
-
-            root.postDelayed(
-                    () -> fetchMultiSubredditRoundNext(feedGen, multiGen),
-                    180L);
+            JSONObject root = result.jsonObject();
+            JSONObject data = root != null ? root.optJSONObject("data") : null;
+            JSONArray children = data != null ? data.optJSONArray("children") : null;
+            if (children == null) {
+                multiLiveFailures++;
+                multiPreferArchive = true;
+                AppDiagnostics.record("multi-invalid-listing", "missing children array");
+                fetchMultiArchive(target, feedGen, multiGen);
+                return;
+            }
+            appendMultiCandidate(children, false);
+            advanceMulti(feedGen, multiGen);
         });
+    }
+
+    /** Randomly select one eligible result from each community, not every item. */
+    private boolean appendMultiCandidate(JSONArray children, boolean archive) {
+        if (children == null || children.length() == 0) return false;
+        ArrayList<RedditPost> choices = new ArrayList<>();
+        for (int i = 0; i < children.length(); i++) {
+            JSONObject raw = children.optJSONObject(i);
+            RedditPost post = archive
+                    ? redditPostFromArcticArchive(raw) : RedditPost.fromChild(raw);
+            if (post == null || !post.nsfw || !matchesMedia(post)) {
+                multiRejectedMedia++; continue;
+            }
+            if (post.id == null || post.id.isEmpty()) continue;
+            if (isReadHiddenForDiscovery(post) || isSavedForUnread(post)) {
+                multiRejectedRead++; continue;
+            }
+            if (isContentBlocked(post)) {
+                multiRejectedOther++; continue;
+            }
+            String key = canonicalPostKey(post);
+            if (key.isEmpty() || multiSubredditSeenPostIds.contains(key)) continue;
+            choices.add(post);
+        }
+        if (choices.isEmpty()) return false;
+        Collections.shuffle(choices);
+        RedditPost selected = choices.get(0);
+        String key = canonicalPostKey(selected);
+        if (!multiSubredditSeenPostIds.add(key)) return false;
+        feedSeenPostIds.add(key);
+        ArrayList<RedditPost> singleton = new ArrayList<>();
+        singleton.add(selected);
+        appendUnique(singleton);
+        if (archive) multiFromArchive++; else multiFromLive++;
+        multiLastSource = archive ? "Arctic Shift archive" : "Reddit live";
+        hideStatus();
+        AppDiagnostics.record("multi-post", "source=" + multiLastSource);
+        return true;
+    }
+
+    private void fetchMultiArchive(String target, int feedGen, int multiGen) {
+        if (!multiSubredditContextValid(feedGen, multiGen)) return;
+        if (multiArchiveUnavailable) { advanceMulti(feedGen, multiGen); return; }
+        multiArchiveAttempts++;
+        final boolean[] selected = {false};
+        ArcticShiftClient.crawlSubredditNsfw(target, 100, new ArcticShiftClient.CrawlCallback() {
+            @Override public void onBatch(JSONArray items) {
+                if (!multiSubredditContextValid(feedGen, multiGen) || selected[0]) return;
+                selected[0] = appendMultiCandidate(items, true);
+            }
+            @Override public void onComplete() {
+                if (multiSubredditContextValid(feedGen, multiGen)) advanceMulti(feedGen, multiGen);
+            }
+            @Override public void onError(String error) {
+                if (!multiSubredditContextValid(feedGen, multiGen)) return;
+                multiArchiveFailures++;
+                AppDiagnostics.record("multi-archive-error", error == null ? "unknown" : error);
+                if (multiArchiveFailures >= MultiFeedBatchPolicy.MAX_ARCHIVE_ERRORS)
+                    multiArchiveUnavailable = true;
+                advanceMulti(feedGen, multiGen);
+            }
+        });
+    }
+
+    private void advanceMulti(int feedGen, int multiGen) {
+        if (!multiSubredditContextValid(feedGen, multiGen)) return;
+        root.postDelayed(() -> fetchMultiSubredditRoundNext(feedGen, multiGen), 180L);
     }
 
     private String multiListingPath(String cursor) {
@@ -8297,9 +8420,16 @@ private void installCompactNavigation() {
         out.append("Current media type: ")
                 .append(active == null ? "none" : active.mediaKind).append('\n');
         out.append("Feed loading: ").append(feedLoading).append('\n');
-        out.append("Random source: ").append(homeRandomLastSource).append('\n');
-        out.append("Random failed requests: ").append(homeRandomFailuresThisLoad).append('\n');
-        out.append("Archive failed requests: ").append(homeRandomArchiveFailuresThisLoad).append('\n');
+        if ("multi".equals(context)) {
+            out.append("Multi source: ").append(multiLastSource).append('\n');
+            out.append("Multi checked: ").append(multiCheckedTotal).append('\n');
+            out.append("Multi live/archive failures: ").append(multiLiveFailures)
+                    .append('/').append(multiArchiveFailures).append('\n');
+        } else {
+            out.append("Random source: ").append(homeRandomLastSource).append('\n');
+            out.append("Random failed requests: ").append(homeRandomFailuresThisLoad).append('\n');
+            out.append("Archive failed requests: ").append(homeRandomArchiveFailuresThisLoad).append('\n');
+        }
         out.append("Last HTTP failure status: ").append(lastFeedFailureStatus).append('\n');
         // This header contains only state that belongs to the UI thread.
         // OS exit/ANR binder calls and all log file reads run asynchronously.
@@ -8339,11 +8469,29 @@ private void installCompactNavigation() {
             out.append("HTTP status: ").append(lastFeedFailureStatus).append('\n');
             out.append("Failure: ").append(lastFeedFailureDetail).append('\n');
         }
-        out.append("Random requests failed this load: ").append(homeRandomFailuresThisLoad).append('\n');
-        out.append("Random archive failures: ").append(homeRandomArchiveFailuresThisLoad).append('\n');
-        out.append("Random source: ").append(homeRandomLastSource).append('\n');
-        out.append("Random archive fallback: ").append(homeRandomPreferArchive).append('\n');
-        out.append("Random requests this batch: ").append(homeRandomRequestsThisLoad).append('\n');
+        if ("multi".equals(context)) {
+            out.append("Multi communities in preset: ").append(multiSubredditRound.size()).append('\n');
+            out.append("Multi communities checked: ").append(multiCheckedTotal).append('\n');
+            out.append("Multi requests this batch: ").append(multiSubredditRequestsThisLoad).append('\n');
+            out.append("Multi live failures: ").append(multiLiveFailures).append('\n');
+            out.append("Multi archive attempts/failures: ").append(multiArchiveAttempts)
+                    .append('/').append(multiArchiveFailures).append('\n');
+            out.append("Multi source: ").append(multiLastSource).append('\n');
+            out.append("Multi archive fallback: ").append(multiPreferArchive).append('\n');
+            out.append("Multi archive unavailable: ").append(multiArchiveUnavailable).append('\n');
+            out.append("Multi accepted cache/live/archive: ")
+                    .append(multiFromCache).append('/').append(multiFromLive)
+                    .append('/').append(multiFromArchive).append('\n');
+            out.append("Multi rejected viewed/saved/other/media: ")
+                    .append(multiRejectedRead).append('/').append(multiRejectedOther)
+                    .append('/').append(multiRejectedMedia).append('\n');
+        } else {
+            out.append("Random requests failed this load: ").append(homeRandomFailuresThisLoad).append('\n');
+            out.append("Random archive failures: ").append(homeRandomArchiveFailuresThisLoad).append('\n');
+            out.append("Random source: ").append(homeRandomLastSource).append('\n');
+            out.append("Random archive fallback: ").append(homeRandomPreferArchive).append('\n');
+            out.append("Random requests this batch: ").append(homeRandomRequestsThisLoad).append('\n');
+        }
         out.append("Joined communities available: ").append(subscriptions.size()).append('\n');
         if (subreddit != null && !subreddit.isEmpty()) out.append("Subreddit: r/").append(subreddit).append('\n');
         out.append("Visible posts: ").append(postAdapter == null ? 0 : postAdapter.getItemCount()).append('\n');
