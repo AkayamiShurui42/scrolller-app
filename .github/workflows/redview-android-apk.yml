@@ -55,7 +55,7 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon :app:assembleDebug --stacktrace
+          ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
       - name: Verify signing matches the original debug APK
         run: |
           set -euo pipefail
