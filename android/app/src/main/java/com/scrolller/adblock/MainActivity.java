@@ -74,7 +74,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private static final String REDDIT = "https://www.reddit.com";
     private static final String WEB_LOG_TAG = "RedviewWeb";
-    private static final String SELF_DIAGNOSTIC_BUILD_TAG = "search-resilience-v7-20261119";
+    private static final String SELF_DIAGNOSTIC_BUILD_TAG = "stream-read-hide-v8-20261123";
     private static final java.util.concurrent.ExecutorService DIAGNOSTICS_EXECUTOR =
             java.util.concurrent.Executors.newSingleThreadExecutor();
     // Rank search results away from Android's input-dispatch/UI thread.
@@ -188,6 +188,20 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private RecyclerView gridView;
     private PostPagerAdapter postAdapter;
     private GridPostAdapter gridAdapter;
+    // Stream read tracking is separate from the Fullscreen pager's existing
+    // gesture tracking, but both write through the same saved/hidden store.
+    private final StreamReadTracker streamReadTracker = new StreamReadTracker();
+    private boolean streamReadSamplingActive = false;
+    private RedditPost streamPendingReadPost;
+    private final Runnable streamReadTicker = new Runnable() {
+        @Override public void run() {
+            if (!streamReadSamplingActive) return;
+            sampleStreamRead();
+            if (streamReadSamplingActive && gridView != null) {
+                gridView.postDelayed(this, 120L);
+            }
+        }
+    };
     private LinearLayout topBar;
     private LinearLayout topHeader;
     private LinearLayout controlRow;
@@ -547,6 +561,18 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         gridView.setAdapter(gridAdapter);
         gridView.setVisibility(View.GONE);
         gridView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
+                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                    sampleStreamRead();
+                } else {
+                    // A fling is not continuous viewing. Persist only the last
+                    // post that already met the visibility/dwell threshold.
+                    persistPendingStreamRead();
+                    streamReadTracker.resetContinuity();
+                }
+            }
+
             @Override
             public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
                 RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
@@ -2099,6 +2125,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
                 visible.add(post);
             }
         }
+        if (layoutMode.equals("grid")) {
+            // Replacing/reordering a feed invalidates the prior row geometry,
+            // but must not lose a post already confirmed as viewed.
+            persistPendingStreamRead();
+            streamReadTracker.resetContinuity();
+        }
         postAdapter.setPosts(visible);
         gridAdapter.setPosts(visible);
         if (!visible.isEmpty()) {
@@ -3305,6 +3337,7 @@ private void loadQualityCollection(boolean reset) {
 
     private void applyLayoutVisibility() {
         if (screen == Screen.ACCOUNT) {
+            stopStreamReadSampling();
             gridAdapter.releaseAllPlayers();
             pager.setVisibility(View.GONE);
             gridView.setVisibility(View.GONE);
@@ -3320,7 +3353,9 @@ private void loadQualityCollection(boolean reset) {
             gridView.setVisibility(View.VISIBLE);
             if (wasHidden) gridAdapter.notifyDataSetChanged();
             postAdapter.setActivePosition(-1);
+            startStreamReadSampling();
         } else {
+            stopStreamReadSampling();
             gridView.stopScroll();
             gridAdapter.releaseAllPlayers();
             gridView.setVisibility(View.GONE);
@@ -3329,6 +3364,93 @@ private void loadQualityCollection(boolean reset) {
         }
         setFullscreenChrome(grid || fullscreenChromeVisible);
         syncEmptyFeedTapTarget();
+    }
+
+    private void startStreamReadSampling() {
+        if (gridView == null || !layoutMode.equals("grid")
+                || screen == Screen.ACCOUNT) return;
+        if (streamReadSamplingActive) return;
+        streamReadSamplingActive = true;
+        streamReadTracker.resetContinuity();
+        gridView.post(streamReadTicker);
+    }
+
+    private void stopStreamReadSampling() {
+        streamReadSamplingActive = false;
+        if (gridView != null) gridView.removeCallbacks(streamReadTicker);
+        streamReadTracker.resetContinuity();
+        persistPendingStreamRead();
+    }
+
+    private void persistPendingStreamRead() {
+        RedditPost post = streamPendingReadPost;
+        streamPendingReadPost = null;
+        if (post == null || post.saved || savedContainsPostId(post.id)) return;
+        if (!hiddenContainsPostId(post.id) && !hiddenContainsMedia(post)) {
+            persistViewedPost(post);
+            showReadUndoHud(post);
+            AppDiagnostics.record("stream-read-committed", "qualified dwell; kind=" + post.mediaKind);
+        }
+    }
+
+    private void sampleStreamRead() {
+        if (!streamReadSamplingActive || gridView == null
+                || !layoutMode.equals("grid") || screen == Screen.ACCOUNT
+                || screen == Screen.FAVORITES || !gridView.isShown()
+                || !hasWindowFocus() || gridView.getScrollState() != RecyclerView.SCROLL_STATE_IDLE) {
+            streamReadTracker.resetContinuity();
+            return;
+        }
+
+        int viewportTop = gridView.getPaddingTop();
+        int viewportBottom = gridView.getHeight() - gridView.getPaddingBottom();
+        if (viewportBottom <= viewportTop) {
+            streamReadTracker.resetContinuity();
+            return;
+        }
+        ArrayList<StreamViewportPolicy.VisibleItem> visible = new ArrayList<>();
+        for (int i = 0; i < gridView.getChildCount(); i++) {
+            View view = gridView.getChildAt(i);
+            RecyclerView.ViewHolder holder = gridView.getChildViewHolder(view);
+            if (!(holder instanceof GridPostAdapter.Holder)) continue;
+            int position = holder.getBindingAdapterPosition();
+            if (position == RecyclerView.NO_POSITION) continue;
+            visible.add(new StreamViewportPolicy.VisibleItem(position,
+                    view.getTop(), view.getBottom(),
+                    ((GridPostAdapter.Holder) holder).isMediaRendered()));
+        }
+        int position = StreamViewportPolicy.selectActivePosition(
+                visible, viewportTop, viewportBottom);
+        RedditPost post = position < 0 ? null : postAdapter.getPost(position);
+
+        // Do not remove rows from the active Stream; only persist a previously
+        // qualified post as attention moves on to a different visible post.
+        if (streamPendingReadPost != null
+                && (post == null || !streamPendingReadPost.id.equals(post.id))) {
+            persistPendingStreamRead();
+        }
+        if (post == null || post.id == null || post.id.isEmpty()
+                || post.saved || savedContainsPostId(post.id)
+                || hiddenContainsPostId(post.id) || hiddenContainsMedia(post)) {
+            streamReadTracker.resetContinuity();
+            return;
+        }
+        for (StreamViewportPolicy.VisibleItem item : visible) {
+            if (item.position != position) continue;
+            int itemHeight = item.bottom - item.top;
+            int visiblePx = Math.max(0, Math.min(item.bottom, viewportBottom)
+                    - Math.max(item.top, viewportTop));
+            String newRead = streamReadTracker.sample(
+                    post.id, visiblePx, itemHeight, viewportBottom - viewportTop,
+                    item.rendered, true, SystemClock.elapsedRealtime());
+            if (newRead != null) {
+                catalogSessionRead(post);
+                streamPendingReadPost = post;
+                AppDiagnostics.record("stream-read-qualified",
+                        "dwellMs=1000 kind=" + post.mediaKind);
+            }
+            break;
+        }
     }
 
     private void syncEmptyFeedTapTarget() {
@@ -6608,6 +6730,7 @@ private void setFullscreenChrome(boolean visible) {
     @Override
     protected void onPause() {
         AppDiagnostics.record("lifecycle", "MainActivity.onPause");
+        stopStreamReadSampling();
         // Persist the currently visible post and any pending page transitions
         // before the OS backgrounds/kills the process. No synchronous DB I/O.
         if (pager != null && postAdapter != null && layoutMode.equals("fullscreen")) {
@@ -6626,6 +6749,7 @@ private void setFullscreenChrome(boolean visible) {
         if (postAdapter != null && pager != null && layoutMode.equals("fullscreen")) {
             postAdapter.setActivePosition(pager.getCurrentItem());
         }
+        if (layoutMode.equals("grid")) startStreamReadSampling();
     }
 
     @Override
