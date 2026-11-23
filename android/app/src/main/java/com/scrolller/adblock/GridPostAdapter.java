@@ -15,6 +15,7 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
@@ -161,6 +162,18 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
         final FrameLayout root;
         ExoPlayer player;
         PlayerView playerView;
+        RedditPost boundPost;
+        ImageView displayImage;
+        boolean renderedFirstVideoFrame;
+
+        boolean isMediaRendered() {
+            if (boundPost == null) return false;
+            if (displayImage != null) {
+                return displayImage.getParent() == root
+                        && displayImage.getDrawable() != null;
+            }
+            return renderedFirstVideoFrame;
+        }
 
         Holder(FrameLayout root) {
             super(root);
@@ -169,6 +182,10 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
 
         void bind(RedditPost post) {
             releasePlayer();
+            boundPost = post;
+            displayImage = null;
+            renderedFirstVideoFrame = false;
+            root.setOnClickListener(null);
             root.removeAllViews();
             root.setBackgroundColor(Color.BLACK);
 
@@ -187,6 +204,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                 final String unresolved = post.videoUrl;
                 final String id = unresolved.substring("redgifs:".length());
                 ImageView image = new ImageView(context);
+                displayImage = image;
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 image.setBackgroundColor(Color.BLACK);
                 root.addView(image, new FrameLayout.LayoutParams(
@@ -218,6 +236,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
             }
 
             ImageView image = new ImageView(context);
+            displayImage = image;
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             image.setBackgroundColor(Color.BLACK);
             root.addView(image, new FrameLayout.LayoutParams(
@@ -253,6 +272,14 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
             playerView = view;
 
             player = HighQualityPlayerFactory.create(context, post.videoUrl);
+            player.addListener(new Player.Listener() {
+                @Override
+                public void onRenderedFirstFrame() {
+                    if (boundPost == post && playerView == view) {
+                        renderedFirstVideoFrame = true;
+                    }
+                }
+            });
             player.setRepeatMode(ExoPlayer.REPEAT_MODE_ONE);
             player.setMediaItem(MediaItem.fromUri(post.videoUrl));
             player.setVolume(0f);
@@ -349,6 +376,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                 player = null;
             }
             playerView = null;
+            renderedFirstVideoFrame = false;
         }
     }
 
