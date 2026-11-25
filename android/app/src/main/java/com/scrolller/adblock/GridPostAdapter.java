@@ -170,11 +170,9 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
 
         boolean isMediaRendered() {
             if (boundPost == null) return false;
-            if (displayImage != null) {
-                return displayImage.getParent() == root
-                        && displayImage.getDrawable() != null;
-            }
-            return renderedFirstVideoFrame;
+            if (renderedFirstVideoFrame) return true;
+            return displayImage != null && displayImage.getParent() == root
+                    && displayImage.getDrawable() != null;
         }
 
         Holder(FrameLayout root) {
