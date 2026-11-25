@@ -5992,6 +5992,10 @@ private void trackFullscreenVisit(int position) {
 
     private void restoreHiddenPost(RedditPost post) {
         if (post == null || post.id == null || post.id.isEmpty()) return;
+        streamReadTracker.forget(post.id);
+        if (streamPendingReadPost != null && post.id.equals(streamPendingReadPost.id)) {
+            streamPendingReadPost = null;
+        }
         hiddenPosts.remove(post.id);
         String mediaKey = canonicalMediaKey(post);
         if (!mediaKey.isEmpty()) hiddenMediaKeys.remove(mediaKey);
