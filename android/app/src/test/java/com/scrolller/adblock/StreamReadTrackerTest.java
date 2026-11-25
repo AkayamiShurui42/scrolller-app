@@ -32,6 +32,18 @@ public final class StreamReadTrackerTest {
         assertFalse(tracker.hasQualified("a"));
     }
 
+    @Test public void undoMakesPreviouslyViewedPostEligibleAgain() {
+        StreamReadTracker tracker = new StreamReadTracker();
+        assertNull(tracker.sample("t3_undo", 800, 900, 1000, true, true, 0L));
+        assertEquals("t3_undo",
+                tracker.sample("t3_undo", 800, 900, 1000, true, true, 1000L));
+        tracker.forget("t3_undo");
+        assertFalse(tracker.hasQualified("t3_undo"));
+        assertNull(tracker.sample("t3_undo", 800, 900, 1000, true, true, 1100L));
+        assertEquals("t3_undo",
+                tracker.sample("t3_undo", 800, 900, 1000, true, true, 2100L));
+    }
+
     @Test public void interruptedVisibilityCannotAccumulateAcrossVisits() {
         StreamReadTracker tracker = new StreamReadTracker();
         tracker.sample("a", 800, 900, 1000, true, true, 0L);
