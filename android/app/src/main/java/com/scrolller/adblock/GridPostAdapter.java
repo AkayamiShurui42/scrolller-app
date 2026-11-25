@@ -6,6 +6,7 @@ import android.graphics.drawable.Animatable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -34,6 +35,7 @@ import java.util.List;
 public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.Holder> {
     public interface Listener {
         void onPostClicked(int position);
+        void onSubredditClicked(String subreddit);
     }
 
     private final Context context;
@@ -182,10 +184,11 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
 
         void bind(RedditPost post) {
             releasePlayer();
+            if (displayImage != null) Glide.with(displayImage).clear(displayImage);
             boundPost = post;
             displayImage = null;
             renderedFirstVideoFrame = false;
-            root.setOnClickListener(null);
+            root.setOnClickListener(v -> openCurrent());
             root.removeAllViews();
             root.setBackgroundColor(Color.BLACK);
 
@@ -213,6 +216,8 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                 if (post.posterUrl != null && !post.posterUrl.isEmpty()) {
                     Glide.with(image).load(post.posterUrl).fitCenter().into(image);
                 }
+                addBadge(post);
+                addSubredditLink(post);
                 RedgifsResolver.resolve(id, new RedgifsResolver.Callback() {
                     @Override
                     public void onResolved(String url) {
@@ -257,10 +262,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
             }
 
             addBadge(post);
-            addFullscreenButton();
-            if (post.mediaKind != RedditPost.MediaKind.GIF) {
-                root.setOnClickListener(v -> openCurrent());
-            }
+            addSubredditLink(post);
         }
 
         private void addStreamPlayer(RedditPost post) {
@@ -270,6 +272,22 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT));
             playerView = view;
+            view.setUseController(false);
+            view.setOnClickListener(v -> openCurrent());
+
+            // A paused video still displays meaningful media. Without a poster
+            // Stream's read tracker could never count an ordinary video as seen.
+            ImageView cover = new ImageView(context);
+            displayImage = cover;
+            cover.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            cover.setBackgroundColor(Color.BLACK);
+            root.addView(cover, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+            if (post.posterUrl != null && !post.posterUrl.isEmpty()) {
+                Glide.with(cover).load(post.posterUrl).fitCenter().into(cover);
+            }
+            cover.setOnClickListener(v -> openCurrent());
 
             player = HighQualityPlayerFactory.create(context, post.videoUrl);
             player.addListener(new Player.Listener() {
@@ -277,6 +295,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
                 public void onRenderedFirstFrame() {
                     if (boundPost == post && playerView == view) {
                         renderedFirstVideoFrame = true;
+                        cover.setVisibility(View.GONE);
                     }
                 }
             });
@@ -300,7 +319,7 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
             });
 
             addBadge(post);
-            addFullscreenButton();
+            addSubredditLink(post);
         }
 
         private void addGifPauseButton(ImageView image) {
@@ -349,15 +368,28 @@ public final class GridPostAdapter extends RecyclerView.Adapter<GridPostAdapter.
             root.addView(badge, bp);
         }
 
-        private void addFullscreenButton() {
-            Button fullscreen = overlayButton("⛶");
-            fullscreen.setTextSize(18);
+        private void addSubredditLink(RedditPost post) {
+            if (post == null || post.subreddit == null) return;
+            String subreddit = post.subreddit.trim();
+            if (subreddit.regionMatches(true, 0, "r/", 0, 2)) {
+                subreddit = subreddit.substring(2);
+            }
+            if (subreddit.isEmpty()) return;
+
+            final String target = subreddit;
+            Button community = overlayButton("r/" + target);
+            community.setTextSize(12);
+            community.setSingleLine(true);
+            community.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            community.setMaxWidth((int) (context.getResources().getDisplayMetrics().widthPixels * 0.72f));
+            community.setContentDescription("Open subreddit r/" + target);
             FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(
-                    dp(44), dp(40), Gravity.BOTTOM | Gravity.START);
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(40),
+                    Gravity.BOTTOM | Gravity.START);
             fp.leftMargin = dp(6);
             fp.bottomMargin = dp(6);
-            root.addView(fullscreen, fp);
-            fullscreen.setOnClickListener(v -> openCurrent());
+            root.addView(community, fp);
+            community.setOnClickListener(v -> listener.onSubredditClicked(target));
         }
 
         private void openCurrent() {
