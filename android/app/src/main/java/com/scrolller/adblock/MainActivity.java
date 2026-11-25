@@ -74,7 +74,7 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
 
     private static final String REDDIT = "https://www.reddit.com";
     private static final String WEB_LOG_TAG = "RedviewWeb";
-    private static final String SELF_DIAGNOSTIC_BUILD_TAG = "stream-read-hide-v8-20261123";
+    private static final String SELF_DIAGNOSTIC_BUILD_TAG = "stream-return-subreddit-read-v9-20261125";
     private static final java.util.concurrent.ExecutorService DIAGNOSTICS_EXECUTOR =
             java.util.concurrent.Executors.newSingleThreadExecutor();
     // Rank search results away from Android's input-dispatch/UI thread.
@@ -188,6 +188,13 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
     private RecyclerView gridView;
     private PostPagerAdapter postAdapter;
     private GridPostAdapter gridAdapter;
+    private StreamReturnAnchor streamReturnAnchor;
+    private Screen streamReturnScreen;
+    private String streamReturnContext = "";
+    private String streamReturnSubreddit = "";
+    private String streamReturnQuery = "";
+    private String streamReturnProfile = "";
+    private Button streamReturnButton;
     // Stream read tracking is separate from the Fullscreen pager's existing
     // gesture tracking, but both write through the same saved/hidden store.
     private final StreamReadTracker streamReadTracker = new StreamReadTracker();
@@ -557,7 +564,15 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         gridView.setClipToPadding(false);
         gridView.setItemAnimator(null);
         gridView.setLayoutManager(new GridLayoutManager(this, 1));
-        gridAdapter = new GridPostAdapter(this, this::openFullscreenAt);
+        gridAdapter = new GridPostAdapter(this, new GridPostAdapter.Listener() {
+            @Override public void onPostClicked(int position) {
+                openFullscreenAt(position);
+            }
+            @Override public void onSubredditClicked(String name) {
+                String clean = cleanSubredditName(name);
+                if (!clean.isEmpty()) openSubredditFeed(clean);
+            }
+        });
         gridView.setAdapter(gridAdapter);
         gridView.setVisibility(View.GONE);
         gridView.addOnScrollListener(new RecyclerView.OnScrollListener() {
@@ -757,6 +772,23 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
         root.addView(browserBack, bp);
         browserBack.setOnClickListener(v -> closeBrowser());
 
+        streamReturnButton = new Button(this);
+        streamReturnButton.setAllCaps(false);
+        streamReturnButton.setText("‹ Stream");
+        streamReturnButton.setTextColor(Color.WHITE);
+        streamReturnButton.setTextSize(13);
+        streamReturnButton.setMinHeight(0);
+        streamReturnButton.setMinWidth(0);
+        streamReturnButton.setContentDescription("Return to Stream at previous scroll position");
+        streamReturnButton.setBackground(rounded(0xE6202020, 999));
+        streamReturnButton.setVisibility(View.GONE);
+        FrameLayout.LayoutParams srp = new FrameLayout.LayoutParams(
+                dp(112), dp(42), Gravity.BOTTOM | Gravity.START);
+        srp.leftMargin = dp(8);
+        srp.bottomMargin = systemBottomPx + dp(76);
+        appLayer.addView(streamReturnButton, srp);
+        streamReturnButton.setOnClickListener(v -> returnToStream());
+
         updateChrome();
         applyLayoutVisibility();
     
@@ -776,6 +808,12 @@ public class MainActivity extends AppCompatActivity implements PostPagerAdapter.
             FrameLayout.LayoutParams p = (FrameLayout.LayoutParams) recoveryHud.getLayoutParams();
             p.topMargin = systemTopPx + dp(46);
             recoveryHud.setLayoutParams(p);
+        }
+        if (streamReturnButton != null) {
+            FrameLayout.LayoutParams srp = (FrameLayout.LayoutParams)
+                    streamReturnButton.getLayoutParams();
+            srp.bottomMargin = systemBottomPx + dp(76);
+            streamReturnButton.setLayoutParams(srp);
         }
         if (topBar == null) return;
 
@@ -3323,16 +3361,96 @@ private void loadQualityCollection(boolean reset) {
         }
     }
 
+    private StreamReturnAnchor captureStreamReturnAnchor(int clickedPosition) {
+        if (!(gridView.getLayoutManager() instanceof GridLayoutManager)) {
+            return new StreamReturnAnchor("", clickedPosition, 0);
+        }
+        GridLayoutManager manager = (GridLayoutManager) gridView.getLayoutManager();
+        int first = manager.findFirstVisibleItemPosition();
+        if (first < 0) first = clickedPosition;
+        View child = manager.findViewByPosition(first);
+        int topOffset = child == null ? 0 : child.getTop() - gridView.getPaddingTop();
+        RedditPost post = postAdapter.getPost(first);
+        return new StreamReturnAnchor(post == null ? "" : post.id, first, topOffset);
+    }
+
+    private ArrayList<String> streamPostIds() {
+        ArrayList<String> ids = new ArrayList<>();
+        for (RedditPost post : postAdapter.getPosts()) {
+            ids.add(post == null ? "" : post.id);
+        }
+        return ids;
+    }
+
+    private boolean canReturnToStream() {
+        return streamReturnAnchor != null && layoutMode.equals("fullscreen")
+                && screen == streamReturnScreen
+                && context.equals(streamReturnContext)
+                && subreddit.equals(streamReturnSubreddit)
+                && query.equals(streamReturnQuery)
+                && profileUser.equals(streamReturnProfile);
+    }
+
+    private void clearStreamReturnOrigin() {
+        streamReturnAnchor = null;
+        if (streamReturnButton != null) streamReturnButton.setVisibility(View.GONE);
+    }
+
+    private void syncStreamReturnButton() {
+        if (streamReturnButton != null) {
+            streamReturnButton.setVisibility(
+                    canReturnToStream() ? View.VISIBLE : View.GONE);
+        }
+    }
+
     private void openFullscreenAt(int position) {
+        if (!layoutMode.equals("grid")
+                || position < 0 || position >= postAdapter.getItemCount()) return;
+        // Fullscreen is a temporary viewer, not a permanent layout preference.
+        streamReturnAnchor = captureStreamReturnAnchor(position);
+        streamReturnScreen = screen;
+        streamReturnContext = context;
+        streamReturnSubreddit = subreddit;
+        streamReturnQuery = query;
+        streamReturnProfile = profileUser;
         layoutMode = "fullscreen";
         fullscreenChromeVisible = true;
-        prefs.edit().putString("layout", layoutMode).apply();
         updateChrome();
         applyLayoutVisibility();
-        if (position >= 0 && position < postAdapter.getItemCount()) {
-            pager.setCurrentItem(position, false);
-            postAdapter.setActivePosition(position);
-        }
+        pager.setCurrentItem(position, false);
+        postAdapter.setActivePosition(position);
+        // ViewPager2 does not dispatch onPageSelected when the target equals
+        // its current item. Record that first visible page explicitly.
+        markVisiblePostRead(position);
+        setFullscreenReadBaseline(position);
+        syncStreamReturnButton();
+        AppDiagnostics.record("stream-fullscreen-open", "position=" + position);
+    }
+
+    private void returnToStream() {
+        if (!canReturnToStream()) return;
+        StreamReturnAnchor anchor = streamReturnAnchor;
+        // This page was viewed even if no ViewPager2 page-change fired.
+        markVisiblePostRead(pager.getCurrentItem());
+        clearStreamReturnOrigin();
+        lastFullscreenPostId = "";
+        fullscreenUserGesture = false;
+        pendingUserFullscreenPosition = -1;
+        layoutMode = "grid";
+        prefs.edit().putString("layout", "grid").apply();
+        fullscreenChromeVisible = true;
+        updateChrome();
+        applyLayoutVisibility();
+        gridView.post(() -> {
+            if (!layoutMode.equals("grid") || gridView == null
+                    || !(gridView.getLayoutManager() instanceof GridLayoutManager)) return;
+            int position = anchor.findPosition(streamPostIds());
+            if (position >= 0) {
+                ((GridLayoutManager) gridView.getLayoutManager())
+                        .scrollToPositionWithOffset(position, anchor.getTopOffsetPx());
+            }
+        });
+        AppDiagnostics.record("stream-fullscreen-return", "restored original viewport");
     }
 
     private void applyLayoutVisibility() {
@@ -3363,6 +3481,7 @@ private void loadQualityCollection(boolean reset) {
             postAdapter.setActivePosition(pager.getCurrentItem());
         }
         setFullscreenChrome(grid || fullscreenChromeVisible);
+        syncStreamReturnButton();
         syncEmptyFeedTapTarget();
     }
 
@@ -5543,6 +5662,7 @@ private void showCategoryRoot() {
             body.addView(b, sectionButtonParams());
             b.setOnClickListener(v -> {
                 int current = pager.getCurrentItem();
+                clearStreamReturnOrigin();
                 layoutMode = pair[0];
                 fullscreenChromeVisible = true;
                 prefs.edit().putString("layout", layoutMode).apply();
@@ -5809,6 +5929,10 @@ private void trackFullscreenVisit(int position) {
         if (!bare.isEmpty()) sessionReadCatalog.remove(bare);
         String mediaKey = canonicalMediaKey(post);
         if (!mediaKey.isEmpty()) sessionReadMediaKeys.remove(mediaKey);
+        streamReadTracker.forget(post.id);
+        if (streamPendingReadPost != null && post.id.equals(streamPendingReadPost.id)) {
+            streamPendingReadPost = null;
+        }
 
         // If this post was already hidden from a previous committed session,
         // undo should restore that persistent classification too.
@@ -6794,6 +6918,10 @@ private void setFullscreenChrome(boolean visible) {
     private void handleBackNavigation() {
         if (browserPurpose != BrowserPurpose.NONE) {
             closeBrowser();
+            return;
+        }
+        if (canReturnToStream()) {
+            returnToStream();
             return;
         }
 
