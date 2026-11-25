@@ -39,6 +39,12 @@ final class StreamReadTracker {
         return postId != null && qualified.contains(postId);
     }
 
+    void forget(String postId) {
+        if (postId == null || postId.isEmpty()) return;
+        qualified.remove(postId);
+        if (postId.equals(currentId)) resetContinuity();
+    }
+
     void resetContinuity() {
         currentId = null;
         sinceMs = -1L;
